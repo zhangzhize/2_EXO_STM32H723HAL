@@ -46,7 +46,7 @@ extern "C" {
 
 /* Exported macro ------------------------------------------------------------*/
 /* USER CODE BEGIN EM */
-extern uint8_t g_timer2_1ms_flag;
+extern uint8_t g_timer2_5ms_flag;
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/
@@ -73,14 +73,14 @@ void Error_Handler(void);
 #define LEFT_PULLFORCE_GPIO_Port GPIOA
 #define VBUS_ADC_Pin GPIO_PIN_4
 #define VBUS_ADC_GPIO_Port GPIOC
-#define PROXI_SENSOR_IN_Pin GPIO_PIN_9
-#define PROXI_SENSOR_IN_GPIO_Port GPIOE
 #define ACC_INT_Pin GPIO_PIN_10
 #define ACC_INT_GPIO_Port GPIOE
 #define ACC_INT_EXTI_IRQn EXTI15_10_IRQn
 #define GYRO_INT_Pin GPIO_PIN_12
 #define GYRO_INT_GPIO_Port GPIOE
 #define GYRO_INT_EXTI_IRQn EXTI15_10_IRQn
+#define NRF54_RST_Pin GPIO_PIN_14
+#define NRF54_RST_GPIO_Port GPIOE
 #define BUZZER_Pin GPIO_PIN_15
 #define BUZZER_GPIO_Port GPIOB
 

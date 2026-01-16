@@ -4,15 +4,15 @@
 #include <cstdint>
 
 /*  RGB Color Codes
-    1: {  0,   0,   0}, // Off       #000000
-    2: {  0, 255,   0}, // Green     #00FF00
-    3: {  0,   0, 255}, // Blue      #0000FF
-    4: {255, 255,   0}, // Yellow    #FFFF00
-    5: {255,   0, 255}, // Magenta   #FF00FF
-    6: {  0, 255, 255}, // Cyan      #00FFFF
-    7: {255, 140,   0}, // Orange    #FF8C00
-    8: {128,   0, 128}, // Purple    #800080
-    9: {255,   0,   0}, // Red       #FF0000
+    0: {  0,   0,   0}, // Off       #000000
+    1: {  0, 255,   0}, // Green     #00FF00
+    2: {  0,   0, 255}, // Blue      #0000FF
+    3: {255, 255,   0}, // Yellow    #FFFF00
+    4: {255,   0, 255}, // Magenta   #FF00FF
+    5: {  0, 255, 255}, // Cyan      #00FFFF
+    6: {255, 140,   0}, // Orange    #FF8C00
+    7: {128,   0, 128}, // Purple    #800080
+    8: {255,   0,   0}, // Red       #FF0000
     */
 enum class ExoStatus : uint8_t
 {

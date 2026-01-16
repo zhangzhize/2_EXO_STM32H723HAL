@@ -1,6 +1,7 @@
 #include <math.h>
 #include <queue>
 #include <numeric>
+#include <string.h>
 
 #include "main.h"
 #include "adc.h"
@@ -33,9 +34,8 @@ uint32_t g_adc_data[3] = {0};
 
 void AltMainTask(void *argument)
 {
-    float battery_voltage = 0.0f;
-    uint8_t timerup_1ms_cnt = 0;
     uint32_t loop_cnt = 0;
+
     /* 启动ADC+DMA: PC4(电源电压) + PA2 + PA0 */
     HAL_ADCEx_Calibration_Start(&hadc1, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED);
     HAL_ADC_Start_DMA(&hadc1, (uint32_t *)g_adc_data, 3);
@@ -43,9 +43,13 @@ void AltMainTask(void *argument)
     /* DMA接收双足无线传感数据, 波特率1000000 Bits/s */
     HAL_UARTEx_ReceiveToIdle_DMA(&huart8, uart8_rx_buffer, UART8_RX_BUF_SIZE);
     __HAL_DMA_DISABLE_IT(huart8.hdmarx, DMA_IT_HT);
-    /* DMA接收无线上位机控制命令, 波特率921600 Bits/s */
-    HAL_UARTEx_ReceiveToIdle_DMA(&huart9, uart9_rx_buffer, UART9_RX_BUF_SIZE);
-    __HAL_DMA_DISABLE_IT(huart9.hdmarx, DMA_IT_HT);
+    /* DMA接收无线上位机控制命令, 波特率921600 Bits/s, 蓝牙模块: MX01P */
+    // HAL_UARTEx_ReceiveToIdle_DMA(&huart9, uart9_rx_buffer, UART9_RX_BUF_SIZE);
+    // __HAL_DMA_DISABLE_IT(huart9.hdmarx, DMA_IT_HT);
+    /* DMA接收无线上位机控制命令, 波特率4000000 Bits/s, 蓝牙模块: ESP32C3 */
+    // HAL_UARTEx_ReceiveToIdle_DMA(&huart1, uart1_rx_buffer, UART1_RX_BUF_SIZE);
+    // __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
+
     /* 蜂鸣器, 暂不启用 */
     // HAL_TIM_PWM_Start(&htim12, TIM_CHANNEL_2);
     // TIM12->CCR2 = TIM12->ARR / 2;
@@ -63,16 +67,7 @@ void AltMainTask(void *argument)
     HAL_Delay(1000);
     HAL_GPIO_WritePin(POWER_24V_1_GPIO_Port, POWER_24V_1_Pin|POWER_24V_2_Pin, GPIO_PIN_SET);
     HAL_Delay(100);
-    battery_voltage = (g_adc_data[0] * 3.3f / 65535) * 11;
-    // if (battery_voltage < 19)  /* 电压不够, 关掉电源 */
-    // {
-    //     HAL_GPIO_WritePin(POWER_24V_1_GPIO_Port, POWER_24V_1_Pin|POWER_24V_2_Pin, GPIO_PIN_RESET);
-    // }
-    while (battery_voltage < 19) /* 电压不够, 等待 */
-    {
-        battery_voltage = (g_adc_data[0] * 3.3f / 65535) * 11;
-        HAL_Delay(100);
-    }
+
     /** #HACK: 在此修改外骨骼参数  */
     gptr_exo->Initialize();
 
@@ -84,34 +79,14 @@ void AltMainTask(void *argument)
     // while(BMI088_init());
 	while (1)
 	{
-       if (g_timer2_1ms_flag == 1) //1 ms
+        if (g_timer2_5ms_flag == 1)
         {
-            g_timer2_1ms_flag = 0;
-
-            timerup_1ms_cnt++;
-            if (timerup_1ms_cnt >= 5) //5 ms
-            {
-                timerup_1ms_cnt = 0;
-            }
-            else
-            {
-                continue;
-            }
-            loop_cnt++;
-
-            /* 电压过低直接关停电机 */
-            if (gptr_exo_data->battery_voltage_ < 19)
-            {
-                if (HAL_GPIO_ReadPin(POWER_24V_1_GPIO_Port, POWER_24V_2_Pin) == GPIO_PIN_SET)
-                {
-                    HAL_GPIO_WritePin(POWER_24V_1_GPIO_Port, POWER_24V_2_Pin|POWER_24V_1_Pin, GPIO_PIN_RESET);
-                }
-            }
+            g_timer2_5ms_flag = 0;
 
             /* 外骨骼 */
             gptr_exo->Run();
-            gptr_vofa->ptr_vofa_data_[0] = GetSysTimeMs();
-            gptr_vofa->ptr_vofa_data_[1] = loop_cnt;
+            gptr_vofa->ptr_vofa_data_[0] = loop_cnt++;
+            gptr_vofa->ptr_vofa_data_[1] = GetSysTimeMs();
             gptr_vofa->ptr_vofa_data_[2] = gptr_exo_data->ao_left_event_cnt_;
             gptr_vofa->ptr_vofa_data_[3] = gptr_exo_data->ao_right_event_cnt_;
             gptr_vofa->ptr_vofa_data_[4] = gptr_exo_data->left_side_.percent_gait_ / 100.0f;
@@ -131,46 +106,12 @@ void AltMainTask(void *argument)
             gptr_vofa->ptr_vofa_data_[18] = gptr_exo->left_side_.heel_fsr_.calibration_refinement_min_;
             gptr_vofa->ptr_vofa_data_[19] = gptr_exo->right_side_.heel_fsr_.calibration_refinement_min_;
             gptr_vofa->SendOneFrame(20);
-
-
-            
-            /** 调试 */
-            // gptr_exo->left_side_.knee_joint_.motor_.torque_forward_ = 0.0f;
-            // gptr_exo->left_side_.knee_joint_.motor_.position_ref_ = 0.0f;
-            // gptr_exo->left_side_.knee_joint_.motor_.speed_ref_ = 0.0f;
-            // gptr_exo->left_side_.knee_joint_.motor_.motion_mode_kp_ = 0.0f;
-            // gptr_exo->left_side_.knee_joint_.motor_.motion_mode_kd_ = 0.0f;
-            // gptr_exo->left_side_.knee_joint_.motor_.MotionControl();
-
-            // float phase_percent = 0.0f;
-            // phase_percent += 0.5f;
-            // if (phase_percent >= 100.0f)
+            // static uint8_t cnt = 0;
+            // if (cnt++ >= 20)
             // {
-            //     phase_percent = 0.0f;
+            //     gptr_vofa->SendOneFrame(20);
             // }
-
-            // if (phase_percent >= 0.0f && phase_percent < 40.0f)
-            // {
-            //     gptr_exo->left_side_.ankle_joint_.motor_.position_ref_ = gptr_exo->left_side_.ankle_joint_.cable_pre_tensioned_position_;
-            // }
-            // else if (phase_percent > 4.0f && phase_percent < 65.0f)
-            // {
-            //     gptr_exo->left_side_.ankle_joint_.motor_.position_ref_ = gptr_exo->left_side_.ankle_joint_.cable_tensioned_position_;
-            // }
-            // else if (phase_percent >= 65.0f && phase_percent < 100.0f)
-            // {
-            //     gptr_exo->left_side_.ankle_joint_.motor_.position_ref_ = gptr_exo->left_side_.ankle_joint_.cable_released_position_;
-            // }
-            // gptr_exo->left_side_.ankle_joint_.motor_.torque_forward_ = 0.0f;
-            // gptr_exo->left_side_.ankle_joint_.motor_.speed_ref_ = 0.0f;
-            // gptr_exo->left_side_.ankle_joint_.motor_.motion_mode_kp_ = 10.0f;
-            // gptr_exo->left_side_.ankle_joint_.motor_.motion_mode_kd_ = 1.0f;
-            // gptr_exo->left_side_.ankle_joint_.motor_.MotionControl();
-            // gptr_exo->left_side_.ankle_joint_.motor_.limit_speed_ = 5.0f;
-            // gptr_exo->left_side_.ankle_joint_.motor_.PositionControlCSP();
         }
 	}
-    delete gptr_vofa;
-    delete gptr_exo;
 }
 

@@ -6,9 +6,11 @@
 
 static void VofaTransmit(uint8_t* data, uint16_t data_size)
 {
-	// HAL_UART_Transmit_DMA(&huart9, (uint8_t *)data, data_size);
+	HAL_UART_Transmit_DMA(&huart9, (uint8_t *)data, data_size);
     // HAL_UART_Transmit(&huart9, (uint8_t *)data, data_size, 3);
-	CDC_Transmit_HS((uint8_t *)data, data_size);
+    HAL_UART_Transmit_DMA(&huart1, (uint8_t *)data, data_size);
+    // HAL_UART_Transmit(&huart1, (uint8_t *)data, data_size, 3);
+	// CDC_Transmit_HS((uint8_t *)data, data_size);
 }
 
 Vofa::Vofa()
@@ -43,6 +45,7 @@ void CallVofaDestroy(Vofa **pptr_vofa)
         *pptr_vofa = nullptr;
     }
 }
+
 void CallVofaSendOneFrame(Vofa *ptr_vofa, uint16_t float_size)
 {
     if (ptr_vofa != nullptr)

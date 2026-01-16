@@ -12,7 +12,7 @@ extern uint32_t g_adc_data[3];  /**< From alt_main.cpp */
 AnkleJoint::AnkleJoint(bool is_left, ExoData *pe) : pe_(pe), ps_(is_left ? &pe->left_side_ : &pe->right_side_), pj_(is_left ? &pe->left_side_.ankle_joint_ : &pe->right_side_.ankle_joint_), force_profile_generator_(), motor_(is_left ? ExoJointCanID::kLeftAnkle : ExoJointCanID::kRightAnkle), pid_(0.2f, 0.4f, 0.0f, -1.0f, 10.0f)
 {
     cable_pre_tensioned_position_ = 0.0f;
-    cable_tensioned_position_ = 3.14f;
+    cable_tensioned_position_ = 6.0f;
     cable_released_position_ = 0.0f;
     assistance_start_phase_rad_ = 0.4 * _2PI;
     assistance_end_phase_rad_ = 0.65 * _2PI;
@@ -78,25 +78,18 @@ void AnkleJoint::Assist()
 
     static bool assist_armed = false;
     const float phase_zero_threshold = 0.1f;
-    float force_profile = 0.0f;
+    float cable_position_ref = 0.0f;
 
     // float phase_rad = pj_->is_left_ ? pe_->ao_left_phase_rad_ : pe_->ao_right_phase_rad_;
-    float phase_rad = pj_->is_left_ ? pe_->right_side_.percent_gait_ : pe_->left_side_.percent_gait_;
+    float phase_rad = pj_->is_left_ ? pe_->left_side_.percent_gait_ : pe_->right_side_.percent_gait_;
     phase_rad = phase_rad * _2PI / 100.0f;
-
+    float phase_percent = pj_->is_left_ ? pe_->left_side_.percent_gait_ : pe_->right_side_.percent_gait_;
     uint32_t gait_event_cnt = pj_->is_left_ ? pe_->ao_left_event_cnt_ : pe_->ao_right_event_cnt_;
 
     if (gait_event_cnt <= 1)
     {
         assist_armed = false;
-        force_profile = 0.0f;
-
-        motor_.torque_forward_ = 0.0f;
-        motor_.position_ref_ = 0.0f;
-        motor_.speed_ref_ = 0.0f;
-        motor_.motion_mode_kp_ = 0.0f;
-        motor_.motion_mode_kd_ = 0.0f;
-        motor_.MotionControl();
+        cable_position_ref = cable_released_position_;
     }
     else
     {
@@ -106,17 +99,38 @@ void AnkleJoint::Assist()
         }
         if (assist_armed)
         {
-            force_profile = force_profile_generator_.GetForceProfile(phase_rad);
+            pe_->exo_status_ = ExoStatus::kAssisting;
+            if (phase_percent >= 0.0f && phase_percent < 35.0f)
+            {
+                cable_position_ref = cable_pre_tensioned_position_;
+            }
+            else if (phase_percent > 35.0f && phase_percent < 65.0f)
+            {
+                cable_position_ref = cable_tensioned_position_;
+            }
+            else if (phase_percent >= 65.0f && phase_percent < 100.0f)
+            {
+                cable_position_ref = cable_released_position_;
+            }
         }
         else
         {
-            force_profile = 0.0f;
+            cable_position_ref = cable_released_position_;
         }
     }
     if (!pj_->is_left_)
     {
-        force_profile = -force_profile;
     }
+
+    motor_.position_ref_ = cable_position_ref;
+
+    motor_.torque_forward_ = 0.0f;
+    motor_.speed_ref_ = 0.0f;
+    motor_.motion_mode_kp_ = 15.0f;
+    motor_.motion_mode_kd_ = 0.5f;
+    motor_.MotionControl();
+    // motor_.limit_speed_ = 6.0f;
+    // motor_.PositionControlCSP();
 }
 
 KneeJoint::KneeJoint(bool is_left, ExoData *pe) : pe_(pe), ps_(is_left ? &pe->left_side_ : &pe->right_side_), pj_(is_left ? &pe->left_side_.knee_joint_ : &pe->right_side_.knee_joint_), force_profile_generator_(), motor_(is_left ? ExoJointCanID::kLeftKnee : ExoJointCanID::kRightKnee), disturbance_observer_(5.0f)
@@ -188,7 +202,6 @@ void KneeJoint::Assist()
     // float phase_rad = pj_->is_left_ ? pe_->ao_left_phase_rad_ : pe_->ao_right_phase_rad_;
     float phase_rad = pj_->is_left_ ? pe_->left_side_.percent_gait_ : pe_->right_side_.percent_gait_;
     phase_rad = phase_rad * _2PI / 100.0f;
-
     uint32_t gait_event_cnt = pj_->is_left_ ? pe_->ao_left_event_cnt_ : pe_->ao_right_event_cnt_;
 
     if (gait_event_cnt <= 1)
@@ -410,6 +423,13 @@ void Side::ClearStepTimeEstimate()
     }
 }
 
+void Side::Shutdown()
+{
+    knee_joint_.motor_.StopMotor(0);
+    ankle_joint_.motor_.StopMotor(0);
+    ClearStepTimeEstimate();
+}
+
 float Side::UpdateExpectedDuration()
 {
     uint32_t step_time = ps_->ground_strike_timestamp_ - ps_->prev_ground_strike_timestamp_;
@@ -544,32 +564,43 @@ Exo::Exo(ExoData *pe) : pe_(pe), status_led_(), adaptive_oscilator_(), left_side
 
 void Exo::Initialize()
 {
-    /** 初始化状态指示灯 */
-    uint8_t exo_idx = static_cast<uint8_t>(pe_->exo_status_);
-    if (exo_idx > 8) exo_idx = 8;
-    status_led_.UpdateColor(exo_idx);
+    /** 等待上电 */
+    uint8_t exo_status_idx = 0;
+    while (pe_->battery_voltage_ < 19.0f)
+    {
+        ReadBatVol();
+        DelayMs(100);
+
+        pe_->exo_status_ = ExoStatus::kErrorBatteryLowVoltage;
+        exo_status_idx = static_cast<uint8_t>(pe_->exo_status_);
+        status_led_.UpdateColor(exo_status_idx > 8 ? 8 : exo_status_idx);
+    }
+    /** 进入标定阶段 */
+    pe_->exo_status_ = ExoStatus::kCalibration;
+    exo_status_idx = static_cast<uint8_t>(pe_->exo_status_);
+    status_led_.UpdateColor(exo_status_idx > 8 ? 8 : exo_status_idx);
 
     /** 调试: 设置施密特触发器阈值, 用于判断足跟着地事件. */
     left_side_.heel_fsr_.SetContactThresholds(0.15f, 0.25f);
     left_side_.toe_fsr_.SetContactThresholds(0.15f, 0.25f);
     right_side_.heel_fsr_.SetContactThresholds(0.15f, 0.25f);
     right_side_.toe_fsr_.SetContactThresholds(0.15f, 0.25f);
-    left_side_.heel_fsr_.calibration_refinement_max_ = 2.6f;
-    left_side_.heel_fsr_.calibration_refinement_min_ = 0.13f;
-    right_side_.heel_fsr_.calibration_refinement_max_ = 2.45f;
-    right_side_.heel_fsr_.calibration_refinement_min_ = 0.15f;
-    pe_->left_side_.do_calibration_heel_fsr_ = false;
+    // left_side_.heel_fsr_.calibration_refinement_max_ = 2.45f;
+    // left_side_.heel_fsr_.calibration_refinement_min_ = 0.15f;
+    // right_side_.heel_fsr_.calibration_refinement_max_ = 2.45f;
+    // right_side_.heel_fsr_.calibration_refinement_min_ = 0.15f;
+    pe_->left_side_.do_calibration_heel_fsr_ = true;
     pe_->left_side_.do_calibration_toe_fsr_ = false;
-    pe_->left_side_.do_calibration_refinement_heel_fsr_ = false;
+    pe_->left_side_.do_calibration_refinement_heel_fsr_ = true;
     pe_->left_side_.do_calibration_refinement_toe_fsr_ = false;
-    pe_->right_side_.do_calibration_heel_fsr_ = false;
+    pe_->right_side_.do_calibration_heel_fsr_ = true;
     pe_->right_side_.do_calibration_toe_fsr_ = false;
-    pe_->right_side_.do_calibration_refinement_heel_fsr_ = false;
+    pe_->right_side_.do_calibration_refinement_heel_fsr_ = true;
     pe_->right_side_.do_calibration_refinement_toe_fsr_ = false;
 
     /** 调试: 选择助力的关节 */
     pe_->left_side_.knee_joint_.is_used_ = false;
-    pe_->right_side_.knee_joint_.is_used_ = true;
+    pe_->right_side_.knee_joint_.is_used_ = false;
     pe_->left_side_.ankle_joint_.is_used_ = false;
     pe_->right_side_.ankle_joint_.is_used_ = false;
 
@@ -582,7 +613,6 @@ void Exo::Initialize()
     left_side_.ankle_joint_.cable_tensioned_position_ = 1.5f;
     left_side_.ankle_joint_.assistance_start_phase_rad_ = 0.4f * _2PI;
     left_side_.ankle_joint_.assistance_end_phase_rad_ = 0.65f * _2PI;
-
 
     /** 跟电机建立通信 */
     left_side_.knee_joint_.WaitForCommunication();
@@ -598,7 +628,7 @@ void Exo::Run()
     Estimate();
     Assist();
 
-    /** #TODO: manage errors and show status */
+    /** #TODO: check status */
     if (pe_->battery_voltage_ < 19.0f)
     {
         pe_->exo_status_ = ExoStatus::kErrorBatteryLowVoltage;
@@ -609,9 +639,17 @@ void Exo::Run()
         pe_->exo_status_ = ExoStatus::kErrorRobstride;
     }
 
-    uint8_t exo_idx = static_cast<uint8_t>(pe_->exo_status_);
-    if (exo_idx > 8) exo_idx = 8;
-    status_led_.UpdateColor(exo_idx);
+    uint8_t exo_status_idx = static_cast<uint8_t>(pe_->exo_status_);
+    status_led_.UpdateColor(exo_status_idx > 8 ? 8 : exo_status_idx);
+
+    // if (exo_status_idx >= 8)
+    // {
+    //     Shutdown();
+    //     while (1)
+    //     {
+    //         DelayMs(1000);
+    //     }
+    // }
 }
 
 void Exo::Calibrate()
@@ -626,9 +664,9 @@ void Exo::Calibrate()
 
 void Exo::Read()
 {
+    ReadBatVol();
     left_side_.Read();
     right_side_.Read();
-    pe_->battery_voltage_ = (g_adc_data[0] * 3.3f / 65535) * 11;
 }
 
 void Exo::Estimate()
@@ -652,6 +690,17 @@ void Exo::Assist()
 {
     left_side_.Assist();
     right_side_.Assist();
+}
+
+void Exo::Shutdown()
+{
+    left_side_.Shutdown();
+    right_side_.Shutdown();
+}
+
+void Exo::ReadBatVol()
+{
+    pe_->battery_voltage_ = (g_adc_data[0] * 3.3f / 65535) * 11;
 }
 
 void Exo::UartRxCallback(uint8_t *data, uint16_t data_size)

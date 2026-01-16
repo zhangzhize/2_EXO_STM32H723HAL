@@ -51,7 +51,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint8_t g_timer2_1ms_flag = 0;
+uint8_t g_timer2_5ms_flag = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -105,6 +105,7 @@ int main(void)
   MX_UART8_Init();
   MX_SPI2_Init();
   MX_UART9_Init();
+  MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
     AltMainTask(NULL);
   /* USER CODE END 2 */
@@ -197,7 +198,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
   /* USER CODE BEGIN Callback 0 */
     if (htim->Instance == TIM2)
     {
-        g_timer2_1ms_flag = 1;
+        g_timer2_5ms_flag = 1;
     }
   /* USER CODE END Callback 0 */
   if (htim->Instance == TIM3)

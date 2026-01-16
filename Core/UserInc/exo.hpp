@@ -82,6 +82,7 @@ public:
     void CalibrateFsr();
     void EstimateGait();
     void ClearStepTimeEstimate();
+    void Shutdown();
     float UpdateExpectedDuration();
     float UpdateExpectedStanceDuration();
     float UpdateExpectedSwingDuration();
@@ -104,6 +105,8 @@ public:
     void Read();
     void Estimate();
     void Assist();
+    void Shutdown();
+    void ReadBatVol();
     void CanRxCallback(uint32_t can_id, uint8_t *data);
     void UartRxCallback(uint8_t *data, uint16_t data_size);
     ExoData *pe_;
