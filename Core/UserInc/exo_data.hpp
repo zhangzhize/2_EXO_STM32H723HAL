@@ -21,7 +21,7 @@ enum class ExoStatus : uint8_t
     kReady = 2U,
     kAssisting = 3U,
     kErrorBatteryLowVoltage = 8U,
-    kErrorRobstride = 9U,
+    kErrorMotor = 9U,
 };
 
 
@@ -37,8 +37,8 @@ public:
 
     float rom_rad_;
     float pos_rad_;
-    float vel_rad_s_;
-    float torque_Nm_;
+    float vel_radps_;
+    float tor_Nm_;
 };
 
 class SideData
@@ -49,7 +49,7 @@ public:
 
     bool is_left_;
     bool is_used_;
-
+    JointData hip_joint_;
     JointData knee_joint_;
     JointData ankle_joint_;
 

@@ -41,10 +41,10 @@ extern FDCAN_HandleTypeDef hfdcan1;
 void MX_FDCAN1_Init(void);
 
 /* USER CODE BEGIN Prototypes */
+void BspCanInit(void);
 void BspExtCanInit(void);
-void BspCanFilterInit(void);
 void BspStdCanInit(void);
-void FDCanSendData(FDCAN_HandleTypeDef *hfdcan, uint32_t id, uint8_t *data, uint32_t len);
+void FDCanSendData(FDCAN_HandleTypeDef *hfdcan, uint32_t id, uint32_t id_type, uint8_t *data, uint32_t len);
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

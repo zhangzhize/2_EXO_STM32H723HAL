@@ -36,20 +36,15 @@ extern UART_HandleTypeDef huart8;
 
 extern UART_HandleTypeDef huart9;
 
-extern UART_HandleTypeDef huart1;
-
 /* USER CODE BEGIN Private defines */
-#define UART1_RX_BUF_SIZE             256
 #define UART8_RX_BUF_SIZE             256
 #define UART9_RX_BUF_SIZE             256
-extern uint8_t uart1_rx_buffer[UART1_RX_BUF_SIZE];
 extern uint8_t uart8_rx_buffer[UART8_RX_BUF_SIZE];
 extern uint8_t uart9_rx_buffer[UART9_RX_BUF_SIZE];
 /* USER CODE END Private defines */
 
 void MX_UART8_Init(void);
 void MX_UART9_Init(void);
-void MX_USART1_UART_Init(void);
 
 /* USER CODE BEGIN Prototypes */
 

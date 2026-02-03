@@ -36,19 +36,24 @@ void AltMainTask(void *argument)
 {
     uint32_t loop_cnt = 0;
 
-    /* 启动ADC+DMA: PC4(电源电压) + PA2 + PA0 */
+    /** 复位扩展板上的两个NRF54L15 */
+    HAL_GPIO_WritePin(NRF54_BRIDGE_RST_GPIO_Port, NRF54_BRIDGE_RST_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(NRF54_SENSOR_RST_GPIO_Port, NRF54_SENSOR_RST_Pin, GPIO_PIN_RESET);
+    HAL_Delay(10);
+    HAL_GPIO_WritePin(NRF54_BRIDGE_RST_GPIO_Port, NRF54_BRIDGE_RST_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(NRF54_SENSOR_RST_GPIO_Port, NRF54_SENSOR_RST_Pin, GPIO_PIN_SET);
+    HAL_Delay(100);
+
+    /** 启动ADC+DMA: PC4(电源电压) + PA2 + PA0 */
     HAL_ADCEx_Calibration_Start(&hadc1, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED);
     HAL_ADC_Start_DMA(&hadc1, (uint32_t *)g_adc_data, 3);
 
     /* DMA接收双足无线传感数据, 波特率1000000 Bits/s */
     HAL_UARTEx_ReceiveToIdle_DMA(&huart8, uart8_rx_buffer, UART8_RX_BUF_SIZE);
     __HAL_DMA_DISABLE_IT(huart8.hdmarx, DMA_IT_HT);
-    /* DMA接收无线上位机控制命令, 波特率921600 Bits/s, 蓝牙模块: MX01P */
-    // HAL_UARTEx_ReceiveToIdle_DMA(&huart9, uart9_rx_buffer, UART9_RX_BUF_SIZE);
-    // __HAL_DMA_DISABLE_IT(huart9.hdmarx, DMA_IT_HT);
-    /* DMA接收无线上位机控制命令, 波特率4000000 Bits/s, 蓝牙模块: ESP32C3 */
-    // HAL_UARTEx_ReceiveToIdle_DMA(&huart1, uart1_rx_buffer, UART1_RX_BUF_SIZE);
-    // __HAL_DMA_DISABLE_IT(huart1.hdmarx, DMA_IT_HT);
+    /* DMA接收无线上位机控制命令, 波特率1000000 Bits/s */
+    HAL_UARTEx_ReceiveToIdle_DMA(&huart9, uart9_rx_buffer, UART9_RX_BUF_SIZE);
+    __HAL_DMA_DISABLE_IT(huart9.hdmarx, DMA_IT_HT);
 
     /* 蜂鸣器, 暂不启用 */
     // HAL_TIM_PWM_Start(&htim12, TIM_CHANNEL_2);
@@ -59,14 +64,15 @@ void AltMainTask(void *argument)
     // TIM12->CCR2 = 0;
 
     /* 初始化CAN */
+    BspCanInit();
     // BspStdCanInit();
-    BspExtCanInit();
+    // BspExtCanInit();
     
     /* 给电机上电 */
     HAL_GPIO_WritePin(POWER_24V_1_GPIO_Port, POWER_24V_1_Pin|POWER_24V_2_Pin, GPIO_PIN_RESET);
     HAL_Delay(1000);
     HAL_GPIO_WritePin(POWER_24V_1_GPIO_Port, POWER_24V_1_Pin|POWER_24V_2_Pin, GPIO_PIN_SET);
-    HAL_Delay(100);
+    HAL_Delay(1000);
 
     /** #HACK: 在此修改外骨骼参数  */
     gptr_exo->Initialize();
@@ -87,6 +93,13 @@ void AltMainTask(void *argument)
             gptr_exo->Run();
             gptr_vofa->ptr_vofa_data_[0] = loop_cnt++;
             gptr_vofa->ptr_vofa_data_[1] = GetSysTimeMs();
+            gptr_vofa->ptr_vofa_data_[2] = gptr_exo_data->left_side_.hip_joint_.pos_rad_;
+            gptr_vofa->ptr_vofa_data_[3] = gptr_exo_data->right_side_.hip_joint_.pos_rad_;
+            gptr_vofa->ptr_vofa_data_[4] = gptr_exo->left_side_.hip_joint_.motor_.ctrl_param_.tor_set_Nm_;
+            gptr_vofa->ptr_vofa_data_[5] = gptr_exo->right_side_.hip_joint_.motor_.ctrl_param_.tor_set_Nm_;
+            gptr_vofa->SendOneFrame(6);
+
+            continue;
             gptr_vofa->ptr_vofa_data_[2] = gptr_exo_data->ao_left_event_cnt_;
             gptr_vofa->ptr_vofa_data_[3] = gptr_exo_data->ao_right_event_cnt_;
             gptr_vofa->ptr_vofa_data_[4] = gptr_exo_data->left_side_.percent_gait_ / 100.0f;
@@ -106,11 +119,6 @@ void AltMainTask(void *argument)
             gptr_vofa->ptr_vofa_data_[18] = gptr_exo->left_side_.heel_fsr_.calibration_refinement_min_;
             gptr_vofa->ptr_vofa_data_[19] = gptr_exo->right_side_.heel_fsr_.calibration_refinement_min_;
             gptr_vofa->SendOneFrame(20);
-            // static uint8_t cnt = 0;
-            // if (cnt++ >= 20)
-            // {
-            //     gptr_vofa->SendOneFrame(20);
-            // }
         }
 	}
 }

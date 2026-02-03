@@ -7,7 +7,7 @@ enum ComTypeCode
     kComTypeMotionControl = 0x01,       // 发送运控模式电机控制指令
     kComTypeStatusFeedback = 0x02,      // 电机反馈数据
     kComTypeEnableMotor = 0x03,         // 电机使能运行
-    kComTypeStopMotor = 0x04,           // 电机停止运行
+    kComTypeDisableMotor = 0x04,           // 电机停止运行
     kComTypeSetMechPosZero = 0x06,    // 把当前电机位置设为机械零位(掉电丢失)
     kComTypeSetMotorCanID = 0x07,     // 设置电机CAN_ID, 立即生效
     kComTypeReadSingleParam = 0x11,    // 单个参数读取
@@ -39,9 +39,9 @@ enum ComTypeCode
   * @param[in]      data_size:待发送数据长度, 最大8字节
   * @retval         无
   */
-static void RobstrideSendData(uint32_t can_ext_id, uint8_t *data, uint8_t data_size)
+static void RobstrideSendData(uint32_t can_ext_id, uint8_t *data, uint32_t data_size)
 {
-    FDCanSendData(&hfdcan1, can_ext_id, data, data_size);
+    FDCanSendData(&hfdcan1, can_ext_id, FDCAN_EXTENDED_ID, data, data_size);
 }
 
 /**
@@ -83,7 +83,7 @@ static int FloatToUint(float x, float x_min, float x_max, int num_bits)
 Robstride::Robstride(uint8_t can_id) :
     can_id_(can_id),
     mcu_id_(0),
-    run_mode_(RobstrideRunMode::kMotionMode),
+    run_mode_(RobstrideMotorMode::kMotionMode),
     error_code_(0),
     fault_code_(0),
     pattern_(RobstridePattern::kPatternReset),
@@ -155,10 +155,10 @@ void Robstride::ObtainDeviceIDReceive(uint8_t *can_rxdata)
   */
 void Robstride::MotionControl(void)
 {
-    if (run_mode_ != RobstrideRunMode::kMotionMode)
+    if (run_mode_ != RobstrideMotorMode::kMotionMode)
     {
-        run_mode_ = RobstrideRunMode::kMotionMode;
-        SetRunMode();
+        run_mode_ = RobstrideMotorMode::kMotionMode;
+        SetMotorMode();
         EnableMotor();
     }
     if (pattern_ != RobstridePattern::kPatternMotor)
@@ -201,7 +201,7 @@ void Robstride::StatusFeedbackReceive(uint32_t can_ext_id, uint8_t *can_rxdata)
 	error_code_ = (can_ext_id&0x3F0000)>>16;
     if (error_code_ != 0x00)
     {
-        StopMotor(ROBSTRIDE_KEEP_FAULT);
+        DisableMotor(ROBSTRIDE_KEEP_FAULT);
     }
     pattern_ = (can_ext_id&0xC00000)>>22;
 }
@@ -226,13 +226,13 @@ void Robstride::EnableMotor(void)
   * @param[in]      do_clear_error:清除错误位(0不清除 1清除)
   * @retval         无
   */
-void Robstride::StopMotor(uint8_t do_clear_error)
+void Robstride::DisableMotor(uint8_t do_clear_error)
 {
 	uint32_t can_ext_id = 0;
 	uint8_t can_txdata[8] = {0};
 
     can_txdata[0] = do_clear_error;   //清除错误位设置
-    can_ext_id = kComTypeStopMotor<<24 | Master_CAN_ID<<8 | can_id_;
+    can_ext_id = kComTypeDisableMotor<<24 | Master_CAN_ID<<8 | can_id_;
     RobstrideSendData(can_ext_id, can_txdata, sizeof(can_txdata));
 }
 
@@ -241,9 +241,9 @@ void Robstride::StopMotor(uint8_t do_clear_error)
   * @param[in]      robstride_motor:灵足电机结构体指针
   * @retval         无
   */
-void Robstride::SetMecposZero(void)
+void Robstride::SetMecPosZero(void)
 {
-    StopMotor(0);
+    DisableMotor(0);
 	uint32_t can_ext_id = 0;
     uint8_t can_txdata[8]={0};
 
@@ -261,7 +261,7 @@ void Robstride::SetMecposZero(void)
   */
 void Robstride::SetMotorCanID(uint8_t can_id)
 {
-    StopMotor(0);
+    DisableMotor(0);
 	uint32_t can_ext_id = 0;
     uint8_t can_txdata[8] = {0};
     if (can_id_ != can_id)
@@ -451,7 +451,7 @@ void Robstride::FaultFeedbackReceive(uint8_t *can_rxdata)
 {
 	fault_code_ = can_rxdata[0]<<24 | can_rxdata[1]<<16 | can_rxdata[2]<<8 | can_rxdata[3];
     /** #TODO: Report fault information */
-    StopMotor(ROBSTRIDE_KEEP_FAULT);
+    DisableMotor(ROBSTRIDE_KEEP_FAULT);
 }
 
 /**
@@ -512,7 +512,7 @@ void Robstride::StatusFeedbackAutoReceive(uint32_t can_ext_id, uint8_t *can_rxda
 
     if (error_code_ != 0x00)
     {
-        StopMotor(ROBSTRIDE_KEEP_FAULT);
+        DisableMotor(ROBSTRIDE_KEEP_FAULT);
     }
 }
 
@@ -533,9 +533,9 @@ void Robstride::SetProtocal(void)
   * @param[in]      robstride_motor:灵足电机结构体数组
   * @retval         无
   */
-void Robstride::SetRunMode(void)
+void Robstride::SetMotorMode(void)
 {
-    StopMotor(ROBSTRIDE_KEEP_FAULT);
+    DisableMotor(ROBSTRIDE_KEEP_FAULT);
     SetSingleParam(RobstrideParamIdx::run_mode, run_mode_);
 }
 
@@ -546,10 +546,10 @@ void Robstride::SetRunMode(void)
   */
 void Robstride::PositionControlPP(void)
 {
-    if (run_mode_ != RobstrideRunMode::kPositionPPMode)
+    if (run_mode_ != RobstrideMotorMode::kPositionPPMode)
     {
-        run_mode_ = RobstrideRunMode::kPositionPPMode;
-        SetRunMode();
+        run_mode_ = RobstrideMotorMode::kPositionPPMode;
+        SetMotorMode();
         EnableMotor();
     }
     SetSingleParam(RobstrideParamIdx::vel_max,vel_max_);
@@ -564,10 +564,10 @@ void Robstride::PositionControlPP(void)
   */
 void Robstride::PositionControlCSP(void)
 {
-    if (run_mode_ != RobstrideRunMode::kPositionCSPMode)
+    if (run_mode_ != RobstrideMotorMode::kPositionCSPMode)
     {
-        run_mode_ = RobstrideRunMode::kPositionCSPMode;
-        SetRunMode();
+        run_mode_ = RobstrideMotorMode::kPositionCSPMode;
+        SetMotorMode();
         EnableMotor();
     }
 	SetSingleParam(RobstrideParamIdx::limit_spd,limit_speed_);
@@ -581,10 +581,10 @@ void Robstride::PositionControlCSP(void)
   */
 void Robstride::SpeedControl(void)
 {
-    if (run_mode_ != RobstrideRunMode::kSpeedMode)
+    if (run_mode_ != RobstrideMotorMode::kSpeedMode)
     {
-        run_mode_ = RobstrideRunMode::kSpeedMode;
-        SetRunMode();
+        run_mode_ = RobstrideMotorMode::kSpeedMode;
+        SetMotorMode();
         EnableMotor();
     }
     SetSingleParam(RobstrideParamIdx::limit_cur, limit_current_);
@@ -599,10 +599,10 @@ void Robstride::SpeedControl(void)
   */
 void Robstride::CurrentControl(void)
 {
-    if (run_mode_ != RobstrideRunMode::kCurrentMode)
+    if (run_mode_ != RobstrideMotorMode::kCurrentMode)
     {
-        run_mode_ = RobstrideRunMode::kCurrentMode;
-        SetRunMode();
+        run_mode_ = RobstrideMotorMode::kCurrentMode;
+        SetMotorMode();
         EnableMotor();
     }
     SetSingleParam(RobstrideParamIdx::iq_ref,iq_ref_);
@@ -615,8 +615,8 @@ void Robstride::CurrentControl(void)
   */
 void Robstride::GoZeroPosMode(void)
 {
-    run_mode_ = RobstrideRunMode::kGoZeroPosMode;
-    SetRunMode();
+    run_mode_ = RobstrideMotorMode::kGoZeroPosMode;
+    SetMotorMode();
 }
 
 /**

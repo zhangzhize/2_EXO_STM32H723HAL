@@ -38,9 +38,8 @@ void AnkleJoint::WaitForCommunication()
     {
         while (motor_.feedback_flag_ == 0)
         {
-            // motor_.EnableMotor();
-            motor_.run_mode_ = RobstrideRunMode::kMotionMode;
-            motor_.SetRunMode();
+            motor_.run_mode_ = RobstrideMotorMode::kMotionMode;
+            motor_.SetMotorMode();
             DelayMs(100);
         }
         motor_.feedback_flag_ = 0;
@@ -58,20 +57,20 @@ void AnkleJoint::Read()
     if (pj_->is_left_)
     {
         pj_->pos_rad_ = motor_.position_;
-        pj_->vel_rad_s_ = motor_.speed_;
-        pj_->torque_Nm_ = motor_.torque_;
+        pj_->vel_radps_ = motor_.speed_;
+        pj_->tor_Nm_ = motor_.torque_;
     }
     else
     {
         pj_->pos_rad_ = -motor_.position_;
-        pj_->vel_rad_s_ = -motor_.speed_;
-        pj_->torque_Nm_ = -motor_.torque_;
+        pj_->vel_radps_ = -motor_.speed_;
+        pj_->tor_Nm_ = -motor_.torque_;
     }
 }
 
 void AnkleJoint::Assist()
 {
-    if (!pj_->is_used_ || !ps_->is_calibration_done_)
+    if (!pj_->is_used_)
     {
         return;
     }
@@ -157,9 +156,8 @@ void KneeJoint::WaitForCommunication()
     {
         while (motor_.feedback_flag_ == 0)
         {
-            // motor_.EnableMotor();
-            motor_.run_mode_ = RobstrideRunMode::kMotionMode;
-            motor_.SetRunMode();
+            motor_.run_mode_ = RobstrideMotorMode::kMotionMode;
+            motor_.SetMotorMode();
             DelayMs(100);
         }
         motor_.feedback_flag_ = 0;
@@ -177,20 +175,20 @@ void KneeJoint::Read()
     if (pj_->is_left_)
     {
         pj_->pos_rad_ = motor_.position_;
-        pj_->vel_rad_s_ = motor_.speed_;
-        pj_->torque_Nm_ = motor_.torque_;
+        pj_->vel_radps_ = motor_.speed_;
+        pj_->tor_Nm_ = motor_.torque_;
     }
     else
     {
         pj_->pos_rad_ = -motor_.position_;
-        pj_->vel_rad_s_ = -motor_.speed_;
-        pj_->torque_Nm_ = -motor_.torque_;
+        pj_->vel_radps_ = -motor_.speed_;
+        pj_->tor_Nm_ = -motor_.torque_;
     }
 }
 
 void KneeJoint::Assist()
 {
-    if (!pj_->is_used_ || !ps_->is_calibration_done_)
+    if (!pj_->is_used_)
     {
         return;
     }
@@ -219,7 +217,7 @@ void KneeJoint::Assist()
         }
         if (assist_armed)
         {
-            force_profile = force_profile_generator_.GetForceProfile(phase_rad, pj_->pos_rad_, pj_->vel_rad_s_);
+            force_profile = force_profile_generator_.GetForceProfile(phase_rad, pj_->pos_rad_, pj_->vel_radps_);
             pe_->exo_status_ = ExoStatus::kAssisting;
         }
         else
@@ -264,10 +262,10 @@ void KneeJoint::ImpedanceControl()
     q_ref_ = amplitude * sin_t;
     dot_q_ref_ = amplitude * omega * cos_t;
     ddot_q_ref_ = - amplitude * omega * omega * sin_t;
-    disturbance_observer_.UpdateObserver(pj_->pos_rad_, pj_->torque_Nm_ / M0_);
+    disturbance_observer_.UpdateObserver(pj_->pos_rad_, pj_->tor_Nm_ / M0_);
 
     float hat_disturbance = - M0_ * disturbance_observer_.hat_x2_;
-    float dot_tilde_q = dot_q_ref_ - pj_->vel_rad_s_;
+    float dot_tilde_q = dot_q_ref_ - pj_->vel_radps_;
     float tilde_q = q_ref_ - pj_->pos_rad_;
 
     motor_.torque_forward_ = M0_ * ddot_q_ref_ + M0_ / Md_ * (Bd_ * dot_tilde_q + Kd_ * tilde_q - hat_disturbance) + hat_disturbance;
@@ -278,14 +276,154 @@ void KneeJoint::ImpedanceControl()
     motor_.MotionControl();
 }
 
+HipJoint::HipJoint(bool is_left, ExoData *exo_data) : pe_(exo_data), ps_(is_left ? &pe_->left_side_ : &pe_->right_side_), pj_(is_left ? &pe_->left_side_.hip_joint_ : &pe_->right_side_.hip_joint_), motor_(is_left ? ExoJointCanID::kLeftHip : ExoJointCanID::kRightHip)
+{
+}
+
+void HipJoint::Calibrate()
+{
+    if (!pj_->is_used_)
+    {
+        return;
+    }
+    /** #Todo: Implement joint calibration logic, if needed  */
+}
+
+void HipJoint::Read()
+{
+    if (!pj_->is_used_)
+    {
+        return;
+    }
+
+    if (pj_->is_left_)
+    {
+        pj_->pos_rad_ = motor_.feedback_.pos_rad_;
+        pj_->vel_radps_ = motor_.feedback_.vel_radps_;
+        pj_->tor_Nm_ = motor_.feedback_.tor_Nm_;
+    }
+    else
+    {
+        pj_->pos_rad_ = -motor_.feedback_.pos_rad_;
+        pj_->vel_radps_ = -motor_.feedback_.vel_radps_;
+        pj_->tor_Nm_ = -motor_.feedback_.tor_Nm_;
+    }
+}
+
+void HipJoint::WaitForCommunication()
+{
+    if (!pj_->is_used_)
+    {
+        return;
+    }
+
+    for (int i=0; i<3; i++)
+    {
+        while (motor_.feedback_.flag_ == 0)
+        {
+            motor_.ctrl_param_.mode_id_ = DMMotorModeID::kMIT;
+            motor_.SetMotorMode();
+            DelayMs(100);
+        }
+        motor_.feedback_.flag_ = 0;
+    }
+    motor_.EnableMotor();
+}
 
 
-Side::Side(bool is_left, ExoData *pe) : pe_(pe), ps_(is_left ? &pe_->left_side_ : &pe_->right_side_), heel_fsr_(is_left ? kFsrIdLeftHeel : kFsrIdRightHeel), toe_fsr_(is_left ? kFsrIdLeftToe : kFsrIdRightToe), knee_joint_(is_left, pe), ankle_joint_(is_left, pe)
+namespace {
+struct HipFFShared
+{
+    static constexpr int kHistSize = 128;
+    static constexpr int kDelaySamples = 37;     // 35ms@5ms周期
+    static constexpr float kLambda = 0.01f;
+    static constexpr float kK = 7.0f;
+
+    float posL[kHistSize] = {0.0f};
+    float posR[kHistSize] = {0.0f};
+    float lastL = 0.0f;
+    float lastR = 0.0f;
+    int idx = 0;
+    bool inited = false;
+
+    uint32_t last_tick_ms = 0;
+
+    float tau_left = 0.0f;
+    float tau_right = 0.0f;
+
+    void UpdateAndCompute(uint32_t now_ms, float posL_now, float posR_now)
+    {
+        if (last_tick_ms == now_ms) return;
+        last_tick_ms = now_ms;
+
+        if (!inited)
+        {
+            lastL = posL_now;
+            lastR = posR_now;
+            for (int i = 0; i < kHistSize; ++i)
+            {
+                posL[i] = posL_now;
+                posR[i] = posR_now;
+            }
+            inited = true;
+        }
+
+        posL[idx] = kLambda * posL_now + (1.0f - kLambda) * lastL;
+        posR[idx] = kLambda * posR_now + (1.0f - kLambda) * lastR;
+        lastL = posL[idx];
+        lastR = posR[idx];
+
+        int past = idx - kDelaySamples;
+        if (past < 0) past += kHistSize;
+
+        const float posL_d = posL[past];
+        const float posR_d = posR[past];
+
+        const float tau = kK * (sinf(posR_d) - sinf(posL_d));
+        tau_left = tau;
+        // tau_right = -tau;
+        tau_right = tau;
+
+        idx = (idx + 1) % kHistSize;
+    }
+};
+static HipFFShared g_hip_ff;
+}
+
+void HipJoint::Assist()
+{
+    if (!pj_->is_used_)
+    {
+        return;
+    }
+
+    const float posL_now = pe_->left_side_.hip_joint_.pos_rad_;
+    const float posR_now = pe_->right_side_.hip_joint_.pos_rad_;
+    const uint32_t now_ms = GetSysTimeMs();
+
+    if (pj_->is_left_)
+    {
+        g_hip_ff.UpdateAndCompute(now_ms, posL_now, posR_now);
+    }
+    const float tau_me = pj_->is_left_ ? g_hip_ff.tau_left : g_hip_ff.tau_right;
+
+    motor_.ctrl_param_.mode_id_ = DMMotorModeID::kMIT;
+    motor_.ctrl_param_.kp_set_ = 0.0f;
+    motor_.ctrl_param_.kd_set_ = 0.0f;
+    motor_.ctrl_param_.pos_set_rad_ = 0.0f;
+    motor_.ctrl_param_.vel_set_radps_ = 0.0f;
+    motor_.ctrl_param_.tor_set_Nm_ = tau_me;
+    motor_.MitControl();
+    // motor_.EnableMotor();
+}
+
+Side::Side(bool is_left, ExoData *pe) : pe_(pe), ps_(is_left ? &pe_->left_side_ : &pe_->right_side_), heel_fsr_(is_left ? kFsrIdLeftHeel : kFsrIdRightHeel), toe_fsr_(is_left ? kFsrIdLeftToe : kFsrIdRightToe), hip_joint_(is_left, pe), knee_joint_(is_left, pe), ankle_joint_(is_left, pe)
 {
 }
 
 void Side::Calibrate()
 {
+    hip_joint_.Calibrate();
     knee_joint_.Calibrate();
     ankle_joint_.Calibrate();
     CalibrateFsr();
@@ -300,6 +438,7 @@ void Side::Read()
         return;
     }
 
+    hip_joint_.Read();
     knee_joint_.Read();
     ankle_joint_.Read();
     heel_fsr_.Read();
@@ -308,11 +447,12 @@ void Side::Read()
 
 void Side::Assist()
 {
-    if (!ps_->is_used_)
+    if (!ps_->is_used_ || !ps_->is_calibration_done_)
     {
         return;
     }
 
+    hip_joint_.Assist();
     knee_joint_.Assist();
     ankle_joint_.Assist();
 }
@@ -425,8 +565,8 @@ void Side::ClearStepTimeEstimate()
 
 void Side::Shutdown()
 {
-    knee_joint_.motor_.StopMotor(0);
-    ankle_joint_.motor_.StopMotor(0);
+    knee_joint_.motor_.DisableMotor(0);
+    ankle_joint_.motor_.DisableMotor(0);
     ClearStepTimeEstimate();
 }
 
@@ -566,15 +706,15 @@ void Exo::Initialize()
 {
     /** 等待上电 */
     uint8_t exo_status_idx = 0;
-    while (pe_->battery_voltage_ < 19.0f)
-    {
-        ReadBatVol();
-        DelayMs(100);
+    // while (pe_->battery_voltage_ < 19.0f)
+    // {
+    //     ReadBatVol();
+    //     DelayMs(100);
 
-        pe_->exo_status_ = ExoStatus::kErrorBatteryLowVoltage;
-        exo_status_idx = static_cast<uint8_t>(pe_->exo_status_);
-        status_led_.UpdateColor(exo_status_idx > 8 ? 8 : exo_status_idx);
-    }
+    //     pe_->exo_status_ = ExoStatus::kErrorBatteryLowVoltage;
+    //     exo_status_idx = static_cast<uint8_t>(pe_->exo_status_);
+    //     status_led_.UpdateColor(exo_status_idx > 8 ? 8 : exo_status_idx);
+    // }
     /** 进入标定阶段 */
     pe_->exo_status_ = ExoStatus::kCalibration;
     exo_status_idx = static_cast<uint8_t>(pe_->exo_status_);
@@ -589,16 +729,18 @@ void Exo::Initialize()
     // left_side_.heel_fsr_.calibration_refinement_min_ = 0.15f;
     // right_side_.heel_fsr_.calibration_refinement_max_ = 2.45f;
     // right_side_.heel_fsr_.calibration_refinement_min_ = 0.15f;
-    pe_->left_side_.do_calibration_heel_fsr_ = true;
+    pe_->left_side_.do_calibration_heel_fsr_ = false;
     pe_->left_side_.do_calibration_toe_fsr_ = false;
-    pe_->left_side_.do_calibration_refinement_heel_fsr_ = true;
+    pe_->left_side_.do_calibration_refinement_heel_fsr_ = false;
     pe_->left_side_.do_calibration_refinement_toe_fsr_ = false;
-    pe_->right_side_.do_calibration_heel_fsr_ = true;
+    pe_->right_side_.do_calibration_heel_fsr_ = false;
     pe_->right_side_.do_calibration_toe_fsr_ = false;
-    pe_->right_side_.do_calibration_refinement_heel_fsr_ = true;
+    pe_->right_side_.do_calibration_refinement_heel_fsr_ = false;
     pe_->right_side_.do_calibration_refinement_toe_fsr_ = false;
 
     /** 调试: 选择助力的关节 */
+    pe_->left_side_.hip_joint_.is_used_ = true;
+    pe_->right_side_.hip_joint_.is_used_ = true;
     pe_->left_side_.knee_joint_.is_used_ = false;
     pe_->right_side_.knee_joint_.is_used_ = false;
     pe_->left_side_.ankle_joint_.is_used_ = false;
@@ -607,7 +749,6 @@ void Exo::Initialize()
     /** 调试: 调助力大小 */
     pe_->user_weight_kg_ = 30.0f;
     right_side_.knee_joint_.force_profile_generator_.stiffness_ = 0.5f;
-
     left_side_.ankle_joint_.cable_released_position_ = 0.0f;
     left_side_.ankle_joint_.cable_pre_tensioned_position_ = 0.5f;
     left_side_.ankle_joint_.cable_tensioned_position_ = 1.5f;
@@ -615,9 +756,11 @@ void Exo::Initialize()
     left_side_.ankle_joint_.assistance_end_phase_rad_ = 0.65f * _2PI;
 
     /** 跟电机建立通信 */
+    left_side_.hip_joint_.WaitForCommunication();
+    right_side_.hip_joint_.WaitForCommunication();
     left_side_.knee_joint_.WaitForCommunication();
-    left_side_.ankle_joint_.WaitForCommunication();
     right_side_.knee_joint_.WaitForCommunication();
+    left_side_.ankle_joint_.WaitForCommunication();
     right_side_.ankle_joint_.WaitForCommunication();
 }
 
@@ -636,7 +779,7 @@ void Exo::Run()
 
     if (left_side_.knee_joint_.motor_.error_code_ != 0 || left_side_.knee_joint_.motor_.fault_code_ != 0 || right_side_.knee_joint_.motor_.error_code_ != 0 || right_side_.knee_joint_.motor_.fault_code_ != 0)
     {
-        pe_->exo_status_ = ExoStatus::kErrorRobstride;
+        pe_->exo_status_ = ExoStatus::kErrorMotor;
     }
 
     uint8_t exo_status_idx = static_cast<uint8_t>(pe_->exo_status_);
@@ -679,7 +822,7 @@ void Exo::Estimate()
     right_side_.EstimateGait();
 
     /**< 双足膝关节角度差 */
-    adaptive_oscilator_.UpdateGaitPhase(pe_->left_side_.knee_joint_.pos_rad_, pe_->right_side_.knee_joint_.pos_rad_, pe_->left_side_.knee_joint_.vel_rad_s_, pe_->right_side_.knee_joint_.vel_rad_s_, pe_->left_side_.heel_contact_state_, pe_->right_side_.heel_contact_state_);
+    adaptive_oscilator_.UpdateGaitPhase(pe_->left_side_.knee_joint_.pos_rad_, pe_->right_side_.knee_joint_.pos_rad_, pe_->left_side_.knee_joint_.vel_radps_, pe_->right_side_.knee_joint_.vel_radps_, pe_->left_side_.heel_contact_state_, pe_->right_side_.heel_contact_state_);
     pe_->ao_left_phase_rad_ = adaptive_oscilator_.left_phi_comp_rad_;
     pe_->ao_right_phase_rad_ = adaptive_oscilator_.right_phi_comp_rad_;
     pe_->ao_left_event_cnt_ = adaptive_oscilator_.left_event_cnt_;
@@ -738,9 +881,11 @@ void Exo::UartRxCallback(uint8_t *data, uint16_t data_size)
 
 void Exo::CanRxCallback(uint32_t can_id, uint8_t *data)
 {
+    left_side_.hip_joint_.motor_.CanRxCallBack(can_id, data);
+    right_side_.hip_joint_.motor_.CanRxCallBack(can_id, data);
     left_side_.knee_joint_.motor_.CanRxCallBack(can_id, data);
-    left_side_.ankle_joint_.motor_.CanRxCallBack(can_id, data);
     right_side_.knee_joint_.motor_.CanRxCallBack(can_id, data);
+    left_side_.ankle_joint_.motor_.CanRxCallBack(can_id, data);
     right_side_.ankle_joint_.motor_.CanRxCallBack(can_id, data);
 }
 

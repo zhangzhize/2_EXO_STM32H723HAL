@@ -15,6 +15,7 @@
 #include "status_led.hpp"
 #include "fsr.hpp"
 #include "robstride.hpp"
+#include "dm_motor.hpp"
 #include "force_profile_generator.hpp"
 #include "adaptive_oscillator.hpp"
 #include "exo_data.hpp"
@@ -23,12 +24,15 @@
 
 enum ExoJointCanID : uint8_t
 {
+    kLeftHip = 0x01,
+    kRightHip = 0x02,
     kLeftKnee = 0x2A,
     kRightKnee = 0x55,
     kLeftAnkle = 0x2A,
     // kLeftAnkle = 0x28,
     kRightAnkle = 0x53,
 };
+
 
 class AnkleJoint
 {
@@ -71,6 +75,22 @@ public:
     void ImpedanceControl();
 };
 
+class HipJoint
+{
+public:
+    HipJoint(bool is_left, ExoData *exo_data);
+    ~HipJoint() = default;
+    void Calibrate();
+    void Read();
+    void WaitForCommunication();
+    void Assist();
+    ExoData *pe_;
+    SideData *ps_;
+    JointData *pj_;
+    // HipForceProfileGenerator force_profile_generator_;
+    DMMotor motor_;
+};
+
 class Side
 {
 public:
@@ -90,6 +110,7 @@ public:
     SideData *ps_;
     Fsr heel_fsr_;
     Fsr toe_fsr_;
+    HipJoint hip_joint_;
     KneeJoint knee_joint_;
     AnkleJoint ankle_joint_;
 };

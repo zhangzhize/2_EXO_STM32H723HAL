@@ -111,7 +111,7 @@ void HAL_FDCAN_MspInit(FDCAN_HandleTypeDef* fdcanHandle)
     HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
     /* FDCAN1 interrupt Init */
-    HAL_NVIC_SetPriority(FDCAN1_IT0_IRQn, 5, 0);
+    HAL_NVIC_SetPriority(FDCAN1_IT0_IRQn, 3, 0);
     HAL_NVIC_EnableIRQ(FDCAN1_IT0_IRQn);
   /* USER CODE BEGIN FDCAN1_MspInit 1 */
 
@@ -145,14 +145,34 @@ void HAL_FDCAN_MspDeInit(FDCAN_HandleTypeDef* fdcanHandle)
 }
 
 /* USER CODE BEGIN 1 */
-void BspExtCanInit(void)
+void BspCanInit(void)
 {
-	BspCanFilterInit();
-	HAL_FDCAN_Start(&hfdcan1);
-	HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
+    FDCAN_FilterTypeDef fdcan_filter;
+
+    fdcan_filter.IdType = FDCAN_STANDARD_ID;
+    fdcan_filter.FilterIndex = 0;
+    fdcan_filter.FilterType = FDCAN_FILTER_MASK;
+    fdcan_filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+    fdcan_filter.FilterID1 = 0x0000;
+    fdcan_filter.FilterID2 = 0x0000;
+    HAL_FDCAN_ConfigFilter(&hfdcan1, &fdcan_filter);
+
+    fdcan_filter.IdType = FDCAN_EXTENDED_ID;
+    fdcan_filter.FilterIndex = 0;
+    fdcan_filter.FilterType = FDCAN_FILTER_MASK;
+    fdcan_filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+    fdcan_filter.FilterID1 = 0x00000000;
+    fdcan_filter.FilterID2 = 0x00000000;
+    HAL_FDCAN_ConfigFilter(&hfdcan1, &fdcan_filter);
+
+	HAL_FDCAN_ConfigGlobalFilter(&hfdcan1,FDCAN_REJECT,FDCAN_REJECT,FDCAN_REJECT_REMOTE,FDCAN_REJECT_REMOTE);
+    HAL_FDCAN_ConfigFifoWatermark(&hfdcan1, FDCAN_CFG_RX_FIFO0, 1);
+
+    HAL_FDCAN_Start(&hfdcan1);
+    HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
 }
 
-void BspCanFilterInit(void)
+void BspExtCanInit(void)
 {
 	FDCAN_FilterTypeDef fdcan_filter;
 
@@ -162,10 +182,13 @@ void BspCanFilterInit(void)
 	fdcan_filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
 	fdcan_filter.FilterID1 = 0x00;
 	fdcan_filter.FilterID2 = 0x00;
-
 	HAL_FDCAN_ConfigFilter(&hfdcan1,&fdcan_filter);
+
 	HAL_FDCAN_ConfigGlobalFilter(&hfdcan1, FDCAN_REJECT, FDCAN_REJECT, FDCAN_REJECT_REMOTE, FDCAN_REJECT_REMOTE);
 	HAL_FDCAN_ConfigFifoWatermark(&hfdcan1, FDCAN_CFG_RX_FIFO0, 1);
+
+	HAL_FDCAN_Start(&hfdcan1);
+	HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
 }
 
 void BspStdCanInit(void)
@@ -178,8 +201,8 @@ void BspStdCanInit(void)
 	fdcan_filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
 	fdcan_filter.FilterID1 = 0x00;
 	fdcan_filter.FilterID2 = 0x00;
-
 	HAL_FDCAN_ConfigFilter(&hfdcan1,&fdcan_filter);
+
 	HAL_FDCAN_ConfigGlobalFilter(&hfdcan1,FDCAN_REJECT,FDCAN_REJECT,FDCAN_REJECT_REMOTE,FDCAN_REJECT_REMOTE);
 	HAL_FDCAN_ConfigFifoWatermark(&hfdcan1, FDCAN_CFG_RX_FIFO0, 1);
 
@@ -187,64 +210,67 @@ void BspStdCanInit(void)
 	HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
 }
 
-void FDCanSendData(FDCAN_HandleTypeDef *hfdcan, uint32_t id, uint8_t *data, uint32_t len)
+void FDCanSendData(FDCAN_HandleTypeDef *hfdcan, uint32_t id, uint32_t id_type, uint8_t *data, uint32_t len)
 {
-	FDCAN_TxHeaderTypeDef pTxHeader;
-    
-	pTxHeader.Identifier=id;
-	pTxHeader.IdType=FDCAN_EXTENDED_ID;
-	pTxHeader.TxFrameType=FDCAN_DATA_FRAME;
-	if(len<=8)
-		pTxHeader.DataLength = len;
-	if(len==12)
-		pTxHeader.DataLength = FDCAN_DLC_BYTES_12;
-	if(len==16)
-		pTxHeader.DataLength = FDCAN_DLC_BYTES_16;
-	if(len==20)
-		pTxHeader.DataLength = FDCAN_DLC_BYTES_20;
-	if(len==24)
-		pTxHeader.DataLength = FDCAN_DLC_BYTES_24;
-	if(len==32)
-		pTxHeader.DataLength = FDCAN_DLC_BYTES_32;
-	if(len==48)
-		pTxHeader.DataLength = FDCAN_DLC_BYTES_48;
-	if(len==64)
-		pTxHeader.DataLength = FDCAN_DLC_BYTES_64;
-	pTxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-	pTxHeader.BitRateSwitch = FDCAN_BRS_OFF;
-	pTxHeader.FDFormat = FDCAN_CLASSIC_CAN;
-	pTxHeader.TxEventFifoControl=FDCAN_NO_TX_EVENTS;
-	pTxHeader.MessageMarker=0;
+    FDCAN_TxHeaderTypeDef pTxHeader;
 
-	HAL_FDCAN_AddMessageToTxFifoQ(hfdcan, &pTxHeader, data);
+
+    pTxHeader.Identifier = id;
+    pTxHeader.IdType = id_type;
+    pTxHeader.TxFrameType = FDCAN_DATA_FRAME;
+    pTxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+    pTxHeader.BitRateSwitch = FDCAN_BRS_OFF; 
+    pTxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+    pTxHeader.MessageMarker = 0;
+    if (len > 8)
+    {
+        pTxHeader.FDFormat = FDCAN_FD_CAN;
+        if(len <= 12)      pTxHeader.DataLength = FDCAN_DLC_BYTES_12;
+        else if(len <= 16) pTxHeader.DataLength = FDCAN_DLC_BYTES_16;
+        else if(len <= 20) pTxHeader.DataLength = FDCAN_DLC_BYTES_20;
+        else if(len <= 24) pTxHeader.DataLength = FDCAN_DLC_BYTES_24;
+        else if(len <= 32) pTxHeader.DataLength = FDCAN_DLC_BYTES_32;
+        else if(len <= 48) pTxHeader.DataLength = FDCAN_DLC_BYTES_48;
+        else               pTxHeader.DataLength = FDCAN_DLC_BYTES_64;
+    }
+    else
+    {
+        pTxHeader.FDFormat = FDCAN_CLASSIC_CAN;
+        pTxHeader.DataLength = len;
+    }
+    HAL_FDCAN_AddMessageToTxFifoQ(hfdcan, &pTxHeader, data);
 }
 
-static uint8_t FDCanReceive(FDCAN_HandleTypeDef *hfdcan, uint32_t *rec_id, uint8_t *buf)
+/**
+ * @brief 接收函数
+ * @param rec_id: 存储ID的指针
+ * @param is_ext_id: 存储是否为扩展帧的标志（1是扩展，0是标准）
+ * @param buf: 数据缓冲区
+ * @retval: 返回接收到的数据长度
+ */
+static uint32_t FDCanReceive(FDCAN_HandleTypeDef *hfdcan, uint32_t *rec_id, uint8_t *buf)
 {
 	FDCAN_RxHeaderTypeDef pRxHeader;
     
-	if(HAL_FDCAN_GetRxMessage(hfdcan,FDCAN_RX_FIFO0, &pRxHeader, buf)==HAL_OK)
+	if(HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &pRxHeader, buf)==HAL_OK)
 	{
-        uint8_t len = 0;
 		*rec_id = pRxHeader.Identifier;
-        len = pRxHeader.DataLength;
-
-		return len;//接收数据
+		return pRxHeader.DataLength;
 	}
 	return 0;
 }
 
 extern struct Exo *gptr_exo;
 void CallExoCanRxCallBack(struct Exo *ptr_exo, uint32_t can_ext_id, uint8_t *rx_data);
-
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 {
     uint32_t can_id = 0;
-    uint8_t rx_data[8] = {0};
-
+    uint8_t rx_data[64] = {0};
+    uint32_t rx_len = 0;
     if(hfdcan == &hfdcan1)
-	{
-        if (FDCanReceive(&hfdcan1, &can_id, rx_data) == FDCAN_DLC_BYTES_8)
+	{   
+        rx_len = FDCanReceive(&hfdcan1, &can_id, rx_data);
+        if (rx_len == FDCAN_DLC_BYTES_8)
         {
             CallExoCanRxCallBack(gptr_exo, can_id, rx_data);
         }

@@ -7,11 +7,11 @@ JointData::JointData(bool is_left)
 
     rom_rad_ = 0.0f;
     pos_rad_ = 0.0f;
-    vel_rad_s_ = 0.0f;
-    torque_Nm_ = 0.0f;
+    vel_radps_ = 0.0f;
+    tor_Nm_ = 0.0f;
 }
 
-SideData::SideData(bool is_left) : knee_joint_(is_left), ankle_joint_(is_left)
+SideData::SideData(bool is_left) : hip_joint_(is_left), knee_joint_(is_left), ankle_joint_(is_left)
 {
     is_left_ = is_left;
     is_used_ = true;

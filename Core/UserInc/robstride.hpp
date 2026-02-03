@@ -42,7 +42,7 @@ enum RobstrideParamIdx
     zero_sta        = 0x7029,   //零点标志位, 0代表0-2π,1代表-π-π
 };
 
-enum RobstrideRunMode
+enum RobstrideMotorMode
 {
     kMotionMode    = 0x00,         //运控模式
     kPositionPPMode = 0x01,       //位置模式(PP)
@@ -126,8 +126,8 @@ public:
     void StatusFeedbackRequest(void);
     void StatusFeedbackReceive(uint32_t can_ext_id, uint8_t *can_rxdata);
     void EnableMotor(void);
-    void StopMotor(uint8_t do_clear_error);
-    void SetMecposZero(void);
+    void DisableMotor(uint8_t do_clear_error);
+    void SetMecPosZero(void);
     void SetMotorCanID(uint8_t can_id);
     void ReadSingleParamRequest(uint16_t param_index);
     void ReadSingleParamReceive(uint32_t can_ext_id, uint8_t *can_rxdata);
@@ -144,7 +144,7 @@ public:
     void CurrentControl(void);
     void GoZeroPosMode(void);
     void CanRxCallBack(uint32_t can_ext_id, uint8_t *can_rxdata);
-    void SetRunMode(void);
+    void SetMotorMode(void);
 };
 
 #endif
