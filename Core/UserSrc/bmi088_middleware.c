@@ -103,7 +103,7 @@ void BMI088_delay_us(uint16_t us)
 **/
 void BMI088_ACCEL_NS_L(void)
 {
-    HAL_GPIO_WritePin(ACC_CS_GPIO_Port, ACC_CS_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(IMU_ACC_CS_GPIO_Port, IMU_ACC_CS_Pin, GPIO_PIN_RESET);
 }
 /**
 ************************************************************************
@@ -115,7 +115,7 @@ void BMI088_ACCEL_NS_L(void)
 **/
 void BMI088_ACCEL_NS_H(void)
 {
-    HAL_GPIO_WritePin(ACC_CS_GPIO_Port, ACC_CS_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(IMU_ACC_CS_GPIO_Port, IMU_ACC_CS_Pin, GPIO_PIN_SET);
 }
 /**
 ************************************************************************
@@ -127,7 +127,7 @@ void BMI088_ACCEL_NS_H(void)
 **/
 void BMI088_GYRO_NS_L(void)
 {
-    HAL_GPIO_WritePin(GYRO_CS_GPIO_Port, GYRO_CS_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(IMU_GYRO_CS_GPIO_Port, IMU_GYRO_CS_Pin, GPIO_PIN_RESET);
 }
 /**
 ************************************************************************
@@ -139,7 +139,7 @@ void BMI088_GYRO_NS_L(void)
 **/
 void BMI088_GYRO_NS_H(void)
 {
-    HAL_GPIO_WritePin(GYRO_CS_GPIO_Port, GYRO_CS_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(IMU_GYRO_CS_GPIO_Port, IMU_GYRO_CS_Pin, GPIO_PIN_SET);
 }
 /**
 ************************************************************************

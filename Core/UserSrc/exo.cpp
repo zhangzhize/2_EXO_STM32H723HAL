@@ -335,7 +335,7 @@ namespace {
 struct HipFFShared
 {
     static constexpr int kHistSize = 128;
-    static constexpr int kDelaySamples = 37;     // 35ms@5ms周期
+    static constexpr int kDelaySamples = 35;     // delay 35*5ms
     static constexpr float kLambda = 0.01f;
     static constexpr float kK = 7.0f;
 
