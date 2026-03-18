@@ -31,7 +31,7 @@ AS7341_ERROR AS7341::begin(I2C_HandleTypeDef *hi2c, uint8_t addr)
     // Have AS7341 control external led.
     // setRegisterBit(REGISTER_CONFIG, 3);
 
-    return AS7341_ERROR::ERROR_NONE;
+    return AS7341_ERROR::OK;
 }
 
 bool AS7341::isConnected()
@@ -260,7 +260,7 @@ AS7341_ERROR AS7341::readAllChannels(unsigned int *channelData)
     for (int i = 0; i < 6; i++)
         channelData[i + 6] = buffer[2 * i + 1] << 8 | buffer[2 * i];
 
-    return AS7341_ERROR::ERROR_NONE;
+    return AS7341_ERROR::OK;
 }
 
 void AS7341::setMuxLo()
@@ -329,7 +329,7 @@ AS7341_ERROR AS7341::readAllChannelsBasicCounts(float *channelDataBasicCounts)
     unsigned int rawChannelData[12];
     AS7341_ERROR result = readAllChannels(rawChannelData);
 
-    if (result != AS7341_ERROR::ERROR_NONE)
+    if (result != AS7341_ERROR::OK)
         return result;
 
     unsigned int aTime = (unsigned int)getATIME();
@@ -354,7 +354,7 @@ AS7341_ERROR AS7341::readAllChannelsBasicCounts(float *channelDataBasicCounts)
         channelDataBasicCounts[i] = float(rawChannelData[i]) / (gain * tint);
     }
 
-    return AS7341_ERROR::ERROR_NONE;
+    return AS7341_ERROR::OK;
 }
 
 void AS7341::enablePinInterupt()
@@ -1167,5 +1167,5 @@ AS7341_ERROR AS7341::readCustomChannels(uint16_t *results)
         results[i] = (buffer[i * 2 + 1] << 8) | buffer[i * 2];
     }
 
-    return AS7341_ERROR::ERROR_NONE;
+    return AS7341_ERROR::OK;
 }

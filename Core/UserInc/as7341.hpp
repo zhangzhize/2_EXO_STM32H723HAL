@@ -6,7 +6,7 @@
 #define AS7341_DEFAULT_I2C_ADDR 0x39
 
 enum class AS7341_ERROR : int8_t {
-    ERROR_NONE          = 0,
+    OK                  = 0,
     I2C_COMM_ERROR      = -1,
     WRONG_CHIP_ID       = -2,
     MEASUREMENT_TIMEOUT = -3,
@@ -35,68 +35,6 @@ enum class AS7341_GAIN
 enum class AS7341_CH : uint8_t {
     F1, F2, F3, F4, F5, F6, F7, F8, CLEAR, NIR, NONE
 };
-
-// Registers definitions
-const uint8_t REGISTER_CH0_DATA_L		= 0x95;
-const uint8_t REGISTER_CH0_DATA_H		= 0x96;
-const uint8_t REGISTER_ITIME_L			= 0x63;
-const uint8_t REGISTER_ITIME_M			= 0x64;
-const uint8_t REGISTER_ITIME_H			= 0x65;
-const uint8_t REGISTER_CH1_DATA_L		= 0x97;
-const uint8_t REGISTER_CH1_DATA_H		= 0x98;
-const uint8_t REGISTER_CH2_DATA_L		= 0x99;
-const uint8_t REGISTER_CH2_DATA_H		= 0x9a;
-const uint8_t REGISTER_CH3_DATA_L		= 0x9b;
-const uint8_t REGISTER_CH3_DATA_H		= 0x9c;
-const uint8_t REGISTER_CH4_DATA_L		= 0x9d;
-const uint8_t REGISTER_CH4_DATA_H		= 0x9e;
-const uint8_t REGISTER_CH5_DATA_L		= 0x9f;
-const uint8_t REGISTER_CH5_DATA_H		= 0xa0;
-const uint8_t REGISTER_CONFIG			= 0x70;
-const uint8_t REGISTER_STAT			    = 0x71;
-const uint8_t REGISTER_EDGE			    = 0x72;
-const uint8_t REGISTER_GPIO			    = 0x73;
-const uint8_t REGISTER_LED				= 0x74;
-const uint8_t REGISTER_ENABLE			= 0x80;
-const uint8_t REGISTER_ATIME			= 0x81;
-const uint8_t REGISTER_WTIME			= 0x82;
-const uint8_t REGISTER_SP_TH_L_LSB		= 0x84;
-const uint8_t REGISTER_SP_TH_L_MSB		= 0x85;
-const uint8_t REGISTER_SP_TH_H_LSB		= 0x86;
-const uint8_t REGISTER_SP_TH_H_MSB		= 0x87;
-const uint8_t REGISTER_AUXID			= 0x90;
-const uint8_t REGISTER_REVID			= 0x91;
-const uint8_t REGISTER_ID				= 0x92;
-const uint8_t REGISTER_STATUS			= 0x93;
-const uint8_t REGISTER_ASTATUS			= 0x94;
-const uint8_t REGISTER_STATUS_2		    = 0xa3;
-const uint8_t REGISTER_STATUS_3		    = 0xa4;
-const uint8_t REGISTER_STATUS_5		    = 0xa6;
-const uint8_t REGISTER_STATUS_6		    = 0xa7;
-const uint8_t REGISTER_CFG_0			= 0xa9;
-const uint8_t REGISTER_CFG_1			= 0xaa;
-const uint8_t REGISTER_CFG_3			= 0xac;
-const uint8_t REGISTER_CFG_6			= 0xaf;
-const uint8_t REGISTER_CFG_8			= 0xb1;
-const uint8_t REGISTER_CFG_9			= 0xb2;
-const uint8_t REGISTER_CFG_10			= 0xb3;
-const uint8_t REGISTER_CFG_12			= 0xb5;
-const uint8_t REGISTER_PERS			    = 0xbd;
-const uint8_t REGISTER_GPIO_2			= 0xbe;
-const uint8_t REGISTER_ASTEP_L			= 0xca;
-const uint8_t REGISTER_ASTEP_H			= 0xcb;
-const uint8_t REGISTER_AGC_GAIN_MAX	    = 0xcf;
-const uint8_t REGISTER_AZ_CONFIG		= 0xd6;
-const uint8_t REGISTER_FD_TIME_1		= 0xd8;
-const uint8_t REGISTER_FD_TIME_2		= 0xda;
-const uint8_t REGISTER_FD_STATUS		= 0xdb;
-const uint8_t REGISTER_INTENAB			= 0xf9;
-const uint8_t REGISTER_CONTROL			= 0xfa;
-const uint8_t REGISTER_FIFO_MAP		    = 0xfc;
-const uint8_t REGISTER_FIFO_LVL		    = 0xfd;
-const uint8_t REGISTER_FDATA_L			= 0xfe;
-const uint8_t REGISTER_FDATA_H			= 0xff;
-
 
 class AS7341
 {
@@ -272,6 +210,67 @@ private:
     bool isBitSet(uint8_t registerAddress, uint8_t const bitPosition);
 
     void writeSMUX(const uint8_t* smux_data);
+
+    // Registers definitions
+    static constexpr uint8_t REGISTER_CH0_DATA_L	= 0x95;
+    static constexpr uint8_t REGISTER_CH0_DATA_H	= 0x96;
+    static constexpr uint8_t REGISTER_ITIME_L		= 0x63;
+    static constexpr uint8_t REGISTER_ITIME_M		= 0x64;
+    static constexpr uint8_t REGISTER_ITIME_H		= 0x65;
+    static constexpr uint8_t REGISTER_CH1_DATA_L	= 0x97;
+    static constexpr uint8_t REGISTER_CH1_DATA_H	= 0x98;
+    static constexpr uint8_t REGISTER_CH2_DATA_L	= 0x99;
+    static constexpr uint8_t REGISTER_CH2_DATA_H	= 0x9a;
+    static constexpr uint8_t REGISTER_CH3_DATA_L	= 0x9b;
+    static constexpr uint8_t REGISTER_CH3_DATA_H	= 0x9c;
+    static constexpr uint8_t REGISTER_CH4_DATA_L	= 0x9d;
+    static constexpr uint8_t REGISTER_CH4_DATA_H	= 0x9e;
+    static constexpr uint8_t REGISTER_CH5_DATA_L	= 0x9f;
+    static constexpr uint8_t REGISTER_CH5_DATA_H	= 0xa0;
+    static constexpr uint8_t REGISTER_CONFIG		= 0x70;
+    static constexpr uint8_t REGISTER_STAT			= 0x71;
+    static constexpr uint8_t REGISTER_EDGE			= 0x72;
+    static constexpr uint8_t REGISTER_GPIO			= 0x73;
+    static constexpr uint8_t REGISTER_LED			= 0x74;
+    static constexpr uint8_t REGISTER_ENABLE		= 0x80;
+    static constexpr uint8_t REGISTER_ATIME			= 0x81;
+    static constexpr uint8_t REGISTER_WTIME			= 0x82;
+    static constexpr uint8_t REGISTER_SP_TH_L_LSB	= 0x84;
+    static constexpr uint8_t REGISTER_SP_TH_L_MSB	= 0x85;
+    static constexpr uint8_t REGISTER_SP_TH_H_LSB	= 0x86;
+    static constexpr uint8_t REGISTER_SP_TH_H_MSB	= 0x87;
+    static constexpr uint8_t REGISTER_AUXID			= 0x90;
+    static constexpr uint8_t REGISTER_REVID			= 0x91;
+    static constexpr uint8_t REGISTER_ID			= 0x92;
+    static constexpr uint8_t REGISTER_STATUS		= 0x93;
+    static constexpr uint8_t REGISTER_ASTATUS		= 0x94;
+    static constexpr uint8_t REGISTER_STATUS_2		= 0xa3;
+    static constexpr uint8_t REGISTER_STATUS_3		= 0xa4;
+    static constexpr uint8_t REGISTER_STATUS_5		= 0xa6;
+    static constexpr uint8_t REGISTER_STATUS_6		= 0xa7;
+    static constexpr uint8_t REGISTER_CFG_0			= 0xa9;
+    static constexpr uint8_t REGISTER_CFG_1			= 0xaa;
+    static constexpr uint8_t REGISTER_CFG_3			= 0xac;
+    static constexpr uint8_t REGISTER_CFG_6			= 0xaf;
+    static constexpr uint8_t REGISTER_CFG_8			= 0xb1;
+    static constexpr uint8_t REGISTER_CFG_9			= 0xb2;
+    static constexpr uint8_t REGISTER_CFG_10		= 0xb3;
+    static constexpr uint8_t REGISTER_CFG_12		= 0xb5;
+    static constexpr uint8_t REGISTER_PERS			= 0xbd;
+    static constexpr uint8_t REGISTER_GPIO_2		= 0xbe;
+    static constexpr uint8_t REGISTER_ASTEP_L		= 0xca;
+    static constexpr uint8_t REGISTER_ASTEP_H		= 0xcb;
+    static constexpr uint8_t REGISTER_AGC_GAIN_MAX	= 0xcf;
+    static constexpr uint8_t REGISTER_AZ_CONFIG		= 0xd6;
+    static constexpr uint8_t REGISTER_FD_TIME_1		= 0xd8;
+    static constexpr uint8_t REGISTER_FD_TIME_2		= 0xda;
+    static constexpr uint8_t REGISTER_FD_STATUS		= 0xdb;
+    static constexpr uint8_t REGISTER_INTENAB		= 0xf9;
+    static constexpr uint8_t REGISTER_CONTROL		= 0xfa;
+    static constexpr uint8_t REGISTER_FIFO_MAP		= 0xfc;
+    static constexpr uint8_t REGISTER_FIFO_LVL		= 0xfd;
+    static constexpr uint8_t REGISTER_FDATA_L		= 0xfe;
+    static constexpr uint8_t REGISTER_FDATA_H		= 0xff;
 };
 
 

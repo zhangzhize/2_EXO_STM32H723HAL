@@ -24,12 +24,44 @@ enum class ExoStatus : uint8_t
     kErrorMotor = 9U,
 };
 
+/** from nrf54 */
+typedef struct foot_sensor_packet_t
+{
+    int32_t mV_heel;
+    int32_t mV_toe;
+    float mV_pull;
+    float quatI;
+    float quatJ;
+    float quatK;
+    float quatReal;
+} foot_sensor_packet_t;
 
+typedef struct exo_sensor_packet_t
+{
+    foot_sensor_packet_t left_foot;
+    foot_sensor_packet_t right_foot;
+} exo_sensor_packet_t;
+
+
+class ImuData
+{
+public:
+    ImuData(bool is_left_ = true);
+    ~ImuData() = default;
+
+    bool is_left_;
+    bool is_used_;
+
+    float quat_i_;
+    float quat_j_;
+    float quat_k_;
+    float quat_real_;
+};
 
 class JointData
 {
 public:
-    JointData(bool is_left);
+    JointData(bool is_left = true);
     ~JointData() = default;
 
     bool is_left_;
@@ -44,7 +76,7 @@ public:
 class SideData
 {
 public:
-    SideData(bool is_left);
+    SideData(bool is_left = true);
     ~SideData() = default;
 
     bool is_left_;
@@ -52,6 +84,9 @@ public:
     JointData hip_joint_;
     JointData knee_joint_;
     JointData ankle_joint_;
+
+    ImuData foot_imu_;
+    float ankle_plantarflexion_force_N_;
 
     static const uint8_t kNumStepsAvg = 3;   
     uint32_t step_times_[kNumStepsAvg];

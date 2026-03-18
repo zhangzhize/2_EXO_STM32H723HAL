@@ -7,10 +7,10 @@
 static void VofaTransmit(uint8_t* data, uint16_t data_size)
 {
 	HAL_UART_Transmit_DMA(&huart9, (uint8_t *)data, data_size);
-    // HAL_UART_Transmit(&huart9, (uint8_t *)data, data_size, 3);
+    HAL_UART_Transmit(&huart9, (uint8_t *)data, data_size, 3);
     // HAL_UART_Transmit_DMA(&huart8, (uint8_t *)data, data_size);
     // HAL_UART_Transmit(&huart8, (uint8_t *)data, data_size, 3);
-	// CDC_Transmit_HS((uint8_t *)data, data_size);
+	CDC_Transmit_HS((uint8_t *)data, data_size);
 }
 
 Vofa::Vofa()

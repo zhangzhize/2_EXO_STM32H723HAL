@@ -3,30 +3,8 @@
 
 #include "main.h"
 
-// --- Opcodes ---
-const uint8_t PCAP01_OPCODE_RESET              = 0x88;
-const uint8_t PCAP01_OPCODE_PARTIAL_RESET      = 0x8A;
-const uint8_t PCAP01_OPCODE_START_CDC_MEAS     = 0x8C;
-const uint8_t PCAP01_OPCODE_START_RDC_MEAS     = 0x8E;
-
-// --- Write regs ---
-const uint8_t PCAP01_CMD_WRITE_REG             = 0xC0;
-const uint8_t PCAP01_RUNBIT_REG_ADDR           = 0x14;
-const uint32_t PCAP01_RUNBIT_REG_DATA          = 0x000001;
-
-// --- Read regs ---
-const uint8_t PCAP01_CMD_READ_REG              = 0x40;
-const uint8_t PCAP01_C1_DIV_C0_REG_ADDR        = 0x01;
-const uint8_t PCAP01_C2_DIV_C0_REG_ADDR        = 0x02;
-const uint8_t PCAP01_C3_DIV_C0_REG_ADDR        = 0x03;
-const uint8_t PCAP01_STATUS_REG_ADDR           = 0x08;
-const uint8_t PCAP01_FRACTIONAL_BITS           = 21;
-
-// --- Reference Cap in pF ---
-const float PCAP01_REF_CAP                     = 100.0f;
-
 enum class PCAP01_ERROR : int8_t {
-    NO_ERROR             = 0,
+    OK                   = 0,
     INIT_ERROR           = -1,
     COMM_TEST_FAILED     = -2,
     FIRMWARE_LOAD_FAILED = -3,
@@ -42,9 +20,34 @@ public:
 
     void sendOpcode(uint8_t opcode);
     void writeRegister(uint8_t reg_addr, uint32_t data);
-    float readRegister(uint8_t reg_addr, uint8_t fractional_bits = PCAP01_FRACTIONAL_BITS);
+    float readRegister(uint8_t reg_addr, uint8_t fractional_bits = KFractionalBits);
     uint32_t readRawRegister(uint8_t reg_addr);
 
+    void initLowPassFilter(float cutoff_freq, float sampling_freq);
+    float applyLowPassFilter(uint8_t node_index, float raw_capacitance);
+    static constexpr uint8_t MAX_MATRIX_NODES = 4;
+    float filter_alpha_ = 1.0f;
+    float filtered_data_[MAX_MATRIX_NODES] = {0.0f};
+    bool  is_filter_first_run_[MAX_MATRIX_NODES];
+
+    // --- Opcodes ---
+    static constexpr uint8_t KOpcodeReset            = 0x88;
+    static constexpr uint8_t KOpcodePartialReset     = 0x8A;
+    static constexpr uint8_t KOpcodeStartCDCMeas     = 0x8C;
+    static constexpr uint8_t KOpcodeStartRDCMeas     = 0x8E;
+    // --- Write regs ---
+    static constexpr uint8_t KCmdWriteReg            = 0xC0;
+    static constexpr uint8_t KRunbitRegAddr          = 0x14;
+    static constexpr uint32_t KRunbitRegData         = 0x000001;
+    // --- Read regs ---
+    static constexpr uint8_t KCmdReadReg            = 0x40;
+    static constexpr uint8_t KC1DivC0RegAddr        = 0x01;
+    static constexpr uint8_t KC2DivC0RegAddr        = 0x02;
+    static constexpr uint8_t KC3DivC0RegAddr        = 0x03;
+    static constexpr uint8_t KStatusRegAddr         = 0x08;
+    static constexpr uint8_t KFractionalBits        = 21;
+    // --- Reference Cap in pF ---
+    static constexpr float KRefCap                  = 15.0f;
 private:
     SPI_HandleTypeDef* _hspi = nullptr;
     GPIO_TypeDef* _cs_port   = nullptr;

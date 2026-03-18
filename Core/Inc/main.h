@@ -47,6 +47,7 @@ extern "C" {
 /* Exported macro ------------------------------------------------------------*/
 /* USER CODE BEGIN EM */
 extern uint8_t g_timer2_5ms_flag;
+extern uint8_t g_pcap01_intn_state;
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/
@@ -71,8 +72,15 @@ void Error_Handler(void);
 #define RIGHT_PULLFORCE_GPIO_Port GPIOA
 #define LEFT_PULLFORCE_Pin GPIO_PIN_2
 #define LEFT_PULLFORCE_GPIO_Port GPIOA
+#define PCAP01_INT_Pin GPIO_PIN_4
+#define PCAP01_INT_GPIO_Port GPIOA
+#define PCAP01_INT_EXTI_IRQn EXTI4_IRQn
+#define PCAP01_CS_Pin GPIO_PIN_6
+#define PCAP01_CS_GPIO_Port GPIOA
 #define VBUS_ADC_Pin GPIO_PIN_4
 #define VBUS_ADC_GPIO_Port GPIOC
+#define MUX_ROW_RST_Pin GPIO_PIN_5
+#define MUX_ROW_RST_GPIO_Port GPIOC
 #define IMU_ACC_INT_Pin GPIO_PIN_10
 #define IMU_ACC_INT_GPIO_Port GPIOE
 #define IMU_ACC_INT_EXTI_IRQn EXTI15_10_IRQn
@@ -83,8 +91,8 @@ void Error_Handler(void);
 #define NRF54_SENSOR_RST_GPIO_Port GPIOE
 #define BUZZER_Pin GPIO_PIN_15
 #define BUZZER_GPIO_Port GPIOB
-#define NRF54_BRIDGE_RST_Pin GPIO_PIN_12
-#define NRF54_BRIDGE_RST_GPIO_Port GPIOC
+#define MUX_COL_RST_Pin GPIO_PIN_7
+#define MUX_COL_RST_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 void AltMainTask(void *argument);

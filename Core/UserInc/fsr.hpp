@@ -3,20 +3,10 @@
 
 #include <cstdint>
 
-extern float fsr_voltages[4];
-
-enum FsrId
-{
-    kFsrIdLeftHeel = 0u,
-    kFsrIdLeftToe = 1u,
-    kFsrIdRightHeel = 2u,
-    kFsrIdRightToe = 3u,
-};
-
 class Fsr
 {
 public:
-    Fsr(uint8_t id);
+    Fsr(bool is_left = true);
     ~Fsr() = default;
 
     bool Calibrate(bool do_calibrate);
@@ -28,8 +18,7 @@ public:
 
     bool CalcGroundContact();
 
-    uint8_t id_;
-
+    bool is_left_;
     float raw_reading_;
     float calibrated_reading_;
 

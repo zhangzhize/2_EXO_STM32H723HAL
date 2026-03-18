@@ -53,6 +53,7 @@
 
 /* USER CODE BEGIN PV */
 uint8_t g_timer2_5ms_flag = 0;
+uint8_t g_pcap01_intn_state = 1;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -141,9 +142,9 @@ int main(void)
   MX_SPI6_Init();
   MX_USB_DEVICE_Init();
   MX_UART8_Init();
-  MX_SPI2_Init();
   MX_UART9_Init();
   MX_I2C1_Init();
+  MX_SPI3_Init();
   /* USER CODE BEGIN 2 */
     AltMainTask(NULL);
   /* USER CODE END 2 */
@@ -220,7 +221,15 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    switch(GPIO_Pin)
+    {
+        case PCAP01_INT_Pin:
+            g_pcap01_intn_state = (HAL_GPIO_ReadPin(PCAP01_INT_GPIO_Port, PCAP01_INT_Pin) == GPIO_PIN_SET);
+            break;
+    }
+}
 /* USER CODE END 4 */
 
 /**

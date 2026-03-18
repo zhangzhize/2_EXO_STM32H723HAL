@@ -25,9 +25,8 @@ float ReadFsrVol(uint8_t fsr_id)
 }
 
 // ----------------------------- Fsr ---------------------------------
-Fsr::Fsr(uint8_t id)
+Fsr::Fsr(bool is_left) : is_left_(is_left)
 {
-    id_ = id;
     raw_reading_ = 0.0f;
     calibrated_reading_ = 0.0f;
 
@@ -57,7 +56,7 @@ bool Fsr::Calibrate(bool do_calibrate)
     if (do_calibrate && !last_do_calibrate_)
     {
         calibration_start_sys_ms_ = GetSysTimeMs();
-        calibration_max_ = ReadFsrVol(id_);
+        calibration_max_ = raw_reading_;
         calibration_min_ = calibration_max_;
     }
 
@@ -65,7 +64,7 @@ bool Fsr::Calibrate(bool do_calibrate)
 
     if ((do_calibrate) && (delta <= kCalibrationDurationMs))
     {
-            float current_raw_reading = ReadFsrVol(id_);
+            float current_raw_reading = raw_reading_;
             calibration_max_ = _max(calibration_max_, current_raw_reading);
             calibration_min_ = _min(calibration_min_, current_raw_reading);
     }
@@ -97,7 +96,7 @@ bool Fsr::RefineCalibration(bool do_refinement)
     {
         if (step_count_ < num_refinement_steps_)
         {
-            float current_raw_reading = ReadFsrVol(id_);
+            float current_raw_reading = raw_reading_;
 
             step_max_ = _max(step_max_, current_raw_reading);
             step_min_ = _min(step_min_, current_raw_reading);
@@ -142,7 +141,7 @@ bool Fsr::RefineCalibration(bool do_refinement)
 
 float Fsr::Read()
 {
-    raw_reading_ = ReadFsrVol(id_);
+    /** raw data has been readed by nrf54(uart) */
 
     if (calibration_refinement_max_ > calibration_refinement_min_ + 1e-6f)
     {

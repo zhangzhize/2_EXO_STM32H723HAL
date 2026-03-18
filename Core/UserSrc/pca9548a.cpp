@@ -18,7 +18,7 @@ bool PCA9548A::begin(I2C_HandleTypeDef* hi2c, uint8_t addr_offset, GPIO_TypeDef*
     }
     _hi2c = hi2c;
     _addr_offset = addr_offset;
-    _addr = (BASE_ADDR + _addr_offset) << 1;
+    _addr = (kBaseAddr + _addr_offset) << 1;
 
     return reset();
 }
@@ -26,7 +26,7 @@ bool PCA9548A::begin(I2C_HandleTypeDef* hi2c, uint8_t addr_offset, GPIO_TypeDef*
 bool PCA9548A::reset() {
     if (_rst_port != nullptr && _rst_pin != 255) {
         HAL_GPIO_WritePin(_rst_port, _rst_pin, GPIO_PIN_RESET);
-        HAL_Delay(RESET_TIME_LOW_MS);
+        HAL_Delay(kResetTimeLowMs);
         HAL_GPIO_WritePin(_rst_port, _rst_pin, GPIO_PIN_SET);
     }
 
@@ -47,12 +47,12 @@ bool PCA9548A::selectMultiChannels(uint8_t mask) {
         return false;
     }
 
-    if (HAL_I2C_Master_Transmit(_hi2c, _addr, &mask, 1, TIMEOUT_MS) != HAL_OK) {
+    if (HAL_I2C_Master_Transmit(_hi2c, _addr, &mask, 1, kTimeoutMs) != HAL_OK) {
         return false;
     }
 
     uint8_t mask_check = 0;
-    if (HAL_I2C_Master_Receive(_hi2c, _addr, &mask_check, 1, TIMEOUT_MS) != HAL_OK) {
+    if (HAL_I2C_Master_Receive(_hi2c, _addr, &mask_check, 1, kTimeoutMs) != HAL_OK) {
         return false;
     }
 

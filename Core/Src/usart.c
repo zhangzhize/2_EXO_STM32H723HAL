@@ -338,9 +338,9 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef * huart, uint16_t size)
     if (huart->Instance == UART8)
     {
         /** uncomment to debug */
-        uint8_t buf[128];
-        memcpy(buf, uart8_rx_buffer, size);
-        CDC_Transmit_HS(buf, size);
+        // uint8_t buf[128];
+        // memcpy(buf, uart8_rx_buffer, size);
+        // CDC_Transmit_HS(buf, size);
         if (size <= UART8_RX_BUF_SIZE)
         {
             CallExoUartRxCallBack(gptr_exo, uart8_rx_buffer, size);
@@ -352,9 +352,9 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef * huart, uint16_t size)
     else if (huart->Instance == UART9)
     {
         /** uncomment to debug */
-        uint8_t buf[128];
-        memcpy(buf, uart9_rx_buffer, size);
-        CDC_Transmit_HS(buf, size);
+        // uint8_t buf[128];
+        // memcpy(buf, uart9_rx_buffer, size);
+        // CDC_Transmit_HS(buf, size);
         if (size <= UART9_RX_BUF_SIZE)
         {
             CallExoUartRxCallBack(gptr_exo, uart9_rx_buffer, size);

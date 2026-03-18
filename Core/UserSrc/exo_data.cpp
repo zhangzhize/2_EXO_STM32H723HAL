@@ -1,5 +1,17 @@
 #include "exo_data.hpp"
 
+ImuData::ImuData(bool is_left)
+{
+    is_left_ = is_left;
+    is_used_ = true;
+
+    quat_i_ = 0.0f;
+    quat_j_ = 0.0f;
+    quat_k_ = 0.0f;
+    quat_real_ = 1.0f;
+}
+
+
 JointData::JointData(bool is_left)
 {
     is_left_ = is_left;
@@ -11,7 +23,7 @@ JointData::JointData(bool is_left)
     tor_Nm_ = 0.0f;
 }
 
-SideData::SideData(bool is_left) : hip_joint_(is_left), knee_joint_(is_left), ankle_joint_(is_left)
+SideData::SideData(bool is_left) : hip_joint_(is_left), knee_joint_(is_left), ankle_joint_(is_left), foot_imu_(is_left)
 {
     is_left_ = is_left;
     is_used_ = true;

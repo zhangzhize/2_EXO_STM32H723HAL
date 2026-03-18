@@ -265,15 +265,16 @@ static const uint8_t PCap01_standard_firmware[4096] = {
 static const uint32_t PCap01_standard_config_reg[11] = {
     0x4200FF, /* 关闭OTP模式、开启程序读保护 */
     0x201022, /* 后8位设置内部晶振频率，0x35=10kHz,0x22=50kHz（推荐）,0x13=100kHz,0x04=200kHz */
-    0x0F470B, /* 使能PC0-PC3，选择单电容浮地模式，
-               关闭差动电容对称充放电，
-               开启外部补偿，开启内部补偿，选择10K内部放电电阻
-               */
-    0x010001, /* 选择s=1，则定时触发周期=20*2^(s+1)=80us；选择no fake block；选择不平均 ############### */
-              // 0x014002,
-    0x000214, /* 选择软件触发模式，选择1个时钟周期为CDC cycle time=2*20us, opcode触发温度测量 ############### */
+
+//	0x0F670B,
+     0x0F470B, /* 使能PC0-PC3，选择单电容浮地模式，关闭差动电容对称充放电，开启外部补偿，开启内部补偿，选择10K内部放电电阻 ############### */
+    
+    0x002001, /** SEQ_TIME, 20*2^(s+1)us; CMEAS_FAKE; C_AVRG */
+
+	0x000F14, /** CMEAS_STARTPIN; CMEAS_TRIG_SEL; CMEAS_CYTIME; TMEAS_CYTIME; TMEAS_STARTPIN; TMEAS_TRIG_SEL */
+
     0x00000A, /* RDC相关 */
-    0x004340, /* RDC相关 */
+    0x000040, /* RDC相关 */
     0x1F0000, /* 固定 */
     0x800010, /* 中断通知相关 */
     0xFF000F,
@@ -312,24 +313,26 @@ PCAP01_ERROR PCAP01::begin(SPI_HandleTypeDef *hspi, GPIO_TypeDef *cs_port, uint1
 
     csHigh();
 
-    sendOpcode(PCAP01_OPCODE_RESET);
+    sendOpcode(KOpcodeReset);
     HAL_Delay(2);
 
     PCAP01_ERROR err = commTest();
-    if (err != PCAP01_ERROR::NO_ERROR)
+    if (err != PCAP01_ERROR::OK)
         return err;
 
     err = writeStdFirmware();
-    if (err != PCAP01_ERROR::NO_ERROR)
+    if (err != PCAP01_ERROR::OK)
         return err;
 
     writeStdConfig();
-    
-    writeRegister(PCAP01_RUNBIT_REG_ADDR, PCAP01_RUNBIT_REG_DATA);
-    sendOpcode(PCAP01_OPCODE_PARTIAL_RESET);
+
+    writeRegister(KRunbitRegAddr, KRunbitRegData);
+    sendOpcode(KOpcodePartialReset);
     HAL_Delay(2);
 
-    return PCAP01_ERROR::NO_ERROR;
+    initLowPassFilter(1.5f, 40.0f);
+
+    return PCAP01_ERROR::OK;
 }
 
 void PCAP01::sendOpcode(uint8_t opcode)
@@ -365,7 +368,7 @@ uint8_t PCAP01::sramComm(uint8_t comm_type, uint16_t addr, uint8_t data)
 void PCAP01::writeRegister(uint8_t reg_addr, uint32_t data)
 {
     uint8_t tx_buf[4];
-    tx_buf[0] = PCAP01_CMD_WRITE_REG | reg_addr;
+    tx_buf[0] = KCmdWriteReg | reg_addr;
     tx_buf[1] = (data >> 16) & 0xFF;
     tx_buf[2] = (data >> 8) & 0xFF;
     tx_buf[3] = data & 0xFF;
@@ -377,7 +380,7 @@ void PCAP01::writeRegister(uint8_t reg_addr, uint32_t data)
 
 uint32_t PCAP01::readRawRegister(uint8_t reg_addr)
 {
-    uint8_t tx_buf[4] = {(uint8_t)(PCAP01_CMD_READ_REG | reg_addr), 0xFF, 0xFF, 0xFF};
+    uint8_t tx_buf[4] = {(uint8_t)(KCmdReadReg | reg_addr), 0xFF, 0xFF, 0xFF};
     uint8_t rx_buf[4] = {0};
 
     csLow();
@@ -420,7 +423,7 @@ PCAP01_ERROR PCAP01::commTest(void)
         }
         HAL_Delay(50);
     }
-    return PCAP01_ERROR::NO_ERROR;
+    return PCAP01_ERROR::OK;
 }
 
 PCAP01_ERROR PCAP01::writeStdFirmware(void)
@@ -450,5 +453,43 @@ PCAP01_ERROR PCAP01::writeStdFirmware(void)
         sramComm(PCAP01_SRAM_COMM_READ, addr, 0xFF);
     }
 
-    return PCAP01_ERROR::NO_ERROR;
+    return PCAP01_ERROR::OK;
+}
+
+void PCAP01::initLowPassFilter(float cutoff_freq, float sampling_freq)
+{
+    if (cutoff_freq >= sampling_freq / 2.0f)
+    {
+        filter_alpha_ = 1.0f;
+    }
+    else
+    {
+        float dt = 1.0f / sampling_freq;
+        float rc = 1.0f / (2.0f * 3.1415926535f * cutoff_freq);
+        filter_alpha_ = dt / (rc + dt);
+    }
+
+    for (int i = 0; i < MAX_MATRIX_NODES; i++)
+    {
+        is_filter_first_run_[i] = true;
+        filtered_data_[i] = 0.0f;
+    }
+}
+
+float PCAP01::applyLowPassFilter(uint8_t node_index, float raw_capacitance)
+{
+    if (node_index >= MAX_MATRIX_NODES)
+        return raw_capacitance;
+
+    if (is_filter_first_run_[node_index])
+    {
+        filtered_data_[node_index] = raw_capacitance;
+        is_filter_first_run_[node_index] = false;
+    }
+    else
+    {
+        filtered_data_[node_index] = filter_alpha_ * raw_capacitance + (1.0f - filter_alpha_) * filtered_data_[node_index];
+    }
+
+    return filtered_data_[node_index];
 }

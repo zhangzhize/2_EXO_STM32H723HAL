@@ -22,9 +22,9 @@ private:
     uint8_t _addr_offset = 0;
     uint8_t _addr = 0;
 
-    static constexpr uint8_t  BASE_ADDR = 0x70;
-    static constexpr uint32_t TIMEOUT_MS = 10; 
-    static constexpr uint32_t RESET_TIME_LOW_MS = 1;
+    static constexpr uint8_t  kBaseAddr = 0x70;
+    static constexpr uint32_t kTimeoutMs = 10; 
+    static constexpr uint32_t kResetTimeLowMs = 1;
 };
 
 #endif

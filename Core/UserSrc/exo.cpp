@@ -417,7 +417,7 @@ void HipJoint::Assist()
     // motor_.EnableMotor();
 }
 
-Side::Side(bool is_left, ExoData *pe) : pe_(pe), ps_(is_left ? &pe_->left_side_ : &pe_->right_side_), heel_fsr_(is_left ? kFsrIdLeftHeel : kFsrIdRightHeel), toe_fsr_(is_left ? kFsrIdLeftToe : kFsrIdRightToe), hip_joint_(is_left, pe), knee_joint_(is_left, pe), ankle_joint_(is_left, pe)
+Side::Side(bool is_left, ExoData *pe) : pe_(pe), ps_(is_left ? &pe_->left_side_ : &pe_->right_side_), heel_fsr_(is_left), toe_fsr_(is_left), hip_joint_(is_left, pe), knee_joint_(is_left, pe), ankle_joint_(is_left, pe)
 {
 }
 
@@ -848,30 +848,29 @@ void Exo::ReadBatVol()
 
 void Exo::UartRxCallback(uint8_t *data, uint16_t data_size)
 {
-    if (data[0] == 0x01 && data_size >= 17)
+    if (data_size == 56)
     {
-        int32_t leftfoot_mv_ain0;
-        int32_t leftfoot_mv_ain1;
-        int32_t rightfoot_mv_ain0;
-        int32_t rightfoot_mv_ain1;
-        memcpy(&leftfoot_mv_ain0, data + 1, sizeof(int32_t));
-        memcpy(&leftfoot_mv_ain1, data + 1 + sizeof(int32_t), sizeof(int32_t));
-        memcpy(&rightfoot_mv_ain0, data + 1 + 2 * sizeof(int32_t), sizeof(int32_t));
-        memcpy(&rightfoot_mv_ain1, data + 1 + 3 * sizeof(int32_t), sizeof(int32_t));
-
-        fsr_voltages[0] = 3.4f - leftfoot_mv_ain0 / 1000.0f;
-        fsr_voltages[1] = 3.4f - leftfoot_mv_ain1 / 1000.0f;
-        fsr_voltages[2] = 3.4f - rightfoot_mv_ain0 / 1000.0f;
-        fsr_voltages[3] = 3.4f - rightfoot_mv_ain1 / 1000.0f;
-        if (fsr_voltages[0] < 0.0f) fsr_voltages[0] = 0.0f;
-        if (fsr_voltages[1] < 0.0f) fsr_voltages[1] = 0.0f;
-        if (fsr_voltages[2] < 0.0f) fsr_voltages[2] = 0.0f;
-        if (fsr_voltages[3] < 0.0f) fsr_voltages[3] = 0.0f;
+        exo_sensor_packet_t *packet = (exo_sensor_packet_t *)data;
+        left_side_.heel_fsr_.raw_reading_ = 3.4f - packet->left_foot.mV_heel / 1000.0f;
+        left_side_.toe_fsr_.raw_reading_ = 3.4f - packet->left_foot.mV_toe / 1000.0f;
+        left_side_.ps_->ankle_plantarflexion_force_N_ = packet->left_foot.mV_pull;
+        left_side_.ps_->foot_imu_.quat_i_ = packet->left_foot.quatI;
+        left_side_.ps_->foot_imu_.quat_j_ = packet->left_foot.quatJ;
+        left_side_.ps_->foot_imu_.quat_k_ = packet->left_foot.quatK;
+        left_side_.ps_->foot_imu_.quat_real_ = packet->left_foot.quatReal;
+        
+        right_side_.heel_fsr_.raw_reading_ = 3.4f - packet->right_foot.mV_heel / 1000.0f;
+        right_side_.toe_fsr_.raw_reading_ = 3.4f - packet->right_foot.mV_toe / 1000.0f;
+        right_side_.ps_->ankle_plantarflexion_force_N_ = packet->right_foot.mV_pull;
+        right_side_.ps_->foot_imu_.quat_i_ = packet->right_foot.quatI;
+        right_side_.ps_->foot_imu_.quat_j_ = packet->right_foot.quatJ;
+        right_side_.ps_->foot_imu_.quat_k_ = packet->right_foot.quatK;
+        right_side_.ps_->foot_imu_.quat_real_ = packet->right_foot.quatReal;
     }
-    else if (data[0] == 0x02 && data_size >= 5)
+    else
     {
         float user_weight_kg;
-        memcpy(&user_weight_kg, data + 1, sizeof(float));
+        memcpy(&user_weight_kg, data, sizeof(float));
         if (user_weight_kg >= 20.0f && user_weight_kg <= 120.0f)
         {
             pe_->user_weight_kg_ = user_weight_kg;

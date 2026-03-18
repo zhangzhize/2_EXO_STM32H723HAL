@@ -4,7 +4,7 @@
 #include "main.h"
 
 enum class AD7746_ERROR : int8_t {
-    NO_ERROR     = 0,
+    OK           = 0,
     INIT_ERROR   = -1,
     BUS_ERROR    = -2,
     TIMEOUT      = -3
