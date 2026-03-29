@@ -214,7 +214,6 @@ void FDCanSendData(FDCAN_HandleTypeDef *hfdcan, uint32_t id, uint32_t id_type, u
 {
     FDCAN_TxHeaderTypeDef pTxHeader;
 
-
     pTxHeader.Identifier = id;
     pTxHeader.IdType = id_type;
     pTxHeader.TxFrameType = FDCAN_DATA_FRAME;

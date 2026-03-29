@@ -119,12 +119,14 @@ void AnkleJoint::Assist()
     }
     if (!pj_->is_left_)
     {
+        cable_position_ref = -cable_position_ref;
     }
 
     motor_.position_ref_ = cable_position_ref;
 
     motor_.torque_forward_ = 0.0f;
     motor_.speed_ref_ = 0.0f;
+    
     motor_.motion_mode_kp_ = 15.0f;
     motor_.motion_mode_kd_ = 0.5f;
     motor_.MotionControl();
@@ -447,7 +449,11 @@ void Side::Read()
 
 void Side::Assist()
 {
-    if (!ps_->is_used_ || !ps_->is_calibration_done_)
+    // if (!ps_->is_used_ || !ps_->is_calibration_done_)
+    // {
+    //     return;
+    // }
+    if (!ps_->is_used_)
     {
         return;
     }
@@ -715,32 +721,34 @@ void Exo::Initialize()
     //     exo_status_idx = static_cast<uint8_t>(pe_->exo_status_);
     //     status_led_.UpdateColor(exo_status_idx > 8 ? 8 : exo_status_idx);
     // }
+
     /** 进入标定阶段 */
     pe_->exo_status_ = ExoStatus::kCalibration;
     exo_status_idx = static_cast<uint8_t>(pe_->exo_status_);
-    status_led_.UpdateColor(exo_status_idx > 8 ? 8 : exo_status_idx);
+    status_led_.UpdateColorBDMA(exo_status_idx > 8 ? 8 : exo_status_idx);
 
     /** 调试: 设置施密特触发器阈值, 用于判断足跟着地事件. */
-    left_side_.heel_fsr_.SetContactThresholds(0.15f, 0.25f);
-    left_side_.toe_fsr_.SetContactThresholds(0.15f, 0.25f);
-    right_side_.heel_fsr_.SetContactThresholds(0.15f, 0.25f);
-    right_side_.toe_fsr_.SetContactThresholds(0.15f, 0.25f);
+    // left_side_.heel_fsr_.SetContactThresholds(0.15f, 0.25f);
+    // left_side_.toe_fsr_.SetContactThresholds(0.15f, 0.25f);
+    // right_side_.heel_fsr_.SetContactThresholds(0.15f, 0.25f);
+    // right_side_.toe_fsr_.SetContactThresholds(0.15f, 0.25f);
+    
     // left_side_.heel_fsr_.calibration_refinement_max_ = 2.45f;
     // left_side_.heel_fsr_.calibration_refinement_min_ = 0.15f;
     // right_side_.heel_fsr_.calibration_refinement_max_ = 2.45f;
     // right_side_.heel_fsr_.calibration_refinement_min_ = 0.15f;
-    pe_->left_side_.do_calibration_heel_fsr_ = false;
+    pe_->left_side_.do_calibration_heel_fsr_ = true;
     pe_->left_side_.do_calibration_toe_fsr_ = false;
-    pe_->left_side_.do_calibration_refinement_heel_fsr_ = false;
+    pe_->left_side_.do_calibration_refinement_heel_fsr_ = true;
     pe_->left_side_.do_calibration_refinement_toe_fsr_ = false;
-    pe_->right_side_.do_calibration_heel_fsr_ = false;
+    pe_->right_side_.do_calibration_heel_fsr_ = true;
     pe_->right_side_.do_calibration_toe_fsr_ = false;
-    pe_->right_side_.do_calibration_refinement_heel_fsr_ = false;
+    pe_->right_side_.do_calibration_refinement_heel_fsr_ = true;
     pe_->right_side_.do_calibration_refinement_toe_fsr_ = false;
 
     /** 调试: 选择助力的关节 */
-    pe_->left_side_.hip_joint_.is_used_ = true;
-    pe_->right_side_.hip_joint_.is_used_ = true;
+    pe_->left_side_.hip_joint_.is_used_ = false;
+    pe_->right_side_.hip_joint_.is_used_ = false;
     pe_->left_side_.knee_joint_.is_used_ = false;
     pe_->right_side_.knee_joint_.is_used_ = false;
     pe_->left_side_.ankle_joint_.is_used_ = false;
@@ -748,12 +756,18 @@ void Exo::Initialize()
 
     /** 调试: 调助力大小 */
     pe_->user_weight_kg_ = 30.0f;
+    left_side_.knee_joint_.force_profile_generator_.stiffness_ = 0.5f;
     right_side_.knee_joint_.force_profile_generator_.stiffness_ = 0.5f;
-    left_side_.ankle_joint_.cable_released_position_ = 0.0f;
-    left_side_.ankle_joint_.cable_pre_tensioned_position_ = 0.5f;
-    left_side_.ankle_joint_.cable_tensioned_position_ = 1.5f;
+    left_side_.ankle_joint_.cable_released_position_ = 0.15f;
+    left_side_.ankle_joint_.cable_pre_tensioned_position_ = 1.2f;
+    left_side_.ankle_joint_.cable_tensioned_position_ = 1.8f;
     left_side_.ankle_joint_.assistance_start_phase_rad_ = 0.4f * _2PI;
     left_side_.ankle_joint_.assistance_end_phase_rad_ = 0.65f * _2PI;
+    right_side_.ankle_joint_.cable_released_position_ = 0.3f;
+    right_side_.ankle_joint_.cable_pre_tensioned_position_ = 1.3f;
+    right_side_.ankle_joint_.cable_tensioned_position_ = 1.8f;
+    right_side_.ankle_joint_.assistance_start_phase_rad_ = 0.4f * _2PI;
+    right_side_.ankle_joint_.assistance_end_phase_rad_ = 0.65f * _2PI;
 
     /** 跟电机建立通信 */
     left_side_.hip_joint_.WaitForCommunication();
@@ -783,7 +797,7 @@ void Exo::Run()
     }
 
     uint8_t exo_status_idx = static_cast<uint8_t>(pe_->exo_status_);
-    status_led_.UpdateColor(exo_status_idx > 8 ? 8 : exo_status_idx);
+    status_led_.UpdateColorBDMA(exo_status_idx > 8 ? 8 : exo_status_idx);
 
     // if (exo_status_idx >= 8)
     // {

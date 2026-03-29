@@ -63,7 +63,7 @@ void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(PCAP01_CS_GPIO_Port, PCAP01_CS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(NRF54_SENSOR_RST_GPIO_Port, NRF54_SENSOR_RST_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(NRF54_RST_GPIO_Port, NRF54_RST_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(MUX_COL_RST_GPIO_Port, MUX_COL_RST_Pin, GPIO_PIN_SET);
@@ -101,12 +101,12 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : NRF54_SENSOR_RST_Pin */
-  GPIO_InitStruct.Pin = NRF54_SENSOR_RST_Pin;
+  /*Configure GPIO pin : NRF54_RST_Pin */
+  GPIO_InitStruct.Pin = NRF54_RST_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(NRF54_SENSOR_RST_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(NRF54_RST_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PB13 */
   GPIO_InitStruct.Pin = GPIO_PIN_13;

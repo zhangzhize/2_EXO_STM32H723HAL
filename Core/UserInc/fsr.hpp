@@ -17,6 +17,8 @@ public:
     void SetContactThresholds(float lower_threshold_percent_ground_contact, float upper_threshold_percent_ground_contact);
 
     bool CalcGroundContact();
+    
+    bool SchmittTrigger(float value, bool is_high, float lower_threshold, float upper_threshold);
 
     bool is_left_;
     float raw_reading_;

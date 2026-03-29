@@ -10,6 +10,7 @@ public:
     ~StatusLed() = default;
 
     void UpdateColor(uint8_t status_idx);
+    void UpdateColorBDMA(uint8_t status_idx);
     
     uint8_t status_idx_;
     

@@ -87,8 +87,8 @@ void Error_Handler(void);
 #define IMU_GYRO_INT_Pin GPIO_PIN_12
 #define IMU_GYRO_INT_GPIO_Port GPIOE
 #define IMU_GYRO_INT_EXTI_IRQn EXTI15_10_IRQn
-#define NRF54_SENSOR_RST_Pin GPIO_PIN_14
-#define NRF54_SENSOR_RST_GPIO_Port GPIOE
+#define NRF54_RST_Pin GPIO_PIN_14
+#define NRF54_RST_GPIO_Port GPIOE
 #define BUZZER_Pin GPIO_PIN_15
 #define BUZZER_GPIO_Port GPIOB
 #define MUX_COL_RST_Pin GPIO_PIN_7

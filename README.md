@@ -1,1 +1,2 @@
 使用方法: 安装platformio插件
+Github token: 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

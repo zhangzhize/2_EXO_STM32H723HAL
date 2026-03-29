@@ -23,13 +23,6 @@
 #include "fsr.hpp"
 #include "exo.hpp"
 
-#include "pcap01.hpp"
-#include "adg2128.hpp"
-
-PCAP01 pcap01;
-ADG2128 adg2128_row;
-ADG2128 adg2128_col;
-
 /* 用于离线调试 */
 #include "usbd_cdc_if.h"
 uint8_t cdc_rx_buffer[512] = {0};
@@ -41,21 +34,17 @@ Exo *gptr_exo = new Exo(gptr_exo_data);
 
 uint32_t g_adc_data[3] = {0};
 
-void CDCTask1();
-void CDCTask2();
-void CDCTask3();
+void CableTensionTest();
 
 void AltMainTask(void *argument)
 {
     uint32_t loop_cnt = 0;
 
     /** 复位扩展板上的两个NRF54L15 */
-//    HAL_GPIO_WritePin(NRF54_BRIDGE_RST_GPIO_Port, NRF54_BRIDGE_RST_Pin, GPIO_PIN_RESET);
-//    HAL_GPIO_WritePin(NRF54_SENSOR_RST_GPIO_Port, NRF54_SENSOR_RST_Pin, GPIO_PIN_RESET);
-//    HAL_Delay(10);
-//    HAL_GPIO_WritePin(NRF54_BRIDGE_RST_GPIO_Port, NRF54_BRIDGE_RST_Pin, GPIO_PIN_SET);
-//    HAL_GPIO_WritePin(NRF54_SENSOR_RST_GPIO_Port, NRF54_SENSOR_RST_Pin, GPIO_PIN_SET);
-//    HAL_Delay(100);
+    HAL_GPIO_WritePin(NRF54_RST_GPIO_Port, NRF54_RST_Pin, GPIO_PIN_RESET);
+    HAL_Delay(10);
+    HAL_GPIO_WritePin(NRF54_RST_GPIO_Port, NRF54_RST_Pin, GPIO_PIN_SET);
+    HAL_Delay(100);
 
     /** 启动ADC+DMA: PC4(电源电压) + PA2 + PA0 */
     HAL_ADCEx_Calibration_Start(&hadc1, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED);
@@ -77,7 +66,7 @@ void AltMainTask(void *argument)
     // TIM12->CCR2 = 0;
 
     /* 初始化CAN */
-    BspCanInit();
+    // BspCanInit();
     // BspStdCanInit();
     // BspExtCanInit();
     
@@ -86,14 +75,9 @@ void AltMainTask(void *argument)
     HAL_Delay(1000);
     HAL_GPIO_WritePin(POWER_24V_1_GPIO_Port, POWER_24V_1_Pin|POWER_24V_2_Pin, GPIO_PIN_SET);
     HAL_Delay(1000);
-
+    
     /** #HACK: 在此修改外骨骼参数  */
-//    gptr_exo->Initialize();
-
-    /* CDC */
-    // pcap01.begin(&hspi3, PCAP01_CS_GPIO_Port, PCAP01_CS_Pin);
-    // adg2128_row.Begin(&hi2c1, 0, MUX_ROW_RST_GPIO_Port, MUX_ROW_RST_Pin);
-    // adg2128_col.Begin(&hi2c1, 1, MUX_COL_RST_GPIO_Port, MUX_COL_RST_Pin);
+    gptr_exo->Initialize();
 
 	/* 启动定时器 */
 	HAL_TIM_Base_Start_IT(&htim2);
@@ -104,16 +88,47 @@ void AltMainTask(void *argument)
 
 	while (1)
 	{
-		// CDCTask2();
-
+        // CableTensionTest();
         if (g_timer2_5ms_flag == 1)
         {
             g_timer2_5ms_flag = 0;
 
             /* 外骨骼 */
-            // gptr_exo->Run();
+            // gptr_exo->left_side_.ankle_joint_.motor_.EnableMotor();
+            // gptr_exo->right_side_.ankle_joint_.motor_.EnableMotor();
+            gptr_exo->Run();
 
             /* 通过nrf54(uart9)蓝牙上报数据 */
+            // gptr_vofa->ptr_vofa_data_[0] = loop_cnt++;
+            // gptr_vofa->ptr_vofa_data_[1] = GetSysTimeMs();
+            // gptr_vofa->ptr_vofa_data_[2] = gptr_exo_data->left_side_.ankle_joint_.pos_rad_;
+            // gptr_vofa->ptr_vofa_data_[3] = gptr_exo_data->right_side_.ankle_joint_.pos_rad_;
+            // gptr_vofa->SendOneFrame(4);
+            // continue;
+
+            gptr_vofa->ptr_vofa_data_[0] = loop_cnt++;
+            gptr_vofa->ptr_vofa_data_[1] = GetSysTimeMs();
+            gptr_vofa->ptr_vofa_data_[2] = gptr_exo->left_side_.heel_fsr_.raw_reading_;
+            gptr_vofa->ptr_vofa_data_[3] = gptr_exo->left_side_.toe_fsr_.raw_reading_;
+            gptr_vofa->ptr_vofa_data_[4] = gptr_exo->left_side_.heel_fsr_.calibrated_reading_;
+            gptr_vofa->ptr_vofa_data_[5] = gptr_exo->left_side_.toe_fsr_.calibrated_reading_;
+            gptr_vofa->ptr_vofa_data_[6] = gptr_exo_data->left_side_.heel_contact_state_;
+            gptr_vofa->ptr_vofa_data_[7] = gptr_exo->right_side_.heel_fsr_.raw_reading_;
+            gptr_vofa->ptr_vofa_data_[8] = gptr_exo->right_side_.toe_fsr_.raw_reading_;
+            gptr_vofa->ptr_vofa_data_[9] = gptr_exo->right_side_.heel_fsr_.calibrated_reading_;
+            gptr_vofa->ptr_vofa_data_[10] = gptr_exo->right_side_.toe_fsr_.calibrated_reading_;
+            gptr_vofa->ptr_vofa_data_[11] = gptr_exo_data->right_side_.heel_contact_state_;
+            gptr_vofa->ptr_vofa_data_[12] = gptr_exo_data->left_side_.percent_gait_ / 100.0f;
+            gptr_vofa->ptr_vofa_data_[13] = gptr_exo_data->right_side_.percent_gait_ / 100.0f;
+            gptr_vofa->ptr_vofa_data_[14] = gptr_exo->left_side_.heel_fsr_.calibration_refinement_max_;
+            gptr_vofa->ptr_vofa_data_[15] = gptr_exo->right_side_.heel_fsr_.calibration_refinement_max_;
+            gptr_vofa->ptr_vofa_data_[16] = gptr_exo->left_side_.heel_fsr_.calibration_refinement_min_;
+            gptr_vofa->ptr_vofa_data_[17] = gptr_exo->right_side_.heel_fsr_.calibration_refinement_min_;
+            gptr_vofa->ptr_vofa_data_[18] = gptr_exo_data->left_side_.ankle_joint_.pos_rad_;
+            gptr_vofa->ptr_vofa_data_[19] = gptr_exo_data->right_side_.ankle_joint_.pos_rad_;
+            gptr_vofa->SendOneFrame(20);
+            continue;
+            
             gptr_vofa->ptr_vofa_data_[0] = loop_cnt++;
             gptr_vofa->ptr_vofa_data_[1] = GetSysTimeMs();
             gptr_vofa->ptr_vofa_data_[2] = gptr_exo->left_side_.heel_fsr_.raw_reading_;
@@ -167,185 +182,23 @@ void AltMainTask(void *argument)
 	}
 }
 
-void CDCTask1()
+void CableTensionTest()
 {
-    static bool is_first_run = true;
-    
-    if (is_first_run)
-    {
-        is_first_run = false;
-        adg2128_row.SetRoute(1, 0, false);  /* 先全部接地 */
-        adg2128_col.SetRoute(1, 0, false);
-        adg2128_row.SetRoute(1, 1, false);
-        adg2128_col.SetRoute(1, 1, false);
-    }
+    gptr_exo->left_side_.ankle_joint_.motor_.position_ref_ = gptr_exo->left_side_.ankle_joint_.cable_released_position_;
+    // gptr_exo->left_side_.ankle_joint_.motor_.MotionControl();
+    gptr_exo->right_side_.ankle_joint_.motor_.position_ref_ = -gptr_exo->right_side_.ankle_joint_.cable_released_position_;
+    gptr_exo->right_side_.ankle_joint_.motor_.MotionControl();
+    HAL_Delay(1000);
 
-    /** 第一个电容 */
-    adg2128_row.UnsetRoute(1, 0, true);  /* 从地中断开 */
-    adg2128_col.UnsetRoute(1, 0, true);
-    adg2128_row.SetRoute(0, 0, false);   /* 并连接到PCAP01 */
-    adg2128_col.SetRoute(0, 0, false);
-    DelayUs(50);
+    gptr_exo->left_side_.ankle_joint_.motor_.position_ref_ = gptr_exo->left_side_.ankle_joint_.cable_pre_tensioned_position_;
+    // gptr_exo->left_side_.ankle_joint_.motor_.MotionControl();
+    gptr_exo->right_side_.ankle_joint_.motor_.position_ref_ = -gptr_exo->right_side_.ankle_joint_.cable_pre_tensioned_position_;
+    gptr_exo->right_side_.ankle_joint_.motor_.MotionControl();
+    HAL_Delay(1000);
 
-    pcap01.sendOpcode(PCAP01::KOpcodeStartCDCMeas);
-    while(g_pcap01_intn_state);
-    g_pcap01_intn_state = 1;
-    gptr_vofa->ptr_vofa_data_[0] = pcap01.readRegister(PCAP01::KC1DivC0RegAddr, PCAP01::KFractionalBits);
-
-    adg2128_row.UnsetRoute(0, 0, true);   /* 从PCAP01中断开 */
-    adg2128_col.UnsetRoute(0, 0, true);
-    adg2128_row.SetRoute(1, 0, false);    /* 连接到地 */
-    adg2128_col.SetRoute(1, 0, false);
-    DelayUs(50);
-
-    /** 第二个电容 */
-    adg2128_row.UnsetRoute(1, 0, true);  /* 从地中断开 */
-    adg2128_col.UnsetRoute(1, 1, true);
-    adg2128_row.SetRoute(0, 0, false);   /* 并连接到PCAP01 */
-    adg2128_col.SetRoute(0, 1, false);
-    DelayUs(50);
-
-    pcap01.sendOpcode(PCAP01::KOpcodeStartCDCMeas);
-    while(g_pcap01_intn_state);
-    g_pcap01_intn_state = 1;
-    gptr_vofa->ptr_vofa_data_[1] = pcap01.readRegister(PCAP01::KC1DivC0RegAddr, PCAP01::KFractionalBits);
-
-    adg2128_row.UnsetRoute(0, 0, true);   /* 从PCAP01中断开 */
-    adg2128_col.UnsetRoute(0, 1, true);
-    adg2128_row.SetRoute(1, 0, false);    /* 连接到地 */
-    adg2128_col.SetRoute(1, 1, false);
-    DelayUs(50);
-
-    /** 第三个电容 */
-    adg2128_row.UnsetRoute(1, 1, true);  /* 从地中断开 */
-    adg2128_col.UnsetRoute(1, 0, true);
-    adg2128_row.SetRoute(0, 1, false);   /* 并连接到PCAP01 */
-    adg2128_col.SetRoute(0, 0, false);
-    DelayUs(50);
-
-    pcap01.sendOpcode(PCAP01::KOpcodeStartCDCMeas);
-    while(g_pcap01_intn_state);
-    g_pcap01_intn_state = 1;
-    gptr_vofa->ptr_vofa_data_[2] = pcap01.readRegister(PCAP01::KC1DivC0RegAddr, PCAP01::KFractionalBits);
-
-    adg2128_row.UnsetRoute(0, 1, true);   /* 从PCAP01中断开 */
-    adg2128_col.UnsetRoute(0, 0, true);
-    adg2128_row.SetRoute(1, 1, false);    /* 连接到地 */
-    adg2128_col.SetRoute(1, 0, false);
-    //    HAL_Delay(1);
-    DelayUs(50);
-
-    /** 第四个电容 */
-    adg2128_row.UnsetRoute(1, 1, true);  /* 从地中断开 */
-    adg2128_col.UnsetRoute(1, 1, true);
-    adg2128_row.SetRoute(0, 1, false);   /* 并连接到PCAP01 */
-    adg2128_col.SetRoute(0, 1, false);
-    DelayUs(50);
-
-    pcap01.sendOpcode(PCAP01::KOpcodeStartCDCMeas);
-    while(g_pcap01_intn_state);
-    g_pcap01_intn_state = 1;
-    gptr_vofa->ptr_vofa_data_[3] = pcap01.readRegister(PCAP01::KC1DivC0RegAddr, PCAP01::KFractionalBits);
-
-    adg2128_row.UnsetRoute(0, 1, true);   /* 从PCAP01中断开 */
-    adg2128_col.UnsetRoute(0, 1, true);
-    adg2128_row.SetRoute(1, 1, false);    /* 连接到地 */
-    adg2128_col.SetRoute(1, 1, false);
-    DelayUs(50);
-
-    gptr_vofa->ptr_vofa_data_[0] = pcap01.applyLowPassFilter(0, gptr_vofa->ptr_vofa_data_[0]);
-    gptr_vofa->ptr_vofa_data_[1] = pcap01.applyLowPassFilter(1, gptr_vofa->ptr_vofa_data_[1]);
-    gptr_vofa->ptr_vofa_data_[2] = pcap01.applyLowPassFilter(2, gptr_vofa->ptr_vofa_data_[2]);
-    gptr_vofa->ptr_vofa_data_[3] = pcap01.applyLowPassFilter(3, gptr_vofa->ptr_vofa_data_[3]);
-    
-    gptr_vofa->ptr_vofa_data_[0] *= PCAP01::KRefCap;
-    gptr_vofa->ptr_vofa_data_[1] *= PCAP01::KRefCap;
-    gptr_vofa->ptr_vofa_data_[2] *= PCAP01::KRefCap;
-    gptr_vofa->ptr_vofa_data_[3] *= PCAP01::KRefCap;
-    gptr_vofa->SendOneFrame(4);
-}
-
-
-void CDCTask2()
-{
-
-    /** 第一个电容 */
-	adg2128_row.SetRoute(0, 0, false);   /* 并连接到PCAP01 */
-	adg2128_col.SetRoute(0, 0, false);
-	DelayUs(50);
-
-    pcap01.sendOpcode(PCAP01::KOpcodeStartCDCMeas);
-    while(g_pcap01_intn_state);
-    g_pcap01_intn_state = 1;
-    gptr_vofa->ptr_vofa_data_[0] = pcap01.readRegister(PCAP01::KC1DivC0RegAddr, PCAP01::KFractionalBits);
-
-    adg2128_row.UnsetRoute(0, 0, false);   /* 从PCAP01中断开 */
-    adg2128_col.UnsetRoute(0, 0, false);
-    DelayUs(50);
-
-    /** 第二个电容 */
-	adg2128_row.SetRoute(0, 0, false);   /* 并连接到PCAP01 */
-	adg2128_col.SetRoute(0, 1, false);
-	DelayUs(50);
-
-    pcap01.sendOpcode(PCAP01::KOpcodeStartCDCMeas);
-    while(g_pcap01_intn_state);
-    g_pcap01_intn_state = 1;
-    gptr_vofa->ptr_vofa_data_[1] = pcap01.readRegister(PCAP01::KC1DivC0RegAddr, PCAP01::KFractionalBits);
-
-	adg2128_row.UnsetRoute(0, 0, false);   /* 并连接到PCAP01 */
-	adg2128_col.UnsetRoute(0, 1, false);
-	DelayUs(50);
-
-    /** 第三个电容 */
-
-    adg2128_row.SetRoute(0, 1, false);   /* 并连接到PCAP01 */
-    adg2128_col.SetRoute(0, 0, false);
-    DelayUs(50);
-
-    pcap01.sendOpcode(PCAP01::KOpcodeStartCDCMeas);
-    while(g_pcap01_intn_state);
-    g_pcap01_intn_state = 1;
-    gptr_vofa->ptr_vofa_data_[2] = pcap01.readRegister(PCAP01::KC1DivC0RegAddr, PCAP01::KFractionalBits);
-
-    adg2128_row.UnsetRoute(0, 1, false);   /* 并连接到PCAP01 */
-    adg2128_col.UnsetRoute(0, 0, false);
-    DelayUs(50);
-
-    /** 第四个电容 */
-	adg2128_row.SetRoute(0, 1, false);   /* 并连接到PCAP01 */
-	adg2128_col.SetRoute(0, 1, false);
-	DelayUs(50);
-
-    pcap01.sendOpcode(PCAP01::KOpcodeStartCDCMeas);
-    while(g_pcap01_intn_state);
-    g_pcap01_intn_state = 1;
-    gptr_vofa->ptr_vofa_data_[3] = pcap01.readRegister(PCAP01::KC1DivC0RegAddr, PCAP01::KFractionalBits);
-
-	adg2128_row.UnsetRoute(0, 1, false);   /* 并连接到PCAP01 */
-	adg2128_col.UnsetRoute(0, 1, false);
-	DelayUs(50);
-
-    gptr_vofa->ptr_vofa_data_[0] = pcap01.applyLowPassFilter(0, gptr_vofa->ptr_vofa_data_[0]);
-    gptr_vofa->ptr_vofa_data_[1] = pcap01.applyLowPassFilter(1, gptr_vofa->ptr_vofa_data_[1]);
-    gptr_vofa->ptr_vofa_data_[2] = pcap01.applyLowPassFilter(2, gptr_vofa->ptr_vofa_data_[2]);
-    gptr_vofa->ptr_vofa_data_[3] = pcap01.applyLowPassFilter(3, gptr_vofa->ptr_vofa_data_[3]);
-    gptr_vofa->ptr_vofa_data_[0] *= PCAP01::KRefCap;
-    gptr_vofa->ptr_vofa_data_[1] *= PCAP01::KRefCap;
-    gptr_vofa->ptr_vofa_data_[2] *= PCAP01::KRefCap;
-    gptr_vofa->ptr_vofa_data_[3] *= PCAP01::KRefCap;
-    gptr_vofa->SendOneFrame(4);
-}
-
-void CDCTask3()
-{
-    pcap01.sendOpcode(PCAP01::KOpcodeStartCDCMeas);
-    while(g_pcap01_intn_state);
-    g_pcap01_intn_state = 1;
-    gptr_vofa->ptr_vofa_data_[0] = pcap01.readRegister(PCAP01::KC1DivC0RegAddr, PCAP01::KFractionalBits);
-
-    gptr_vofa->ptr_vofa_data_[0] = pcap01.applyLowPassFilter(0, gptr_vofa->ptr_vofa_data_[0]);
-    gptr_vofa->ptr_vofa_data_[0] *= PCAP01::KRefCap;
-    gptr_vofa->SendOneFrame(1);
-    HAL_Delay(5);
+    gptr_exo->left_side_.ankle_joint_.motor_.position_ref_ = gptr_exo->left_side_.ankle_joint_.cable_tensioned_position_;
+    // gptr_exo->left_side_.ankle_joint_.motor_.MotionControl();
+    gptr_exo->right_side_.ankle_joint_.motor_.position_ref_ = -gptr_exo->right_side_.ankle_joint_.cable_tensioned_position_;
+    gptr_exo->right_side_.ankle_joint_.motor_.MotionControl();
+    HAL_Delay(1000);
 }

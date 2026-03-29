@@ -2,9 +2,7 @@
 #include "utils.h"
 #include <cmath>
 
-float fsr_voltages[4] = {0.0f, 0.0f, 0.0f, 0.0f};  /**< RH, RT, LH, LT */
-
-bool schmitt_trigger(float value, bool is_high, float lower_threshold, float upper_threshold)
+bool Fsr::SchmittTrigger(float value, bool is_high, float lower_threshold, float upper_threshold)
 {
     bool trigger = 0;
     if (is_high)
@@ -16,12 +14,6 @@ bool schmitt_trigger(float value, bool is_high, float lower_threshold, float upp
         trigger = value > upper_threshold;
     }
     return trigger;
-}
-
-float ReadFsrVol(uint8_t fsr_id)
-{
-    float fsr_vol = fsr_voltages[fsr_id];
-    return fsr_vol;
 }
 
 // ----------------------------- Fsr ---------------------------------
@@ -104,7 +96,7 @@ bool Fsr::RefineCalibration(bool do_refinement)
             bool last_state = state_;
             float lower = kLowerThresholdPercentCalibrationRefinement * (calibration_max_ - calibration_min_) + calibration_min_;
             float upper = kUpperThresholdPercentCalibrationRefinement * (calibration_max_ - calibration_min_) + calibration_min_;
-            state_ = schmitt_trigger(current_raw_reading, last_state, lower, upper);
+            state_ = SchmittTrigger(current_raw_reading, last_state, lower, upper);
             
             if (state_ && !last_state)
             {
@@ -176,7 +168,7 @@ bool Fsr::CalcGroundContact()
     // Only when refinement available use schmitt on normalized value
     if (calibration_refinement_max_ > calibration_refinement_min_ + 1e-6f)
     {
-        current_state = schmitt_trigger(calibrated_reading_, ground_contact_, lower_threshold_percent_ground_contact_, upper_threshold_percent_ground_contact_);
+        current_state = SchmittTrigger(calibrated_reading_, ground_contact_, lower_threshold_percent_ground_contact_, upper_threshold_percent_ground_contact_);
     }
     ground_contact_ = current_state;
     return ground_contact_;

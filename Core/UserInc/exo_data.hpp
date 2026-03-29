@@ -24,6 +24,18 @@ enum class ExoStatus : uint8_t
     kErrorMotor = 9U,
 };
 
+enum class ExoState : uint8_t
+{
+    kSleep,
+    kWakeUpAndInit,
+    kWaitMotorComm,
+    kCalibrating,
+    kReady,
+    kAssisting,
+    kFaultLowBattery,
+    kFaultSystem,
+};
+
 /** from nrf54 */
 typedef struct foot_sensor_packet_t
 {
@@ -41,7 +53,6 @@ typedef struct exo_sensor_packet_t
     foot_sensor_packet_t left_foot;
     foot_sensor_packet_t right_foot;
 } exo_sensor_packet_t;
-
 
 class ImuData
 {

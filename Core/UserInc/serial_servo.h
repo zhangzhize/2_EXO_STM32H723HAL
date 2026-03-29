@@ -88,7 +88,8 @@ struct SerialServoControllerTypeDef {
     int (*serial_write_and_read)(SerialServoControllerTypeDef *self, SerialServoCmdTypeDef *frame, bool tx_only);
 };
 /** added by zzz */
-void serial_servo_init(void);
+void SerialServoInit(void);
+void SerialServoSetPosDeg(SerialServoControllerTypeDef *self, uint32_t servo_id, float pos_deg, uint32_t duration_ms);
 
 void serial_servo_controller_object_init(SerialServoControllerTypeDef *self);
 void serial_servo_set_id(SerialServoControllerTypeDef *self, uint32_t old_id, uint32_t new_id);
@@ -175,6 +176,8 @@ static inline int serial_servo_rx_handler(SerialServoControllerTypeDef *self, ui
         }
     }
 }
+
+void SerialServoRxCpltCallback(SerialServoControllerTypeDef *self, uint8_t *data, uint16_t data_size);
 
 #ifdef __cplusplus
 } // extern "C"

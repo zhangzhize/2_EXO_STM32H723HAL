@@ -29,8 +29,7 @@ enum ExoJointCanID : uint8_t
     kLeftKnee = 0x2A,
     kRightKnee = 0x55,
     kLeftAnkle = 0x2A,
-    // kLeftAnkle = 0x28,
-    kRightAnkle = 0x53,
+    kRightAnkle = 0x55,
 };
 
 
