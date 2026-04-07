@@ -419,7 +419,7 @@ void DMMotor::CanRxCallBack(uint32_t can_id, uint8_t *can_rxdata)
     else 
     {
         feedback_.flag_ = 1;
-        /** #XXX: 检查 feedback_.id_ 的读取方式是否正确*/
+        /** #TODO: 检查 feedback_.id_ 的读取方式是否正确*/
         feedback_.id_ = can_rxdata[0] & 0x0F;
         feedback_.state_ = (can_rxdata[0] >> 4);
         int p_int_ = (can_rxdata[1] << 8) | can_rxdata[2];

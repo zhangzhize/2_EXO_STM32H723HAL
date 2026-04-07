@@ -152,14 +152,6 @@ SECTIONS
     __bss_end__ = _ebss;
   } >RAM_D1
 
-  /* Added by zzz */
-  .sram4 (NOLOAD) :
-  {
-    . = ALIGN(32);
-    KEEP(*(.sram4))
-    . = ALIGN(4);
-  } >RAM_D3
-
   /* User_heap_stack section, used to check that there is enough RAM left */
   ._user_heap_stack :
   {
@@ -170,6 +162,22 @@ SECTIONS
     . = . + _Min_Stack_Size;
     . = ALIGN(8);
   } >RAM_D1
+
+  /* zzz */
+  .dma_buf (NOLOAD) :
+  {
+    . = ALIGN(32);
+    KEEP(*(.dma_buf))
+    . = ALIGN(32);
+  } >RAM_D2
+
+  /* zzz */
+  .bdma_buf (NOLOAD) :
+  {
+    . = ALIGN(32);
+    KEEP(*(.bdma_buf))
+    . = ALIGN(32);
+  } >RAM_D3
 
   /* Remove information from the standard libraries */
   /DISCARD/ :

@@ -22,14 +22,13 @@
 
 /* USER CODE BEGIN 0 */
 #include <string.h>
-uint8_t	uart8_rx_buffer[UART8_RX_BUF_SIZE] = {0};
-uint8_t uart9_rx_buffer[UART9_RX_BUF_SIZE] = {0};
+__attribute__((section(".dma_buf"), aligned(32))) uint8_t uart8_rx_buffer[UART8_RX_BUF_SIZE];
+__attribute__((section(".dma_buf"), aligned(32))) uint8_t uart9_rx_buffer[UART9_RX_BUF_SIZE];
 /* USER CODE END 0 */
 
 UART_HandleTypeDef huart8;
 UART_HandleTypeDef huart9;
 DMA_HandleTypeDef hdma_uart8_rx;
-DMA_HandleTypeDef hdma_uart8_tx;
 DMA_HandleTypeDef hdma_uart9_rx;
 DMA_HandleTypeDef hdma_uart9_tx;
 
@@ -51,7 +50,7 @@ void MX_UART8_Init(void)
   huart8.Init.Parity = UART_PARITY_NONE;
   huart8.Init.Mode = UART_MODE_TX_RX;
   huart8.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart8.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart8.Init.OverSampling = UART_OVERSAMPLING_8;
   huart8.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
   huart8.Init.ClockPrescaler = UART_PRESCALER_DIV1;
   huart8.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
@@ -67,7 +66,7 @@ void MX_UART8_Init(void)
   {
     Error_Handler();
   }
-  if (HAL_UARTEx_DisableFifoMode(&huart8) != HAL_OK)
+  if (HAL_UARTEx_EnableFifoMode(&huart8) != HAL_OK)
   {
     Error_Handler();
   }
@@ -94,7 +93,7 @@ void MX_UART9_Init(void)
   huart9.Init.Parity = UART_PARITY_NONE;
   huart9.Init.Mode = UART_MODE_TX_RX;
   huart9.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart9.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart9.Init.OverSampling = UART_OVERSAMPLING_8;
   huart9.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
   huart9.Init.ClockPrescaler = UART_PRESCALER_DIV1;
   huart9.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
@@ -110,7 +109,7 @@ void MX_UART9_Init(void)
   {
     Error_Handler();
   }
-  if (HAL_UARTEx_DisableFifoMode(&huart9) != HAL_OK)
+  if (HAL_UARTEx_EnableFifoMode(&huart9) != HAL_OK)
   {
     Error_Handler();
   }
@@ -174,24 +173,6 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
 
     __HAL_LINKDMA(uartHandle,hdmarx,hdma_uart8_rx);
 
-    /* UART8_TX Init */
-    hdma_uart8_tx.Instance = DMA1_Stream4;
-    hdma_uart8_tx.Init.Request = DMA_REQUEST_UART8_TX;
-    hdma_uart8_tx.Init.Direction = DMA_MEMORY_TO_PERIPH;
-    hdma_uart8_tx.Init.PeriphInc = DMA_PINC_DISABLE;
-    hdma_uart8_tx.Init.MemInc = DMA_MINC_ENABLE;
-    hdma_uart8_tx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
-    hdma_uart8_tx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
-    hdma_uart8_tx.Init.Mode = DMA_NORMAL;
-    hdma_uart8_tx.Init.Priority = DMA_PRIORITY_VERY_HIGH;
-    hdma_uart8_tx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
-    if (HAL_DMA_Init(&hdma_uart8_tx) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
-    __HAL_LINKDMA(uartHandle,hdmatx,hdma_uart8_tx);
-
     /* UART8 interrupt Init */
     HAL_NVIC_SetPriority(UART8_IRQn, 4, 0);
     HAL_NVIC_EnableIRQ(UART8_IRQn);
@@ -239,7 +220,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     hdma_uart9_rx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
     hdma_uart9_rx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
     hdma_uart9_rx.Init.Mode = DMA_NORMAL;
-    hdma_uart9_rx.Init.Priority = DMA_PRIORITY_VERY_HIGH;
+    hdma_uart9_rx.Init.Priority = DMA_PRIORITY_HIGH;
     hdma_uart9_rx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
     if (HAL_DMA_Init(&hdma_uart9_rx) != HAL_OK)
     {
@@ -257,7 +238,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     hdma_uart9_tx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
     hdma_uart9_tx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
     hdma_uart9_tx.Init.Mode = DMA_NORMAL;
-    hdma_uart9_tx.Init.Priority = DMA_PRIORITY_VERY_HIGH;
+    hdma_uart9_tx.Init.Priority = DMA_PRIORITY_HIGH;
     hdma_uart9_tx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
     if (HAL_DMA_Init(&hdma_uart9_tx) != HAL_OK)
     {
@@ -294,7 +275,6 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 
     /* UART8 DMA DeInit */
     HAL_DMA_DeInit(uartHandle->hdmarx);
-    HAL_DMA_DeInit(uartHandle->hdmatx);
 
     /* UART8 interrupt Deinit */
     HAL_NVIC_DisableIRQ(UART8_IRQn);
@@ -329,9 +309,10 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* uartHandle)
 }
 
 /* USER CODE BEGIN 1 */
-extern struct Exo *gptr_exo;
-void CallExoUartRxCallBack(struct Exo *ptr_exo, uint8_t *data, uint16_t data_size);
 #include "usbd_cdc_if.h"
+extern struct Exo *gptr_exo;
+extern void CallExoSensorUartRxCallback(struct Exo *ptr_exo, uint8_t *data, uint16_t data_size);
+extern void CallExoUsrBLEUartRxCallback(struct Exo *ptr_exo, uint8_t *data, uint16_t data_size);
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef * huart, uint16_t size)
 {
@@ -343,7 +324,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef * huart, uint16_t size)
         // CDC_Transmit_HS(buf, size);
         if (size <= UART8_RX_BUF_SIZE)
         {
-            CallExoUartRxCallBack(gptr_exo, uart8_rx_buffer, size);
+            CallExoSensorUartRxCallback(gptr_exo, uart8_rx_buffer, size);
         }
         // memset(uart8_rx_buffer, 0, size);
         HAL_UARTEx_ReceiveToIdle_DMA(&huart8, uart8_rx_buffer, UART8_RX_BUF_SIZE);
@@ -357,7 +338,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef * huart, uint16_t size)
         // CDC_Transmit_HS(buf, size);
         if (size <= UART9_RX_BUF_SIZE)
         {
-            CallExoUartRxCallBack(gptr_exo, uart9_rx_buffer, size);
+            CallExoUsrBLEUartRxCallback(gptr_exo, uart9_rx_buffer, size);
         }
         // memset(uart9_rx_buffer, 0, size);
         HAL_UARTEx_ReceiveToIdle_DMA(&huart9, uart9_rx_buffer, UART9_RX_BUF_SIZE);
@@ -369,13 +350,15 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef * huart)
 {
     if (huart->Instance == UART8)
     {
-        memset(uart8_rx_buffer, 0, UART8_RX_BUF_SIZE);
+        // uint32_t err_code = huart->ErrorCode;
+        // printf("UART8 Error: %08x\r\n", err_code);
+        // memset(uart8_rx_buffer, 0, UART8_RX_BUF_SIZE);
         HAL_UARTEx_ReceiveToIdle_DMA(&huart8, uart8_rx_buffer, UART8_RX_BUF_SIZE);
         __HAL_DMA_DISABLE_IT(huart8.hdmarx, DMA_IT_HT);
     }
     else if (huart->Instance == UART9)
     {
-        memset(uart9_rx_buffer, 0, UART9_RX_BUF_SIZE);
+        // memset(uart9_rx_buffer, 0, UART9_RX_BUF_SIZE);
         HAL_UARTEx_ReceiveToIdle_DMA(&huart9, uart9_rx_buffer, UART9_RX_BUF_SIZE);
         __HAL_DMA_DISABLE_IT(huart9.hdmarx, DMA_IT_HT);
     }

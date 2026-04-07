@@ -7,39 +7,42 @@
 #include "adc.h"
 #include "dma.h"
 #include "fdcan.h"
-#include "i2c.h"
 #include "spi.h"
 #include "tim.h"
 #include "usart.h"
 #include "usb_device.h"
 #include "gpio.h"
-
+#include "dwt.h"
 
 #include "utils.h"
-#include "vofa.hpp"
+#include "shell.hpp"
 #include "ws2812.h"
 #include "bmi088_driver.h"
 #include "status_led.hpp"
 #include "fsr.hpp"
 #include "exo.hpp"
+#include "mahony.hpp"
 
 /* 用于离线调试 */
 #include "usbd_cdc_if.h"
 uint8_t cdc_rx_buffer[512] = {0};
 uint8_t cdc_rx_flag = 0;
 
-Vofa *gptr_vofa = new Vofa();
+__attribute__((section(".dma_buf"), aligned(32))) uint32_t g_adc_data[3] = {0};
+
+Shell *gptr_shell = new Shell();
 ExoData *gptr_exo_data = new ExoData();
 Exo *gptr_exo = new Exo(gptr_exo_data);
-
-uint32_t g_adc_data[3] = {0};
+Mahony *gptr_mahony = new Mahony();
 
 void CableTensionTest();
 
+float getRoll();
+float getPitch();
+float getYaw();
+
 void AltMainTask(void *argument)
 {
-    uint32_t loop_cnt = 0;
-
     /** 复位扩展板上的两个NRF54L15 */
     HAL_GPIO_WritePin(NRF54_RST_GPIO_Port, NRF54_RST_Pin, GPIO_PIN_RESET);
     HAL_Delay(10);
@@ -66,118 +69,42 @@ void AltMainTask(void *argument)
     // TIM12->CCR2 = 0;
 
     /* 初始化CAN */
-    // BspCanInit();
+    BspCanInit();
     // BspStdCanInit();
     // BspExtCanInit();
     
     /* 给电机上电 */
-    HAL_GPIO_WritePin(POWER_24V_1_GPIO_Port, POWER_24V_1_Pin|POWER_24V_2_Pin, GPIO_PIN_RESET);
-    HAL_Delay(1000);
     HAL_GPIO_WritePin(POWER_24V_1_GPIO_Port, POWER_24V_1_Pin|POWER_24V_2_Pin, GPIO_PIN_SET);
     HAL_Delay(1000);
     
     /** #HACK: 在此修改外骨骼参数  */
     gptr_exo->Initialize();
+    HAL_Delay(1000);
+
+    /* 板载IMU */
+    // float gyro[3], accel[3], temperature;
+    // float roll_deg, pitch_deg, yaw_deg;
+    // while(BMI088_init());
+    // gptr_mahony->Begin(200.0f);
+    // while (1)
+    // {
+        // uint32_t start_us = GetSysTimeMs();
+        // BMI088_read(gyro, accel, &temperature);
+        // gptr_mahony->UpdateIMU(gyro[0], gyro[1], gyro[2], accel[0], accel[1], accel[2]);
+        // gptr_mahony->GetEulerAnglesDeg(roll_deg, pitch_deg, yaw_deg);
+        // HAL_Delay(5);
+    // }
 
 	/* 启动定时器 */
 	HAL_TIM_Base_Start_IT(&htim2);
-
-    /* 板载IMU */
-    // float gyro[3], accel[3], temp;
-    // while(BMI088_init());
-
 	while (1)
-	{
+	{   
         // CableTensionTest();
         if (g_timer2_5ms_flag == 1)
         {
             g_timer2_5ms_flag = 0;
-
             /* 外骨骼 */
-            // gptr_exo->left_side_.ankle_joint_.motor_.EnableMotor();
-            // gptr_exo->right_side_.ankle_joint_.motor_.EnableMotor();
             gptr_exo->Run();
-
-            /* 通过nrf54(uart9)蓝牙上报数据 */
-            // gptr_vofa->ptr_vofa_data_[0] = loop_cnt++;
-            // gptr_vofa->ptr_vofa_data_[1] = GetSysTimeMs();
-            // gptr_vofa->ptr_vofa_data_[2] = gptr_exo_data->left_side_.ankle_joint_.pos_rad_;
-            // gptr_vofa->ptr_vofa_data_[3] = gptr_exo_data->right_side_.ankle_joint_.pos_rad_;
-            // gptr_vofa->SendOneFrame(4);
-            // continue;
-
-            gptr_vofa->ptr_vofa_data_[0] = loop_cnt++;
-            gptr_vofa->ptr_vofa_data_[1] = GetSysTimeMs();
-            gptr_vofa->ptr_vofa_data_[2] = gptr_exo->left_side_.heel_fsr_.raw_reading_;
-            gptr_vofa->ptr_vofa_data_[3] = gptr_exo->left_side_.toe_fsr_.raw_reading_;
-            gptr_vofa->ptr_vofa_data_[4] = gptr_exo->left_side_.heel_fsr_.calibrated_reading_;
-            gptr_vofa->ptr_vofa_data_[5] = gptr_exo->left_side_.toe_fsr_.calibrated_reading_;
-            gptr_vofa->ptr_vofa_data_[6] = gptr_exo_data->left_side_.heel_contact_state_;
-            gptr_vofa->ptr_vofa_data_[7] = gptr_exo->right_side_.heel_fsr_.raw_reading_;
-            gptr_vofa->ptr_vofa_data_[8] = gptr_exo->right_side_.toe_fsr_.raw_reading_;
-            gptr_vofa->ptr_vofa_data_[9] = gptr_exo->right_side_.heel_fsr_.calibrated_reading_;
-            gptr_vofa->ptr_vofa_data_[10] = gptr_exo->right_side_.toe_fsr_.calibrated_reading_;
-            gptr_vofa->ptr_vofa_data_[11] = gptr_exo_data->right_side_.heel_contact_state_;
-            gptr_vofa->ptr_vofa_data_[12] = gptr_exo_data->left_side_.percent_gait_ / 100.0f;
-            gptr_vofa->ptr_vofa_data_[13] = gptr_exo_data->right_side_.percent_gait_ / 100.0f;
-            gptr_vofa->ptr_vofa_data_[14] = gptr_exo->left_side_.heel_fsr_.calibration_refinement_max_;
-            gptr_vofa->ptr_vofa_data_[15] = gptr_exo->right_side_.heel_fsr_.calibration_refinement_max_;
-            gptr_vofa->ptr_vofa_data_[16] = gptr_exo->left_side_.heel_fsr_.calibration_refinement_min_;
-            gptr_vofa->ptr_vofa_data_[17] = gptr_exo->right_side_.heel_fsr_.calibration_refinement_min_;
-            gptr_vofa->ptr_vofa_data_[18] = gptr_exo_data->left_side_.ankle_joint_.pos_rad_;
-            gptr_vofa->ptr_vofa_data_[19] = gptr_exo_data->right_side_.ankle_joint_.pos_rad_;
-            gptr_vofa->SendOneFrame(20);
-            continue;
-            
-            gptr_vofa->ptr_vofa_data_[0] = loop_cnt++;
-            gptr_vofa->ptr_vofa_data_[1] = GetSysTimeMs();
-            gptr_vofa->ptr_vofa_data_[2] = gptr_exo->left_side_.heel_fsr_.raw_reading_;
-            gptr_vofa->ptr_vofa_data_[3] = gptr_exo->left_side_.toe_fsr_.raw_reading_;
-            gptr_vofa->ptr_vofa_data_[4] = gptr_exo->right_side_.heel_fsr_.raw_reading_;
-            gptr_vofa->ptr_vofa_data_[5] = gptr_exo->right_side_.toe_fsr_.raw_reading_;
-            gptr_vofa->ptr_vofa_data_[6] = gptr_exo_data->left_side_.foot_imu_.quat_i_;
-            gptr_vofa->ptr_vofa_data_[7] = gptr_exo_data->left_side_.foot_imu_.quat_j_;
-            gptr_vofa->ptr_vofa_data_[8] = gptr_exo_data->left_side_.foot_imu_.quat_k_;
-            gptr_vofa->ptr_vofa_data_[9] = gptr_exo_data->left_side_.foot_imu_.quat_real_;
-            gptr_vofa->ptr_vofa_data_[10] = gptr_exo_data->right_side_.foot_imu_.quat_i_;
-            gptr_vofa->ptr_vofa_data_[11] = gptr_exo_data->right_side_.foot_imu_.quat_j_;
-            gptr_vofa->ptr_vofa_data_[12] = gptr_exo_data->right_side_.foot_imu_.quat_k_;
-            gptr_vofa->ptr_vofa_data_[13] = gptr_exo_data->right_side_.foot_imu_.quat_real_;
-            gptr_vofa->ptr_vofa_data_[14] = gptr_exo_data->left_side_.ankle_plantarflexion_force_N_;
-            gptr_vofa->ptr_vofa_data_[15] = gptr_exo_data->right_side_.ankle_plantarflexion_force_N_;
-            gptr_vofa->SendOneFrame(16);
-            continue;
-
-            gptr_vofa->ptr_vofa_data_[0] = loop_cnt++;
-            gptr_vofa->ptr_vofa_data_[1] = GetSysTimeMs();
-            gptr_vofa->ptr_vofa_data_[2] = gptr_exo_data->left_side_.hip_joint_.pos_rad_;
-            gptr_vofa->ptr_vofa_data_[3] = gptr_exo_data->right_side_.hip_joint_.pos_rad_;
-            gptr_vofa->ptr_vofa_data_[4] = gptr_exo->left_side_.hip_joint_.motor_.ctrl_param_.tor_set_Nm_;
-            gptr_vofa->ptr_vofa_data_[5] = gptr_exo->right_side_.hip_joint_.motor_.ctrl_param_.tor_set_Nm_;
-            gptr_vofa->SendOneFrame(6);
-            continue;
-
-            gptr_vofa->ptr_vofa_data_[0] = loop_cnt++;
-            gptr_vofa->ptr_vofa_data_[1] = GetSysTimeMs();
-            gptr_vofa->ptr_vofa_data_[2] = gptr_exo_data->ao_left_event_cnt_;
-            gptr_vofa->ptr_vofa_data_[3] = gptr_exo_data->ao_right_event_cnt_;
-            gptr_vofa->ptr_vofa_data_[4] = gptr_exo_data->left_side_.percent_gait_ / 100.0f;
-            gptr_vofa->ptr_vofa_data_[5] = gptr_exo_data->right_side_.percent_gait_ / 100.0f;
-            gptr_vofa->ptr_vofa_data_[6] = gptr_exo->left_side_.heel_fsr_.raw_reading_;
-            gptr_vofa->ptr_vofa_data_[7] = gptr_exo->right_side_.heel_fsr_.raw_reading_;
-            gptr_vofa->ptr_vofa_data_[8] = gptr_exo->left_side_.heel_fsr_.calibrated_reading_;
-            gptr_vofa->ptr_vofa_data_[9] = gptr_exo->right_side_.heel_fsr_.calibrated_reading_;
-            gptr_vofa->ptr_vofa_data_[10] = gptr_exo_data->left_side_.heel_contact_state_;
-            gptr_vofa->ptr_vofa_data_[11] = gptr_exo_data->right_side_.heel_contact_state_;
-            gptr_vofa->ptr_vofa_data_[12] = gptr_exo_data->right_side_.knee_joint_.pos_rad_;
-            gptr_vofa->ptr_vofa_data_[13] = gptr_exo->right_side_.knee_joint_.motor_.torque_forward_;
-            gptr_vofa->ptr_vofa_data_[14] = gptr_exo_data->left_side_.ankle_joint_.pos_rad_;
-            gptr_vofa->ptr_vofa_data_[15] = gptr_exo->left_side_.ankle_joint_.motor_.torque_forward_;
-            gptr_vofa->ptr_vofa_data_[16] = gptr_exo->left_side_.heel_fsr_.calibration_refinement_max_;
-            gptr_vofa->ptr_vofa_data_[17] = gptr_exo->right_side_.heel_fsr_.calibration_refinement_max_;
-            gptr_vofa->ptr_vofa_data_[18] = gptr_exo->left_side_.heel_fsr_.calibration_refinement_min_;
-            gptr_vofa->ptr_vofa_data_[19] = gptr_exo->right_side_.heel_fsr_.calibration_refinement_min_;
-            gptr_vofa->SendOneFrame(20);
         }
 	}
 }
@@ -201,4 +128,130 @@ void CableTensionTest()
     gptr_exo->right_side_.ankle_joint_.motor_.position_ref_ = -gptr_exo->right_side_.ankle_joint_.cable_tensioned_position_;
     gptr_exo->right_side_.ankle_joint_.motor_.MotionControl();
     HAL_Delay(1000);
+}
+
+
+// Return the roll (rotation around the x-axis) in Radians
+float getRoll()
+{
+    float dqw = gptr_exo_data->right_side_.foot_imu_.quat_real_;
+    float dqx = gptr_exo_data->right_side_.foot_imu_.quat_i_;
+    float dqy = gptr_exo_data->right_side_.foot_imu_.quat_j_;
+    float dqz =gptr_exo_data->right_side_.foot_imu_.quat_k_;
+
+    float norm = sqrt(dqw * dqw + dqx * dqx + dqy * dqy + dqz * dqz);
+    dqw = dqw / norm;
+    dqx = dqx / norm;
+    dqy = dqy / norm;
+    dqz = dqz / norm;
+
+    float ysqr = dqy * dqy;
+
+    // roll (x-axis rotation)
+    float t0 = +2.0f * (dqw * dqx + dqy * dqz);
+    float t1 = +1.0f - 2.0f * (dqx * dqx + ysqr);
+    float roll = atan2(t0, t1);
+
+    return (roll);
+}
+
+// Return the pitch (rotation around the y-axis) in Radians
+float getPitch()
+{
+    float dqw = gptr_exo_data->right_side_.foot_imu_.quat_real_;
+    float dqx = gptr_exo_data->right_side_.foot_imu_.quat_i_;
+    float dqy = gptr_exo_data->right_side_.foot_imu_.quat_j_;
+    float dqz =gptr_exo_data->right_side_.foot_imu_.quat_k_;
+
+    float norm = sqrt(dqw * dqw + dqx * dqx + dqy * dqy + dqz * dqz);
+    dqw = dqw / norm;
+    dqx = dqx / norm;
+    dqy = dqy / norm;
+    dqz = dqz / norm;
+
+    // float ysqr = dqy * dqy;
+
+    // pitch (y-axis rotation)
+    float t2 = +2.0f * (dqw * dqy - dqz * dqx);
+    t2 = t2 > 1.0f ? 1.0f : t2;
+    t2 = t2 < -1.0f ? -1.0f : t2;
+    float pitch = asin(t2);
+
+    return (pitch);
+}
+
+// Return the yaw / heading (rotation around the z-axis) in Radians
+float getYaw()
+{
+    float dqw = gptr_exo_data->right_side_.foot_imu_.quat_real_;
+    float dqx = gptr_exo_data->right_side_.foot_imu_.quat_i_;
+    float dqy = gptr_exo_data->right_side_.foot_imu_.quat_j_;
+    float dqz =gptr_exo_data->right_side_.foot_imu_.quat_k_;
+
+    float norm = sqrt(dqw * dqw + dqx * dqx + dqy * dqy + dqz * dqz);
+    dqw = dqw / norm;
+    dqx = dqx / norm;
+    dqy = dqy / norm;
+    dqz = dqz / norm;
+
+    float ysqr = dqy * dqy;
+
+    // yaw (z-axis rotation)
+    float t3 = +2.0f * (dqw * dqz + dqx * dqy);
+    float t4 = +1.0f - 2.0f * (ysqr + dqz * dqz);
+    float yaw = atan2(t3, t4);
+
+    return (yaw);
+}
+
+
+/**
+ * @brief        Update quaternion
+ */
+void QuaternionUpdate(float *q, float gx, float gy, float gz, float dt)
+{
+    float qa, qb, qc;
+
+    gx *= 0.5f * dt;
+    gy *= 0.5f * dt;
+    gz *= 0.5f * dt;
+    qa = q[0];
+    qb = q[1];
+    qc = q[2];
+    q[0] += (-qb * gx - qc * gy - q[3] * gz);
+    q[1] += (qa * gx + qc * gz - q[3] * gy);
+    q[2] += (qa * gy - qb * gz + q[3] * gx);
+    q[3] += (qa * gz + qb * gy - qc * gx);
+}
+
+/**
+ * @brief        Convert quaternion to eular angle
+ */
+void QuaternionToEularAngle(float *q, float *Yaw, float *Pitch, float *Roll)
+{
+    *Yaw = atan2f(2.0f * (q[0] * q[3] + q[1] * q[2]), 2.0f * (q[0] * q[0] + q[1] * q[1]) - 1.0f) * 57.295779513f;
+    *Pitch = atan2f(2.0f * (q[0] * q[1] + q[2] * q[3]), 2.0f * (q[0] * q[0] + q[3] * q[3]) - 1.0f) * 57.295779513f;
+    *Roll = asinf(2.0f * (q[0] * q[2] - q[1] * q[3])) * 57.295779513f;
+}
+
+#include "arm_math.h"
+/**
+ * @brief        Convert eular angle to quaternion
+ */
+void EularAngleToQuaternion(float Yaw, float Pitch, float Roll, float *q)
+{
+    float cosPitch, cosYaw, cosRoll, sinPitch, sinYaw, sinRoll;
+    Yaw /= 57.295779513f;
+    Pitch /= 57.295779513f;
+    Roll /= 57.295779513f;
+    cosPitch = arm_cos_f32(Pitch / 2);
+    cosYaw = arm_cos_f32(Yaw / 2);
+    cosRoll = arm_cos_f32(Roll / 2);
+    sinPitch = arm_sin_f32(Pitch / 2);
+    sinYaw = arm_sin_f32(Yaw / 2);
+    sinRoll = arm_sin_f32(Roll / 2);
+    q[0] = cosPitch * cosRoll * cosYaw + sinPitch * sinRoll * sinYaw;
+    q[1] = sinPitch * cosRoll * cosYaw - cosPitch * sinRoll * sinYaw;
+    q[2] = sinPitch * cosRoll * sinYaw + cosPitch * sinRoll * cosYaw;
+    q[3] = cosPitch * cosRoll * sinYaw - sinPitch * sinRoll * cosYaw;
 }

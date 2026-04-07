@@ -4,7 +4,6 @@ extern "C" {
 #include "arm_math.h"
 }
 
-#include "vofa.hpp"
 #include "main.h"
 
 AdaptiveOscillator::AdaptiveOscillator() :
@@ -132,15 +131,6 @@ void AdaptiveOscillator::UpdateGaitPhase(float left_angle_rad, float right_angle
     bool is_long_time_no_event = ((tnow_sys_us - left_tk_sys_us_ > kMaxTstrideUs) && (left_event_cnt_ >= 1)) || ((tnow_sys_us - right_tk_sys_us_ > kMaxTstrideUs) && (right_event_cnt_ >= 1));
 
     bool is_two_side_event_cnt_abnormal = (left_event_cnt_ > right_event_cnt_ + 1) || (right_event_cnt_ > left_event_cnt_ + 1);
-
-
-    // gptr_vofa->ptr_vofa_data_[0] = is_long_time_no_event;
-    // gptr_vofa->ptr_vofa_data_[1] = is_two_side_event_cnt_abnormal;
-    // gptr_vofa->ptr_vofa_data_[2] = is_stopping_low_energy;
-    // gptr_vofa->ptr_vofa_data_[3] = is_stopping_both_heel_contact;
-    // gptr_vofa->ptr_vofa_data_[4] = left_heel_contact_state;
-    // gptr_vofa->ptr_vofa_data_[5] = right_heel_contact_state;
-    // gptr_vofa->SendOneFrame(6);
 
 
     if (is_long_time_no_event || is_two_side_event_cnt_abnormal || is_stopping)

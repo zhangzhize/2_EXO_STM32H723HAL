@@ -46,7 +46,7 @@ MEMORY
   ITCMRAM (xrw)    : ORIGIN = 0x00000000,   LENGTH = 64K
   DTCMRAM (xrw)    : ORIGIN = 0x20000000,   LENGTH = 128K
   FLASH    (rx)    : ORIGIN = 0x08000000,   LENGTH = 1024K
-  RAM_D1  (xrw)    : ORIGIN = 0x24000000,   LENGTH = 320K
+  RAM_D1  (xrw)    : ORIGIN = 0x24001000,   LENGTH = 320K
   RAM_D2  (xrw)    : ORIGIN = 0x30000000,   LENGTH = 32K
   RAM_D3  (xrw)    : ORIGIN = 0x38000000,   LENGTH = 16K
 }
@@ -155,14 +155,6 @@ SECTIONS
     __bss_end__ = _ebss;
   } >RAM_D1
 
-  /* 添加：把 .sram4 节放到 RAM_D3 (SRAM4, 0x38000000) */
-  .sram4 (NOLOAD) :
-  {
-    . = ALIGN(32);
-    KEEP(*(.sram4))
-    . = ALIGN(4);
-  } >RAM_D3
-
   /* User_heap_stack section, used to check that there is enough RAM left */
   ._user_heap_stack :
   {
@@ -173,6 +165,22 @@ SECTIONS
     . = . + _Min_Stack_Size;
     . = ALIGN(8);
   } >RAM_D1
+
+  /* zzz */
+  .dma_buf (NOLOAD) :
+  {
+    . = ALIGN(32);
+    KEEP(*(.dma_buf))
+    . = ALIGN(32);
+  } >RAM_D2
+
+  /* zzz */
+  .bdma_buf (NOLOAD) :
+  {
+    . = ALIGN(32);
+    KEEP(*(.bdma_buf))
+    . = ALIGN(32);
+  } >RAM_D3
 
   /* Remove information from the standard libraries */
   /DISCARD/ :

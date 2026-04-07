@@ -63,35 +63,6 @@ void BMI088_delay_us(uint16_t us)
     //zzz
     DelayUs(us);
     return;
-
-    uint32_t ticks = 0;
-    uint32_t told = 0;
-    uint32_t tnow = 0;
-    uint32_t tcnt = 0;
-    uint32_t reload = 0;
-    reload = SysTick->LOAD;
-    ticks = us * 480;
-    told = SysTick->VAL;
-    while (1)
-    {
-        tnow = SysTick->VAL;
-        if (tnow != told)
-        {
-            if (tnow < told)
-            {
-                tcnt += told - tnow;
-            }
-            else
-            {
-                tcnt += reload - tnow + told;
-            }
-            told = tnow;
-            if (tcnt >= ticks)
-            {
-                break;
-            }
-        }
-    }
 }
 /**
 ************************************************************************
@@ -103,7 +74,7 @@ void BMI088_delay_us(uint16_t us)
 **/
 void BMI088_ACCEL_NS_L(void)
 {
-    HAL_GPIO_WritePin(IMU_ACC_CS_GPIO_Port, IMU_ACC_CS_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(BMI088_ACC_CS_GPIO_Port, BMI088_ACC_CS_Pin, GPIO_PIN_RESET);
 }
 /**
 ************************************************************************
@@ -115,7 +86,7 @@ void BMI088_ACCEL_NS_L(void)
 **/
 void BMI088_ACCEL_NS_H(void)
 {
-    HAL_GPIO_WritePin(IMU_ACC_CS_GPIO_Port, IMU_ACC_CS_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(BMI088_ACC_CS_GPIO_Port, BMI088_ACC_CS_Pin, GPIO_PIN_SET);
 }
 /**
 ************************************************************************
@@ -127,7 +98,7 @@ void BMI088_ACCEL_NS_H(void)
 **/
 void BMI088_GYRO_NS_L(void)
 {
-    HAL_GPIO_WritePin(IMU_GYRO_CS_GPIO_Port, IMU_GYRO_CS_Pin, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(BMI088_GYRO_CS_GPIO_Port, BMI088_GYRO_CS_Pin, GPIO_PIN_RESET);
 }
 /**
 ************************************************************************
@@ -139,7 +110,7 @@ void BMI088_GYRO_NS_L(void)
 **/
 void BMI088_GYRO_NS_H(void)
 {
-    HAL_GPIO_WritePin(IMU_GYRO_CS_GPIO_Port, IMU_GYRO_CS_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(BMI088_GYRO_CS_GPIO_Port, BMI088_GYRO_CS_Pin, GPIO_PIN_SET);
 }
 /**
 ************************************************************************

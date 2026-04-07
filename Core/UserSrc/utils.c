@@ -3,7 +3,11 @@
 
 void DelayMs(uint32_t ms)
 {
-    HAL_Delay(ms);
+    // HAL_Delay(ms);  /**< 注意: HAL_Delay()函数内部使用了SysTick中断, 在某些情况下可能会被其他中断打断, 导致实际延时时间超过预期; 实际延时 ms+1 */
+    while (ms--)
+    {
+        DelayUs(1000);
+    }
 }
 
 void DelayUs(uint32_t us)
