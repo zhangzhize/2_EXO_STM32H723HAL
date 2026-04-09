@@ -20,74 +20,26 @@ Shell::Shell(UART_HandleTypeDef* huart)
     RegisterCommand("read", CmdWrapper<Shell, &Shell::OnCmdReadParam>, this);
 }
 
-void Shell::OnCmdHelp(int argc, char** argv)
-{
-    (void)argc;
-    (void)argv;
-    char out[SHELL_TX_BUF_SIZE_BYTES];
-    size_t used = 0;
-
-    int n = snprintf(out + used, sizeof(out) - used, "Available commands:\r\n");
-    if (n < 0)
-    {
-        return;
-    }
-    used += static_cast<size_t>(n);
-
-    for (uint16_t i = 0; i < cmd_count_; i++)
-    {
-        if (used >= sizeof(out) - 1)
-        {
-            break;
-        }
-        n = snprintf(out + used, sizeof(out) - used, " - %s\r\n", cmd_table_[i].cmd_name);
-        if (n < 0)
-        {
-            break;
-        }
-        used += static_cast<size_t>(n);
-    }
-    SendString(out);
-}
-
-void Shell::SendData(uint16_t data_size)
-{
-    if (ptr_huart_ == nullptr || ptr_txbuffer_ == nullptr || data_size == 0 || data_size > SHELL_TX_BUF_SIZE_BYTES)
-    {
-        return;
-    }
-    if (ptr_huart_->gState == HAL_UART_STATE_READY && data_size < SHELL_TX_BUF_SIZE_BYTES)
-    {
-        HAL_UART_Transmit_DMA(ptr_huart_, ptr_txbuffer_->u8_data, data_size);
-	    // CDC_Transmit_HS(ptr_txbuffer_->u8_data, data_size);   //zzz: just for debug
-    }
-}
-
 void Shell::Printf(const char* format, ...)
 {
-    if (format == nullptr || ptr_txbuffer_ == nullptr)
-    {
-        return;
-    }
+    if (!format || !ptr_txbuffer_ || !ptr_huart_) return;
+    if (ptr_huart_->gState != HAL_UART_STATE_READY) return;
 
-    char local_buf[128]; 
     va_list args;
     va_start(args, format);
-    int len = vsnprintf(local_buf, sizeof(local_buf), format, args);
+    int len = vsnprintf(ptr_txbuffer_->c_data, SHELL_TX_BUF_SIZE_BYTES, format, args);
     va_end(args);
 
     if (len > 0)
     {
-        SendString(local_buf);
+        uint16_t send_len = ((uint32_t)len < SHELL_TX_BUF_SIZE_BYTES) ? static_cast<uint16_t>(len) : static_cast<uint16_t>(SHELL_TX_BUF_SIZE_BYTES - 1);
+        SendData(send_len);
     }
 }
 
 void Shell::SetVofaJustFloatData(uint16_t index, float value)
 {
-    if (index >= SHELL_VOFA_MAX_FLOAT_SIZE || ptr_txbuffer_ == nullptr)
-    {
-        return;
-    }
+    if (index >= SHELL_VOFA_MAX_FLOAT_SIZE || ptr_txbuffer_ == nullptr) return;
 
     if (index < SHELL_VOFA_MAX_FLOAT_SIZE && ptr_txbuffer_ != nullptr)
     {
@@ -113,21 +65,28 @@ void Shell::SendVofaJustFloatFrame(uint16_t float_size)
 
 void Shell::SendString(const char *str)
 {
-    if (str == nullptr || ptr_txbuffer_ == nullptr)
-    {
-        return;
-    }
+    if (str == nullptr || ptr_txbuffer_ == nullptr) return;
+    if (ptr_huart_->gState != HAL_UART_STATE_READY) return;
 
-    if (ptr_huart_->gState != HAL_UART_STATE_READY)
-    {
-        return;
-    }
     const uint16_t max_len = SHELL_TX_BUF_SIZE_BYTES - 1;
     const size_t len = strnlen(str, max_len);
     memcpy(ptr_txbuffer_->u8_data, str, len);
     ptr_txbuffer_->u8_data[len] = '\0';
 
     SendData(static_cast<uint16_t>(len));
+}
+
+void Shell::SendData(uint16_t data_size)
+{
+    if (ptr_huart_ == nullptr || ptr_txbuffer_ == nullptr || data_size == 0 || data_size > SHELL_TX_BUF_SIZE_BYTES)
+    {
+        return;
+    }
+    if (ptr_huart_->gState == HAL_UART_STATE_READY && data_size < SHELL_TX_BUF_SIZE_BYTES)
+    {
+        HAL_UART_Transmit_DMA(ptr_huart_, ptr_txbuffer_->u8_data, data_size);
+	    // CDC_Transmit_HS(ptr_txbuffer_->u8_data, data_size);   //zzz: just for debug
+    }
 }
 
 bool Shell::RegisterCommand(const char* cmd_name, ShellCmdHandler handler, void* context)
@@ -218,6 +177,30 @@ void Shell::RegisterRwParam(const char *name, bool *ptr)
         param_table_[param_count_++] = {name, ShellRwParamType::kBool, static_cast<void *>(ptr)};
 }
 
+void Shell::OnCmdHelp(int argc, char** argv)
+{
+    (void)argc;
+    (void)argv;
+
+    if (ptr_huart_->gState != HAL_UART_STATE_READY)
+    {
+        return;
+    }
+
+    char* buf = ptr_txbuffer_->c_data;
+    const size_t max_len = SHELL_TX_BUF_SIZE_BYTES;
+    size_t offset = 0;
+
+    offset += snprintf(buf + offset, max_len - offset, "\r\nAvailable Commands\r\n");
+
+    for (uint16_t i = 0; i < cmd_count_; i++)
+    {
+        if (offset + 32 >= max_len) break; 
+        offset += snprintf(buf + offset, max_len - offset, "-%s\r\n", cmd_table_[i].cmd_name);
+    }
+    SendData(static_cast<uint16_t>(offset));
+}
+
 void Shell::OnCmdWriteParam(int argc, char **argv)
 {
     if (argc < 3) {
@@ -294,8 +277,7 @@ void Shell::OnCmdReadParam(int argc, char **argv)
                              *(static_cast<bool *>(param_table_[i].ptr)) ? '1' : '0');
                 break;
             default:
-                n = snprintf(out + used, sizeof(out) - used, "%s=?\r\n",
-                             (param_table_[i].name != nullptr) ? param_table_[i].name : "(null)");
+                n = snprintf(out + used, sizeof(out) - used, "%s=?\r\n", (param_table_[i].name != nullptr) ? param_table_[i].name : "(null)");
                 break;
             }
 

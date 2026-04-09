@@ -1,5 +1,5 @@
 #include "dwt.h"
-#include "system_stm32h7xx.h"
+#include "stm32h7xx_hal.h"
 
 #define  DEM_CR_TRCENA               (1 << 24)
 #define  DWT_CR_CYCCNTENA            (1 <<  0)

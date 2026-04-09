@@ -1,12 +1,6 @@
 #include "pid.hpp"
 #include "utils.h"
 
-PIDController::PIDController(float kp, float ki, float kd, float output_ramp, float output_limit)
-    : kp_(kp), ki_(ki), kd_(kd), output_ramp_(output_ramp), output_limit_(output_limit)
-    , error_prev_(0.0f), output_prev_(0.0f), integral_prev_(0.0f), timestamp_prev_(GetSysTimeUs())
-{
-}
-
 float PIDController::operator()(float error)
 {
     // calculate the time from the last call

@@ -40,7 +40,7 @@ struct ShellRwParamEntry
 class Shell
 {
 public:
-    Shell(UART_HandleTypeDef* huart = &huart9);
+    explicit Shell(UART_HandleTypeDef* huart = &huart9);
     virtual ~Shell() = default;
 
     void Printf(const char* format, ...);
@@ -57,19 +57,19 @@ public:
     void RegisterRwParam(const char* name, int* ptr);
     void RegisterRwParam(const char* name, bool* ptr);
 
-    static int GetInt(int argc, char *argv[], int index, int default_val = 0)
+    static inline int GetInt(int argc, char *argv[], int index, int default_val = 0)
     {
         if (index >= argc || argv[index] == nullptr)
             return default_val;
         return atoi(argv[index]);
     }
-    static float GetFloat(int argc, char *argv[], int index, float default_val = 0.0f)
+    static inline float GetFloat(int argc, char *argv[], int index, float default_val = 0.0f)
     {
         if (index >= argc || argv[index] == nullptr)
             return default_val;
         return strtof(argv[index], nullptr);
     }
-    static const char *GetString(int argc, char *argv[], int index, const char *default_val = "")
+    static inline const char *GetString(int argc, char *argv[], int index, const char *default_val = "")
     {
         if (index >= argc || argv[index] == nullptr)
             return default_val;
@@ -77,29 +77,33 @@ public:
     }
 
 protected:
-    void OnCmdHelp(int argc, char** argv);
-    void OnCmdWriteParam(int argc, char** argv);
-    void OnCmdReadParam(int argc, char** argv);
     DmaBuffer* ptr_txbuffer_ = nullptr;
     UART_HandleTypeDef *ptr_huart_ = nullptr;
-    static constexpr uint16_t kMaxNumCmds = 20U;  /** 支持20个命令 */
-    ShellCmdEntry cmd_table_[kMaxNumCmds];
-    uint16_t cmd_count_ = 0;
-    uint8_t pending_cmd_buf_[UART9_RX_BUF_SIZE] = {0};
-    volatile bool is_cmd_pending_ = false;
-    static constexpr uint8_t kMaxNumSupportedArgvs = 10;    /** 每个命令支持的最大参数个数 */
-    static constexpr uint16_t kMaxNumRwParams = 50;     /** 可读写参数的最大个数 */
-    ShellRwParamEntry param_table_[kMaxNumRwParams];
-    uint16_t param_count_ = 0;
+
+    static constexpr uint16_t kMaxPendingCmdLen = 256U;     /** 待处理命令的最大长度 */
+    static constexpr uint16_t kMaxNumCmds = 20U;            /** 支持的最大命令个数 */
+    static constexpr uint16_t kMaxNumSupportedArgvs = 10;    /** 每个命令支持的最大参数个数 */
+    static constexpr uint16_t kMaxNumRwParams = 50;         /** 可读写参数的最大个数 */
 
     template <typename T, void (T::*MemFn)(int, char**)>
-    static void CmdWrapper(void* context, int argc, char* argv[])
+    static inline void CmdWrapper(void* context, int argc, char* argv[])
     {
         if (context != nullptr)
         {
             (static_cast<T*>(context)->*MemFn)(argc, argv);
         }
     }
+private:
+    void OnCmdHelp(int argc, char** argv);
+    void OnCmdWriteParam(int argc, char** argv);
+    void OnCmdReadParam(int argc, char** argv);
+
+    ShellRwParamEntry param_table_[kMaxNumRwParams];
+    ShellCmdEntry cmd_table_[kMaxNumCmds];
+    uint8_t pending_cmd_buf_[kMaxPendingCmdLen] = {0};
+    uint16_t param_count_ = 0;
+    uint16_t cmd_count_ = 0;
+    volatile bool is_cmd_pending_ = false;
 };
 
 #endif

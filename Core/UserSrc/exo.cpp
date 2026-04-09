@@ -21,102 +21,8 @@ enum ExoJointCanID : uint8_t
     kRightAnkle = 0x55,
 };
 
-ImuData::ImuData(bool is_left)
-{
-    is_left_ = is_left;
-    is_used_ = true;
-
-    quat_i_ = 0.0f;
-    quat_j_ = 0.0f;
-    quat_k_ = 0.0f;
-    quat_real_ = 1.0f;
-}
-
-JointData::JointData(bool is_left)
-{
-    is_left_ = is_left;
-    is_used_ = true;
-
-    rom_rad_ = 0.0f;
-    pos_rad_ = 0.0f;
-    vel_radps_ = 0.0f;
-    tor_Nm_ = 0.0f;
-}
-
-SideData::SideData(bool is_left) : hip_joint_(is_left), knee_joint_(is_left), ankle_joint_(is_left), foot_imu_(is_left)
-{
-    is_left_ = is_left;
-    is_used_ = true;
-
-    /**< from Side */
-    prev_heel_contact_state_ = true;
-    prev_toe_contact_state_ = true;
-
-    for (int i = 0; i<kNumStepsAvg; i++)
-    {
-        step_times_[i] = 0;
-        stance_times_[i] = 0;
-        swing_times_[i] = 0;
-    }
-
-    ground_strike_timestamp_ = 0;
-    prev_ground_strike_timestamp_ = 0;
-    toe_strike_timestamp_ = 0;
-    prev_toe_strike_timestamp_ = 0;
-    toe_off_timestamp_ = 0;
-    prev_toe_off_timestamp_ = 0;
-
-    /**< from SideData */
-    percent_gait_ = -1.0f; 
-    percent_stance_ = -1.0f;
-    percent_swing_ = -1.0f;
-    expected_step_duration_ = -1.0f; 
-    expected_swing_duration_ = -1.0f;
-    expected_stance_duration_ = -1.0f;
-
-    ground_strike_ = false; 
-    toe_off_ = false;
-    toe_strike_ = false;
-    toe_on_ = false;
-    heel_contact_state_ = false;
-    toe_contact_state_ = false;
-
-    is_calibration_done_ = false;
-    do_calibration_toe_fsr_ = true;
-    do_calibration_refinement_toe_fsr_ = true;
-    do_calibration_heel_fsr_ = true;
-    do_calibration_refinement_heel_fsr_ = true;
-
-    expected_duration_window_upper_coeff_ = 1.75f;
-    expected_duration_window_lower_coeff_ = 0.25f;
-}
-
-ExoData::ExoData() : left_side_(true), right_side_(false)
-{
-    user_weight_kg_ = 60.0f;
-    battery_voltage_ = 24.0f;
-    enable_vofa_telemetry_ = false;
-
-    state_ = State::kSleep;
-    error_code_ = Error::kNone;
-    pending_events_ = SysEvent::kNone;
-    loco_mode_ = LocoMode::kWalking;
-    override_usr_.enable_locomode_override = false;
-    override_usr_.forced_locomode = LocoMode::kWalking;
-
-    ao_left_phase_rad_ = 0.0f;
-    ao_right_phase_rad_ = 0.0f;
-    ao_left_event_cnt_ = 0;
-    ao_right_event_cnt_ = 0;
-}
-
 AnkleJoint::AnkleJoint(bool is_left, ExoData *pe) : pe_(pe), ps_(is_left ? &pe->left_side_ : &pe->right_side_), pj_(is_left ? &pe->left_side_.ankle_joint_ : &pe->right_side_.ankle_joint_), force_profile_generator_(), motor_(is_left ? ExoJointCanID::kLeftAnkle : ExoJointCanID::kRightAnkle), pid_(0.2f, 0.4f, 0.0f, -1.0f, 10.0f)
 {
-    cable_pre_tensioned_position_ = 0.0f;
-    cable_tensioned_position_ = 6.0f;
-    cable_released_position_ = 0.0f;
-    assistance_start_phase_percent_ = 35.0f;
-    assistance_end_phase_percent_ = 65.0f;
 }
 
 void AnkleJoint::Calibrate()
@@ -195,7 +101,7 @@ void AnkleJoint::Assist()
     }
 
     /** 1. 获取 FSR 算出的相位百分比 (0.0f~100.0f) */
-    float phase_percent = pj_->is_left_ ? pe_->left_side_.percent_gait_ : pe_->right_side_.percent_gait_;
+    float phase_percent = pj_->is_left_ ? pe_->left_side_.fsr_gait_data_.percent_gait_ : pe_->right_side_.fsr_gait_data_.percent_gait_;
 
     /** 2. 根据步态相位设置参考位置 */
     float cable_position_ref = cable_released_position_;
@@ -311,7 +217,7 @@ void KneeJoint::Assist()
     float force_profile = 0.0f;
 
     // float phase_rad = pj_->is_left_ ? pe_->ao_left_phase_rad_ : pe_->ao_right_phase_rad_;
-    float phase_rad = pj_->is_left_ ? pe_->left_side_.percent_gait_ : pe_->right_side_.percent_gait_;
+    float phase_rad = pj_->is_left_ ? pe_->left_side_.fsr_gait_data_.percent_gait_ : pe_->right_side_.fsr_gait_data_.percent_gait_;
     phase_rad = phase_rad * _2PI / 100.0f;
     // uint32_t gait_event_cnt = pj_->is_left_ ? pe_->ao_left_event_cnt_ : pe_->ao_right_event_cnt_;
 
@@ -379,19 +285,13 @@ HipJoint::HipJoint(bool is_left, ExoData *exo_data) : pe_(exo_data), ps_(is_left
 
 void HipJoint::Calibrate()
 {
-    if (!pj_->is_used_)
-    {
-        return;
-    }
+    if (!pj_->is_used_) return;
     /** #Todo: Implement joint calibration logic, if needed  */
 }
 
 void HipJoint::Read()
 {
-    if (!pj_->is_used_)
-    {
-        return;
-    }
+    if (!pj_->is_used_) return;
 
     if (pj_->is_left_)
     {
@@ -409,10 +309,7 @@ void HipJoint::Read()
 
 bool HipJoint::IsMotorConnect()
 {
-    if (!pj_->is_used_)
-    {
-        return true;
-    }
+    if (!pj_->is_used_) return true;
 
     if (motor_.feedback_.flag_ > 0)
     {
@@ -431,10 +328,7 @@ void HipJoint::Shutdown()
 
 void HipJoint::Standby()
 {
-    if (!pj_->is_used_)
-    {
-        return;
-    }
+    if (!pj_->is_used_) return;
 
     motor_.ctrl_param_.mode_id_ = DMMotorModeID::kMIT;
     motor_.ctrl_param_.kp_set_ = 0.0f;
@@ -506,10 +400,7 @@ static HipFFShared g_hip_ff;
 
 void HipJoint::Assist()
 {
-    if (!pj_->is_used_)
-    {
-        return;
-    }
+    if (!pj_->is_used_) return;
 
     const float posL_now = pe_->left_side_.hip_joint_.pos_rad_;
     const float posR_now = pe_->right_side_.hip_joint_.pos_rad_;
@@ -531,18 +422,340 @@ void HipJoint::Assist()
     // motor_.EnableMotor();
 }
 
-Side::Side(bool is_left, ExoData *pe) : pe_(pe), ps_(is_left ? &pe_->left_side_ : &pe_->right_side_), heel_fsr_(is_left), toe_fsr_(is_left), hip_joint_(is_left, pe), knee_joint_(is_left, pe), ankle_joint_(is_left, pe)
+void FsrGaitEstimator::Calibrate()
 {
+    if (!gait_data_ || !gait_data_->is_used_) return;
+
+    ProcessCalibration(gait_data_->heel_, gait_data_->do_calibration_heel_fsr_, gait_data_->do_calibration_refinement_heel_fsr_);
+    ProcessCalibration(gait_data_->toe_, gait_data_->do_calibration_toe_fsr_, gait_data_->do_calibration_refinement_toe_fsr_);
+
+    gait_data_->is_calibrated_ = !(gait_data_->do_calibration_heel_fsr_ || gait_data_->do_calibration_refinement_heel_fsr_ || gait_data_->do_calibration_toe_fsr_ || gait_data_->do_calibration_refinement_toe_fsr_);
 }
+
+void FsrGaitEstimator::Update() {
+    if (!gait_data_ || !gait_data_->is_used_) return;
+
+    // 1. 先由引擎处理硬件原始数据，并更新校准标志位
+    ProcessSensorUpdate(gait_data_->heel_);
+    ProcessSensorUpdate(gait_data_->toe_);
+
+    // 2. 获取处理后的状态，进入原有的步态解算逻辑
+    gait_data_->heel_contact_state_ = gait_data_->heel_.ground_contact;
+    gait_data_->toe_contact_state_ = gait_data_->toe_.ground_contact;
+    
+    /** #HACK: 暂时只用足跟fsr检测strike */
+    // gait_data_->ground_strike_ = (!gait_data_->prev_heel_contact_state_ && !gait_data_->prev_toe_contact_state_) && ((gait_data_->heel_contact_state_ && !gait_data_->prev_heel_contact_state_) || (gait_data_->toe_contact_state_ && !gait_data_->prev_toe_contact_state_));
+    gait_data_->ground_strike_ = (gait_data_->heel_contact_state_ && !gait_data_->prev_heel_contact_state_);
+    gait_data_->toe_off_       = (!gait_data_->toe_contact_state_ && gait_data_->prev_toe_contact_state_);
+    gait_data_->toe_strike_    = (gait_data_->toe_contact_state_ && !gait_data_->prev_toe_contact_state_);
+
+    gait_data_->prev_heel_contact_state_ = gait_data_->heel_contact_state_;
+    gait_data_->prev_toe_contact_state_  = gait_data_->toe_contact_state_;
+
+    /** 3. 步态事件时间戳与历史窗口更新 */
+    uint32_t now_ms = GetSysTimeMs();
+    if (gait_data_->ground_strike_)
+    {
+        gait_data_->prev_ground_strike_timestamp_ = gait_data_->ground_strike_timestamp_;
+        gait_data_->ground_strike_timestamp_ = now_ms;
+        gait_data_->expected_step_duration_ = UpdateExpectedDuration();
+    }
+    if (gait_data_->toe_strike_)
+    {
+        gait_data_->prev_toe_strike_timestamp_ = gait_data_->toe_strike_timestamp_;
+        gait_data_->toe_strike_timestamp_ = now_ms;
+        gait_data_->expected_swing_duration_ = UpdateExpectedSwingDuration();
+    }
+    if (gait_data_->toe_off_)
+    {
+        gait_data_->prev_toe_off_timestamp_ = gait_data_->toe_off_timestamp_;
+        gait_data_->toe_off_timestamp_ = now_ms;
+        gait_data_->expected_stance_duration_ = UpdateExpectedStanceDuration();
+    }
+
+    // 4. 百分比解算 (Phase Calculation)
+    if (gait_data_->expected_step_duration_ > 0.0f)
+    {
+        gait_data_->percent_gait_ = 100.0f * ((static_cast<float>(now_ms) - static_cast<float>(gait_data_->ground_strike_timestamp_)) / gait_data_->expected_step_duration_);
+        if (gait_data_->percent_gait_ > 100.0f)
+            gait_data_->percent_gait_ = 100.0f;
+    }
+
+    if (gait_data_->expected_stance_duration_ > 0.0f)
+    {
+        gait_data_->percent_stance_ = 100.0f * ((static_cast<float>(now_ms) - static_cast<float>(gait_data_->toe_strike_timestamp_)) / gait_data_->expected_stance_duration_);
+        if (gait_data_->percent_stance_ > 100.0f)
+            gait_data_->percent_stance_ = 100.0f;
+    }
+    if (!gait_data_->heel_contact_state_ && !gait_data_->toe_contact_state_)
+    {
+        gait_data_->percent_stance_ = 0.0f;
+    }
+
+    if (gait_data_->expected_swing_duration_ > 0.0f)
+    {
+        gait_data_->percent_swing_ = 100.0f * ((static_cast<float>(now_ms) - static_cast<float>(gait_data_->toe_off_timestamp_)) / gait_data_->expected_swing_duration_);
+        if (gait_data_->percent_swing_ > 100.0f)
+            gait_data_->percent_swing_ = 100.0f;
+    }
+    if (gait_data_->heel_contact_state_ || gait_data_->toe_contact_state_)
+    {
+        gait_data_->percent_swing_ = 0.0f;
+    }
+}
+
+
+void FsrGaitEstimator::Reset()
+{
+    if (!gait_data_) return;
+    
+    for (int i = 0; i < FsrGaitData::kNumStepsAvg; i++)
+    {
+        gait_data_->step_times_[i] = 0;
+        gait_data_->stance_times_[i] = 0;
+        gait_data_->swing_times_[i] = 0;
+    }
+}
+
+void FsrGaitEstimator::ProcessCalibration(FsrSensorData& sensor, bool& do_calibrate, bool& do_refinement)
+{
+    uint32_t now_ms = GetSysTimeMs();
+
+    /** 1. 基础校准阶段 */
+    if (do_calibrate && !sensor.last_do_calibrate)
+    {
+        sensor.calibration_start_sys_ms = now_ms;
+        sensor.calibration_max = sensor.raw_reading;
+        sensor.calibration_min = sensor.calibration_max;
+    }
+
+    if (do_calibrate && (now_ms - sensor.calibration_start_sys_ms <= FsrSensorData::kCalibrationDurationMs))
+    {
+        sensor.calibration_max = _max(sensor.calibration_max, sensor.raw_reading);
+        sensor.calibration_min = _min(sensor.calibration_min, sensor.raw_reading);
+    }
+    else if (do_calibrate)
+    {
+        do_calibrate = false;
+    }
+    sensor.last_do_calibrate = do_calibrate;
+
+     /** 2. 精细校准阶段 (Refinement) */
+    if (do_refinement && !sensor.last_do_refinement)
+    {
+        sensor.refinement_step_count= 0;
+        sensor.step_max = (sensor.calibration_max + sensor.calibration_min) / 2.0f;
+        sensor.step_min = sensor.step_max;
+        sensor.step_max_sum = 0.0f;
+        sensor.step_min_sum = 0.0f;
+    }
+
+    if (do_refinement)
+    {
+        if (sensor.refinement_step_count < FsrSensorData::kNumRefinementSteps)
+        {
+            sensor.step_max = _max(sensor.step_max, sensor.raw_reading);
+            sensor.step_min = _min(sensor.step_min, sensor.raw_reading);
+
+            bool last_state = sensor.ground_contact_during_refinement;
+            float lower = FsrSensorData::kSchmittLowerThresholdRefinement * (sensor.calibration_max - sensor.calibration_min) + sensor.calibration_min;
+            float upper = FsrSensorData::kSchmittUpperThresholdRefinement * (sensor.calibration_max - sensor.calibration_min) + sensor.calibration_min;
+
+            sensor.ground_contact_during_refinement = SchmittTrigger(sensor.raw_reading, last_state, lower, upper);
+
+            if (sensor.ground_contact_during_refinement && !last_state)
+            {
+                sensor.step_max_sum += sensor.step_max;
+                sensor.step_min_sum += sensor.step_min;
+                float mid = (sensor.calibration_max + sensor.calibration_min) / 2.0f;
+                sensor.step_max = mid;
+                sensor.step_min = mid;
+                sensor.refinement_step_count++;
+            }
+        }
+        else
+        {
+            if (sensor.refinement_step_count > 0)
+            {
+                sensor.calibration_refinement_max = sensor.step_max_sum / FsrSensorData::kNumRefinementSteps;
+                sensor.calibration_refinement_min = sensor.step_min_sum / FsrSensorData::kNumRefinementSteps;
+            }
+            else
+            {
+                sensor.calibration_refinement_max = sensor.calibration_max;
+                sensor.calibration_refinement_min = sensor.calibration_min;
+            }
+            do_refinement = false;
+        }
+    }
+    sensor.last_do_refinement = do_refinement;
+}
+
+void FsrGaitEstimator::ProcessSensorUpdate(FsrSensorData& sensor)
+{
+    /** 计算归一化读取值 (Read) */
+    if (sensor.calibration_refinement_max > sensor.calibration_refinement_min + 1e-6f)
+    {
+        sensor.calibrated_reading = (sensor.raw_reading - sensor.calibration_refinement_min) / (sensor.calibration_refinement_max - sensor.calibration_refinement_min);
+    }
+    else if (sensor.calibration_max > sensor.calibration_min + 1e-6f)
+    {
+        sensor.calibrated_reading = (sensor.raw_reading - sensor.calibration_min) / (sensor.calibration_max - sensor.calibration_min);
+    }
+    else
+    {
+        sensor.calibrated_reading = sensor.raw_reading;
+    }
+
+    if (sensor.calibration_refinement_max > sensor.calibration_refinement_min + 1e-6f || sensor.calibration_max > sensor.calibration_min + 1e-6f)
+    {
+        if (sensor.calibrated_reading < 0.0f) sensor.calibrated_reading = 0.0f;
+        if (sensor.calibrated_reading > 1.0f) sensor.calibrated_reading = 1.0f;
+    }
+
+    /** 更新接触状态 (Ground Contact) */
+    if (sensor.calibration_refinement_max > sensor.calibration_refinement_min + 1e-6f)
+    {
+        sensor.ground_contact = SchmittTrigger(sensor.calibrated_reading, sensor.ground_contact, sensor.schmitt_lower_threshold_calc_contact, sensor.schmitt_upper_threshold_calc_contact);
+    }
+}
+
+
+float FsrGaitEstimator::UpdateExpectedDuration()
+{
+    uint32_t step_time = gait_data_->ground_strike_timestamp_ - gait_data_->prev_ground_strike_timestamp_;
+    float expected_step_duration = gait_data_->expected_step_duration_;
+
+    if (0 == gait_data_->prev_ground_strike_timestamp_) return expected_step_duration;
+
+    uint8_t num_uninitialized = 0;
+    for (int i = 0; i < FsrGaitData::kNumStepsAvg; i++)
+    {
+        num_uninitialized += (gait_data_->step_times_[i] == 0);
+    }
+
+    uint32_t* max_val = std::max_element(gait_data_->step_times_, gait_data_->step_times_ + FsrGaitData::kNumStepsAvg);
+    uint32_t* min_val = std::min_element(gait_data_->step_times_, gait_data_->step_times_ + FsrGaitData::kNumStepsAvg);
+
+    if  (num_uninitialized > 0)
+    {
+        for (int i = (FsrGaitData::kNumStepsAvg - 1); i>0; i--)
+        {
+            gait_data_->step_times_[i] = gait_data_->step_times_[i-1];
+        }
+        gait_data_->step_times_[0] = step_time;
+    }
+
+    else if ((step_time <= (gait_data_->expected_duration_window_upper_coeff_ * *max_val)) && (step_time >= (gait_data_->expected_duration_window_lower_coeff_ * *min_val)))
+    {
+        int sum_step_times = step_time;
+        for (int i = (FsrGaitData::kNumStepsAvg - 1); i>0; i--)
+        {
+            sum_step_times += gait_data_->step_times_[i-1];
+            gait_data_->step_times_[i] = gait_data_->step_times_[i-1];
+        }
+        gait_data_->step_times_[0] = step_time;
+
+        expected_step_duration = sum_step_times / FsrGaitData::kNumStepsAvg;
+    }
+    return expected_step_duration;
+}
+
+float FsrGaitEstimator::UpdateExpectedStanceDuration()
+{
+    uint32_t stance_time = gait_data_->toe_off_timestamp_ - gait_data_->toe_strike_timestamp_;
+    float expected_stance_duration = gait_data_->expected_stance_duration_;
+
+    if (0 == gait_data_->prev_toe_strike_timestamp_) return expected_stance_duration;
+    
+    uint8_t num_uninitialized = 0;
+    for (int i = 0; i < FsrGaitData::kNumStepsAvg; i++)
+    {
+        num_uninitialized += (gait_data_->stance_times_[i] == 0);
+    }
+
+    uint32_t* max_val = std::max_element(gait_data_->stance_times_, gait_data_->stance_times_ + FsrGaitData::kNumStepsAvg);
+    uint32_t* min_val = std::min_element(gait_data_->stance_times_, gait_data_->stance_times_ + FsrGaitData::kNumStepsAvg);
+
+    if (num_uninitialized > 0)
+    {
+        for (int i = (FsrGaitData::kNumStepsAvg - 1); i>0; i--)
+        {
+            gait_data_->stance_times_[i] = gait_data_->stance_times_[i - 1];
+        }
+        gait_data_->stance_times_[0] = stance_time;
+    }
+    else if ((stance_time <= (gait_data_->expected_duration_window_upper_coeff_ * *max_val)) && (stance_time >= (gait_data_->expected_duration_window_lower_coeff_ * *min_val)))
+    {
+        int sum_stance_times = stance_time;
+        for (int i = (FsrGaitData::kNumStepsAvg - 1); i>0; i--)
+        {
+            sum_stance_times += gait_data_->stance_times_[i - 1];
+            gait_data_->stance_times_[i] = gait_data_->stance_times_[i - 1];
+        }
+        gait_data_->stance_times_[0] = stance_time;
+
+        expected_stance_duration = sum_stance_times / FsrGaitData::kNumStepsAvg;
+    }
+    return expected_stance_duration;
+}
+
+float FsrGaitEstimator::UpdateExpectedSwingDuration()
+{
+    uint32_t swing_time = gait_data_->toe_strike_timestamp_ - gait_data_->toe_off_timestamp_;
+    float expected_swing_duration = gait_data_->expected_swing_duration_;
+
+    if (0 == gait_data_->prev_toe_off_timestamp_)
+    {
+        return expected_swing_duration;
+    }
+
+    uint8_t num_uninitialized = 0;
+
+    for (int i = 0; i < FsrGaitData::kNumStepsAvg; i++)
+    {
+        num_uninitialized += (gait_data_->swing_times_[i] == 0);
+    }
+
+    uint32_t* max_val = std::max_element(gait_data_->swing_times_, gait_data_->swing_times_ + FsrGaitData::kNumStepsAvg);
+    uint32_t* min_val = std::min_element(gait_data_->swing_times_, gait_data_->swing_times_ + FsrGaitData::kNumStepsAvg);
+
+    if (num_uninitialized > 0)
+    {
+        for (int i = (FsrGaitData::kNumStepsAvg - 1); i>0; i--)
+        {
+            gait_data_->swing_times_[i] = gait_data_->swing_times_[i - 1];
+        }
+        gait_data_->swing_times_[0] = swing_time;
+    }
+    else if ((swing_time <= (gait_data_->expected_duration_window_upper_coeff_ * *max_val)) && (swing_time >= (gait_data_->expected_duration_window_lower_coeff_ * *min_val)))
+    {
+        int sum_swing_times = swing_time;
+        for (int i = (FsrGaitData::kNumStepsAvg - 1); i>0; i--)
+        {
+            sum_swing_times += gait_data_->swing_times_[i - 1];
+            gait_data_->swing_times_[i] = gait_data_->swing_times_[i - 1];
+        }
+        gait_data_->swing_times_[0] = swing_time;
+
+        expected_swing_duration = sum_swing_times / FsrGaitData::kNumStepsAvg;
+    }
+    return expected_swing_duration;
+}
+
 
 void Side::Calibrate()
 {
     hip_joint_.Calibrate();
     knee_joint_.Calibrate();
     ankle_joint_.Calibrate();
-    CalibrateFsr();
+    fsr_gait_estimator_.Calibrate();
 
-    ps_->is_calibration_done_ = !(ps_->do_calibration_heel_fsr_ || ps_->do_calibration_refinement_heel_fsr_ || ps_->do_calibration_toe_fsr_ || ps_->do_calibration_refinement_toe_fsr_);
+    ps_->is_calibrated_ =
+        (ps_->fsr_gait_data_.is_calibrated_ || !ps_->fsr_gait_data_.is_used_) &&
+        (ps_->hip_joint_.is_calibrated_ || !ps_->hip_joint_.is_used_) &&
+        (ps_->knee_joint_.is_calibrated_ || !ps_->knee_joint_.is_used_) &&
+        (ps_->ankle_joint_.is_calibrated_ || !ps_->ankle_joint_.is_used_);
 }
 
 void Side::Read()
@@ -555,8 +768,6 @@ void Side::Read()
     hip_joint_.Read();
     knee_joint_.Read();
     ankle_joint_.Read();
-    heel_fsr_.Read();
-    toe_fsr_.Read();
 }
 
 bool Side::IsMotorConnect()
@@ -597,244 +808,301 @@ void Side::Assist()
     ankle_joint_.Assist();
 }
 
-void Side::CalibrateFsr()
-{
-    if (!ps_->is_used_)
-    {
-        return;
-    }
-
-    if (ps_->do_calibration_toe_fsr_)
-    {
-        ps_->do_calibration_toe_fsr_ = toe_fsr_.Calibrate(ps_->do_calibration_toe_fsr_);
-    }
-    else if (ps_->do_calibration_refinement_toe_fsr_)
-    {
-        ps_->do_calibration_refinement_toe_fsr_ = toe_fsr_.RefineCalibration(ps_->do_calibration_refinement_toe_fsr_);
-    }
-
-    if (ps_->do_calibration_heel_fsr_)
-    {
-        ps_->do_calibration_heel_fsr_ = heel_fsr_.Calibrate(ps_->do_calibration_heel_fsr_);
-    }
-    else if (ps_->do_calibration_refinement_heel_fsr_)
-    {
-        ps_->do_calibration_refinement_heel_fsr_ = heel_fsr_.RefineCalibration(ps_->do_calibration_refinement_heel_fsr_);
-    }
-}
-
-
-void Side::FsrTimeBaseGaitPhaseEstimate()
-{
-    if (!ps_->is_used_)
-    {
-        return;
-    }
-
-    ps_->heel_contact_state_ = heel_fsr_.GetGroundContact();
-    ps_->toe_contact_state_ = toe_fsr_.GetGroundContact();
-
-    /**< Now use heel fsr only */
-    // ps_->ground_strike_ = (!ps_->prev_heel_contact_state_ && !ps_->prev_toe_contact_state_) && ((ps_->heel_contact_state_ && !ps_->prev_heel_contact_state_) || (ps_->toe_contact_state_ && !ps_->prev_toe_contact_state_));
-    ps_->ground_strike_ = (ps_->heel_contact_state_ && !ps_->prev_heel_contact_state_);
-    ps_->toe_off_ = (!ps_->toe_contact_state_ && ps_->prev_toe_contact_state_);
-    ps_->toe_strike_ = (ps_->toe_contact_state_ && !ps_->prev_toe_contact_state_);
-
-    ps_->prev_heel_contact_state_ = ps_->heel_contact_state_;
-    ps_->prev_toe_contact_state_ = ps_->toe_contact_state_;
-
-    uint32_t now = GetSysTimeMs();
-    if (ps_->ground_strike_)
-    {
-        ps_->prev_ground_strike_timestamp_ = ps_->ground_strike_timestamp_;
-        ps_->ground_strike_timestamp_ = now;
-        ps_->expected_step_duration_ = UpdateExpectedDuration();
-    }
-    if (ps_->toe_strike_)
-    {
-        ps_->prev_toe_strike_timestamp_ = ps_->toe_strike_timestamp_;
-        ps_->toe_strike_timestamp_ = now;
-        ps_->expected_swing_duration_ = UpdateExpectedSwingDuration();
-    }
-    if (ps_->toe_off_)
-    {
-        ps_->prev_toe_off_timestamp_ = ps_->toe_off_timestamp_;
-        ps_->toe_off_timestamp_ = now;
-        ps_->expected_stance_duration_ = UpdateExpectedStanceDuration();
-    }
-
-    if (ps_->expected_step_duration_ > 0.0f)
-    {
-        ps_->percent_gait_ = 100.0f * (((float)now - (float)ps_->ground_strike_timestamp_) / ps_->expected_step_duration_);
-        if (ps_->percent_gait_ > 100.0f) ps_->percent_gait_ = 100.0f;
-    }
-
-    if (ps_->expected_stance_duration_ > 0.0f)
-    {
-        ps_->percent_stance_ = 100.0f * (((float)now - (float)ps_->toe_strike_timestamp_) / ps_->expected_stance_duration_);
-        if (ps_->percent_stance_ > 100.0f) ps_->percent_stance_ = 100.0f;
-    }
-    if (!ps_->heel_contact_state_ && !ps_->toe_contact_state_)
-    {
-        ps_->percent_stance_ = 0.0f;
-    }
-
-    if (ps_->expected_swing_duration_ > 0.0f)
-    {
-        ps_->percent_swing_ = 100.0f * (((float)now - (float)ps_->toe_off_timestamp_) / ps_->expected_swing_duration_);
-        if (ps_->percent_swing_ > 100.0f) ps_->percent_swing_ = 100.0f;
-    }
-    if (ps_->heel_contact_state_ || ps_->toe_contact_state_)
-    {
-        ps_->percent_swing_ = 0.0f;
-    }
-}
-
-void Side::ClearStepTimeEstimate()
-{
-    for (int i = 0; i < ps_->kNumStepsAvg; i++)
-    {
-        ps_->step_times_[i] = 0;
-        ps_->stance_times_[i] = 0;
-        ps_->swing_times_[i] = 0;
-    }
-}
-
 void Side::Shutdown()
 {
     hip_joint_.motor_.DisableMotor();
     knee_joint_.motor_.DisableMotor(0);
     ankle_joint_.motor_.DisableMotor(0);
-    ClearStepTimeEstimate();
+    fsr_gait_estimator_.Reset();
 }
 
-float Side::UpdateExpectedDuration()
+void AdaptiveOscillator::Update()
 {
-    uint32_t step_time = ps_->ground_strike_timestamp_ - ps_->prev_ground_strike_timestamp_;
-    float expected_step_duration = ps_->expected_step_duration_;
-
-    if (0 == ps_->prev_ground_strike_timestamp_)
+    /**< 计算时间戳 */
+    uint64_t tnow_sys_us = GetSysTimeUs();
+    float tnow_sys_s = tnow_sys_us * 1e-6f;
+    uint64_t delta_ts_us = tnow_sys_us - tprev_sys_us_;
+    float delta_ts_s = 0;
+    if (delta_ts_us > 0.01 * 1000000)
     {
-        return expected_step_duration;
+        delta_ts_us = 0.01 * 1000000;
+        delta_ts_s = 0.01;
+    }
+    else
+    {
+        delta_ts_s = (tnow_sys_us - tprev_sys_us_) * 1e-6f;
     }
 
-    uint8_t num_uninitialized = 0;
-    for (int i = 0; i < ps_->kNumStepsAvg; i++)
-    {
-        num_uninitialized += (ps_->step_times_[i] == 0);
-    }
+    /**< 示教信号 */
+    float left_angle_rad = pe_->left_side_.knee_joint_.pos_rad_;
+    float right_angle_rad = pe_->right_side_.knee_joint_.pos_rad_;
+    float left_velocity = pe_->left_side_.knee_joint_.vel_radps_;
+    float right_velocity = pe_->right_side_.knee_joint_.vel_radps_;
+    bool left_heel_contact_state = pe_->left_side_.fsr_gait_data_.heel_contact_state_;
+    bool right_heel_contact_state = pe_->right_side_.fsr_gait_data_.heel_contact_state_;
+    float x_teach = left_angle_rad - right_angle_rad;
 
-    uint32_t* max_val = std::max_element(ps_->step_times_, ps_->step_times_ + ps_->kNumStepsAvg);
-    uint32_t* min_val = std::min_element(ps_->step_times_, ps_->step_times_ + ps_->kNumStepsAvg);
+    /**< 检测步态事件 */
+    bool is_left_angle_pos_peak = false;
+    bool is_right_angle_pos_peak = false;
+    static float left_angle_prev = 0.0f;
+    static float left_angle_pprev = 0.0f;
+    static float right_angle_prev = 0.0f;
+    static float right_angle_pprev = 0.0f;
+    static float left_angle_pos_peak_prev = 0.45f;
+    static float right_angle_pos_peak_prev = 0.45f;
+    float left_angle_pos_peak_threshold = 0.0f;
+    float right_angle_pos_peak_threshold = 0.0f;
 
-    if  (num_uninitialized > 0)
+    bool is_left_heel_strike_event = false;
+    bool is_right_heel_strike_event = false;
+
+    static bool left_heel_contact_state_prev = false;
+    static bool right_heel_contact_state_prev = false;
+
+    if (false) // just for debug
     {
-        for (int i = (ps_->kNumStepsAvg - 1); i>0; i--)
+        left_angle_pos_peak_threshold = fmaxf(0.45f, 0.7f * left_angle_pos_peak_prev);
+        right_angle_pos_peak_threshold = fmaxf(0.45f, 0.7f * right_angle_pos_peak_prev);
+
+        if ((left_angle_rad < 2) && (left_angle_rad > left_angle_pos_peak_threshold) && (left_angle_rad - left_angle_prev <= 0) && (left_angle_prev - left_angle_pprev >= 0))
         {
-            ps_->step_times_[i] = ps_->step_times_[i-1];
+            is_left_angle_pos_peak = true;
+            left_angle_pos_peak_prev = left_angle_rad;
         }
-        ps_->step_times_[0] = step_time;
-    }
-
-    else if ((step_time <= (ps_->expected_duration_window_upper_coeff_ * *max_val)) && (step_time >= (ps_->expected_duration_window_lower_coeff_ * *min_val)))
-    {
-        int sum_step_times = step_time;
-        for (int i = (ps_->kNumStepsAvg - 1); i>0; i--)
+        else if ((right_angle_rad < 2) && (right_angle_rad > right_angle_pos_peak_threshold) && (right_angle_rad - right_angle_prev <= 0) && (right_angle_prev - right_angle_pprev >= 0))
         {
-            sum_step_times += ps_->step_times_[i-1];
-            ps_->step_times_[i] = ps_->step_times_[i-1];
+            is_right_angle_pos_peak = true;
+            right_angle_pos_peak_prev = right_angle_rad;
         }
-        ps_->step_times_[0] = step_time;
-
-        expected_step_duration = sum_step_times / ps_->kNumStepsAvg;
     }
-    return expected_step_duration;
-}
-
-float Side::UpdateExpectedStanceDuration()
-{
-    uint32_t stance_time = ps_->toe_off_timestamp_ - ps_->toe_strike_timestamp_;
-    float expected_stance_duration = ps_->expected_stance_duration_;
-
-    if (0 == ps_->prev_toe_strike_timestamp_)
+    else if (true) // just for debug
     {
-        return expected_stance_duration;
+        if (left_heel_contact_state && !left_heel_contact_state_prev)
+        {
+            is_left_heel_strike_event = true;
+        }
+        if (right_heel_contact_state && !right_heel_contact_state_prev)
+        {
+            is_right_heel_strike_event = true;
+        }
+    }
+    left_angle_pprev = left_angle_prev;
+    left_angle_prev = left_angle_rad;
+    right_angle_pprev = right_angle_prev;
+    right_angle_prev = right_angle_rad;
+    left_heel_contact_state_prev = left_heel_contact_state;
+    right_heel_contact_state_prev = right_heel_contact_state;
+
+    static uint64_t low_energy_duration_us = 0;
+    float vel_energy = sqrtf(left_velocity*left_velocity + right_velocity*right_velocity);
+    float alpha = 1.0f;
+    float vel_energy_thresh = 0.0f;
+    if (true) // just for debug
+    {
+        if (delta_ts_s > 0.0f)
+        {
+            alpha = 1.0f - expf(- delta_ts_s / AdaptiveOscillator::kEmaTauS);
+        }
+        if ((pe_->ao_data_.ao_left_event_cnt_ >= 1) != (pe_->ao_data_.ao_right_event_cnt_ >= 1))
+        {
+            vel_energy_ema_ = vel_energy;
+        }
+        vel_energy_ema_ = alpha * vel_energy + (1.0f - alpha) * vel_energy_ema_;
+        vel_energy_thresh = fmaxf(0.5f, 0.6f * vel_energy_ema_);
+        if (vel_energy < vel_energy_thresh)
+        {
+            low_energy_duration_us += delta_ts_us;
+        }
+        else
+        {
+            low_energy_duration_us = 0;
+        }
+    }
+    bool is_stopping_low_energy = (low_energy_duration_us > kMaxStoppingDurationUs);
+
+    static uint64_t both_heel_contact_duration_us = 0;
+    if (true) // just for debug
+    {
+        if (left_heel_contact_state && right_heel_contact_state)
+        {
+            both_heel_contact_duration_us += delta_ts_us;
+        }
+        else
+        {
+            both_heel_contact_duration_us = 0;
+        }
+    }
+    bool is_stopping_both_heel_contact = (both_heel_contact_duration_us > kMaxStoppingDurationUs);
+    // bool is_stopping = is_stopping_low_energy || is_stopping_both_heel_contact; // 低能量太容易触发
+    bool is_stopping = is_stopping_both_heel_contact;
+
+    bool is_long_time_no_event = ((tnow_sys_us - left_tk_sys_us_ > AdaptiveOscillator::kMaxTstrideUs) && (pe_->ao_data_.ao_left_event_cnt_ >= 1)) || ((tnow_sys_us - right_tk_sys_us_ > AdaptiveOscillator::kMaxTstrideUs) && (pe_->ao_data_.ao_right_event_cnt_ >= 1));
+
+    bool is_two_side_event_cnt_abnormal = (pe_->ao_data_.ao_left_event_cnt_ > pe_->ao_data_.ao_right_event_cnt_ + 1) || (pe_->ao_data_.ao_right_event_cnt_ > pe_->ao_data_.ao_left_event_cnt_ + 1);
+
+
+    if (is_long_time_no_event || is_two_side_event_cnt_abnormal || is_stopping)
+    {
+        pe_->ao_data_.ao_left_event_cnt_ = 0;
+        pe_->ao_data_.ao_right_event_cnt_ = 0;
+        left_angle_pos_peak_prev = 0.45f;
+        right_angle_pos_peak_prev = 0.45f;
+    }
+
+    bool is_left_event = false;
+    bool is_right_event = false;
+    if (false) // just for debug
+    {
+        is_left_event = is_left_angle_pos_peak;
+        is_right_event = is_right_angle_pos_peak;
+    }
+    else if (true) // just for debug
+    {
+        is_left_event = is_left_heel_strike_event;
+        is_right_event = is_right_heel_strike_event;
+    }
+
+    if (is_left_event)
+    {
+        if ((pe_->ao_data_.ao_left_event_cnt_ < 1) || ((pe_->ao_data_.ao_left_event_cnt_ >= 1) && (tnow_sys_us - left_tk_sys_us_ > kMinTstrideUs)))
+        {
+            pe_->ao_data_.ao_left_event_cnt_ ++;
+            left_tk_sys_us_ = tnow_sys_us;
+            is_left_event = true;
+        }
+    }
+    if (is_right_event)
+    {
+        if ((pe_->ao_data_.ao_right_event_cnt_ < 1) || ((pe_->ao_data_.ao_right_event_cnt_ >= 1) && (tnow_sys_us - right_tk_sys_us_ > kMinTstrideUs)))
+        {
+            pe_->ao_data_.ao_right_event_cnt_ ++;
+            right_tk_sys_us_ = tnow_sys_us;
+            is_right_event = true;
+        }
+    }
+
+    /**< 更新振荡器 */
+    float dot_phi[kNumAOs] = {0};
+    float dot_omega = 0;
+    float dot_alpha[kNumAOs] = {0};
+    float dot_alpha0 = 0;
+    if (pe_->ao_data_.ao_left_event_cnt_ >= 1 || pe_->ao_data_.ao_right_event_cnt_ >= 1)
+    {
+        hat_x_ = alpha0_;
+        float A = fabsf(alpha0_);
+        for (uint8_t i=0; i<kNumAOs; i++)
+        {
+            hat_x_ += alpha_[i] * arm_sin_f32(phi_[i]);
+            A += fabsf(alpha_[i]);
+        }
+        float e = x_teach - hat_x_;
+        float e_norm = e / A;
+
+        float sin_val, cos_val;
+        for (uint8_t i=0; i<kNumAOs; i++)
+        {
+            arm_sin_cos_f32(RAD_TO_DEG * phi_[i], &sin_val, &cos_val);
+            dot_phi[i] = omega_ * (i + 1) + v_phi_ * e_norm * cos_val;
+            dot_alpha[i] = eta_ * e * sin_val;
+            phi_[i] += dot_phi[i] * delta_ts_s;
+            alpha_[i] += dot_alpha[i] * delta_ts_s;
+        }
+        dot_omega = v_omega_ * e_norm * arm_cos_f32(phi_[0]);
+        dot_alpha0 = eta_ * e;
+        omega_ += dot_omega * delta_ts_s;
+        alpha0_ += dot_alpha0 * delta_ts_s;
+    }
+    else
+    {
+        omega_ = _2PI * 1.0;
+        arm_fill_f32(0.0f, phi_, kNumAOs);
+        arm_fill_f32(0.2f, alpha_, kNumAOs);
+        alpha0_ = 0.0f;
     }
     
-    uint8_t num_uninitialized = 0;
-    for (int i = 0; i < ps_->kNumStepsAvg; i++)
+    float phi_n = fmodf(phi_[0], _2PI);
+    if (phi_n < 0.0f) phi_n += _2PI;
+
+    float Pe = 0;
+    if ((phi_n >= 0.0f) && (phi_n < _PI))
     {
-        num_uninitialized += (ps_->stance_times_[i] == 0);
+        Pe = - phi_n;
+    }
+    else if ((phi_n >= _PI) && (phi_n < _2PI))
+    {
+        Pe = _2PI - phi_n;
     }
 
-    uint32_t* max_val = std::max_element(ps_->stance_times_, ps_->stance_times_ + ps_->kNumStepsAvg);
-    uint32_t* min_val = std::min_element(ps_->stance_times_, ps_->stance_times_ + ps_->kNumStepsAvg);
-
-    if (num_uninitialized > 0)
+    if (is_left_event)
     {
-        for (int i = (ps_->kNumStepsAvg - 1); i>0; i--)
+        if ((Pe > _PI/2.0f) && (left_Pe_tilde_tk_ < -_PI/2.0f))
         {
-            ps_->stance_times_[i] = ps_->stance_times_[i - 1];
+            left_Pe_tilde_tk_ = Pe - _2PI;
         }
-        ps_->stance_times_[0] = stance_time;
-    }
-    else if ((stance_time <= (ps_->expected_duration_window_upper_coeff_ * *max_val)) && (stance_time >= (ps_->expected_duration_window_lower_coeff_ * *min_val)))
-    {
-        int sum_stance_times = stance_time;
-        for (int i = (ps_->kNumStepsAvg - 1); i>0; i--)
+        else if ((Pe < -_PI/2.0f) && (left_Pe_tilde_tk_ > _PI/2.0f))
         {
-            sum_stance_times += ps_->stance_times_[i - 1];
-            ps_->stance_times_[i] = ps_->stance_times_[i - 1];
+            left_Pe_tilde_tk_ = Pe + _2PI;
         }
-        ps_->stance_times_[0] = stance_time;
-
-        expected_stance_duration = sum_stance_times / ps_->kNumStepsAvg;
+        else
+        {
+            left_Pe_tilde_tk_ = Pe;
+        }
+        left_epsilon_phi_tk_ = kp_ * (left_Pe_tilde_tk_ - left_phi_e_);
     }
-    return expected_stance_duration;
+    float left_tk_s = left_tk_sys_us_ * 1e-6f;
+    float dot_left_phi_e = left_epsilon_phi_tk_ * omega_ * expf(-omega_ * (tnow_sys_s - left_tk_s));
+    left_phi_e_ += dot_left_phi_e * delta_ts_s;
+
+    pe_->ao_data_.left_phi_comp_rad_ = fmodf(phi_n + left_phi_e_, _2PI);
+    if (pe_->ao_data_.left_phi_comp_rad_ < 0.0f) pe_->ao_data_.left_phi_comp_rad_ += _2PI;
+
+    if (is_right_event)
+    {
+        if ((Pe > _PI/2.0f) && (right_Pe_tilde_tk_ < -_PI/2.0f))
+        {
+            right_Pe_tilde_tk_ = Pe - _2PI;
+        }
+        else if ((Pe < -_PI/2.0f) && (right_Pe_tilde_tk_ > _PI/2.0f))
+        {
+            right_Pe_tilde_tk_ = Pe + _2PI;
+        }
+        else
+        {
+            right_Pe_tilde_tk_ = Pe;
+        }
+        right_epsilon_phi_tk_ = kp_ * (right_Pe_tilde_tk_ - right_phi_e_);
+    }
+    float right_tk_s = right_tk_sys_us_ * 1e-6f;
+    float dot_right_phi_e = right_epsilon_phi_tk_ * omega_ * expf(-omega_ * (tnow_sys_s - right_tk_s));
+    right_phi_e_ += dot_right_phi_e * delta_ts_s;
+    pe_->ao_data_.right_phi_comp_rad_ = fmodf(phi_n + right_phi_e_, _2PI);
+    if (pe_->ao_data_.right_phi_comp_rad_ < 0.0f) pe_->ao_data_.right_phi_comp_rad_ += _2PI;
+
+    tprev_sys_us_ = tnow_sys_us;
 }
 
-float Side::UpdateExpectedSwingDuration()
+void AdaptiveOscillator::Reset()
 {
-    uint32_t swing_time = ps_->toe_strike_timestamp_ - ps_->toe_off_timestamp_;
-    float expected_swing_duration = ps_->expected_swing_duration_;
+    tprev_sys_us_ = 0;
+    left_tk_sys_us_ = 0;
+    right_tk_sys_us_ = 0;
 
-    if (0 == ps_->prev_toe_off_timestamp_)
-    {
-        return expected_swing_duration;
-    }
+    hat_x_ = 0.0f;
+    omega_ = _2PI * 1.0f;
+    phi_[kNumAOs] = {0.0f};
+    alpha_[kNumAOs] = {0.2f};
+    alpha0_ = 0.0f;
+    vel_energy_ema_ = 0.0f;
 
-    uint8_t num_uninitialized = 0;
-
-    for (int i = 0; i < ps_->kNumStepsAvg; i++)
-    {
-        num_uninitialized += (ps_->swing_times_[i] == 0);
-    }
-
-    uint32_t* max_val = std::max_element(ps_->swing_times_, ps_->swing_times_ + ps_->kNumStepsAvg);
-    uint32_t* min_val = std::min_element(ps_->swing_times_, ps_->swing_times_ + ps_->kNumStepsAvg);
-
-    if (num_uninitialized > 0)
-    {
-        for (int i = (ps_->kNumStepsAvg - 1); i>0; i--)
-        {
-            ps_->swing_times_[i] = ps_->swing_times_[i - 1];
-        }
-        ps_->swing_times_[0] = swing_time;
-    }
-    else if ((swing_time <= (ps_->expected_duration_window_upper_coeff_ * *max_val)) && (swing_time >= (ps_->expected_duration_window_lower_coeff_ * *min_val)))
-    {
-        int sum_swing_times = swing_time;
-        for (int i = (ps_->kNumStepsAvg - 1); i>0; i--)
-        {
-            sum_swing_times += ps_->swing_times_[i - 1];
-            ps_->swing_times_[i] = ps_->swing_times_[i - 1];
-        }
-        ps_->swing_times_[0] = swing_time;
-
-        expected_swing_duration = sum_swing_times / ps_->kNumStepsAvg;
-    }
-    return expected_swing_duration;
+    left_Pe_tilde_tk_ = 0.0f;
+    right_Pe_tilde_tk_ = 0.0f;
+    left_epsilon_phi_tk_ = 0.0f;
+    right_epsilon_phi_tk_ = 0.0f;
+    left_phi_e_ = 0.0f;
+    right_phi_e_ = 0.0f;
 }
+
 
 ExoShell::ExoShell(Exo* ptr_exo) : ptr_exo_(ptr_exo)
 {
@@ -901,11 +1169,11 @@ void ExoShell::OnCmdVofaTelemetry(int argc, char** argv)
 
     if (strcmp(argv[1], "on") == 0)
     {
-        ptr_exo_->pe_->enable_vofa_telemetry_ = true;
+        ptr_exo_->pe_->telemetry_config_.enable = true;
     }
     else if (strcmp(argv[1], "off") == 0)
     {
-        ptr_exo_->pe_->enable_vofa_telemetry_ = false;
+        ptr_exo_->pe_->telemetry_config_.enable = false;
         SendString("VOFA telemetry: OFF\r\n");
     }
     else
@@ -947,22 +1215,8 @@ void ExoShell::OnCmdSetLocoMode(int argc, char **argv)
     }
 }
 
-Exo::Exo(ExoData *pe) : pe_(pe), state_led_(), adaptive_oscilator_(), left_side_(true, pe), right_side_(false, pe), shell_(this)
-{
-}
-
 void Exo::Initialize()
 {
-    /** 调试: 设置足底接触状态的施密特触发器阈值. */
-    left_side_.heel_fsr_.lower_threshold_percent_ground_contact_ = 0.15f;
-    left_side_.heel_fsr_.upper_threshold_percent_ground_contact_ = 0.25f;
-    left_side_.toe_fsr_.lower_threshold_percent_ground_contact_ = 0.15f;
-    left_side_.toe_fsr_.upper_threshold_percent_ground_contact_ = 0.25f;
-    right_side_.heel_fsr_.lower_threshold_percent_ground_contact_ = 0.15f;
-    right_side_.heel_fsr_.upper_threshold_percent_ground_contact_ = 0.25f;
-    right_side_.toe_fsr_.lower_threshold_percent_ground_contact_ = 0.15f;
-    right_side_.toe_fsr_.upper_threshold_percent_ground_contact_ = 0.25f; 
-
     /** 调试: 重置标定标志. */
     ResetCalibrationFlags();
 
@@ -1051,7 +1305,8 @@ void Exo::Run()
         break;
 
     case ExoData::State::kWaitMotorComm:
-        if (IsMotorConnect())
+        // if (IsMotorConnect())
+        if (true)
         {
             /** 无需要用户命令启动 */
             // pe_->state_ = ExoData::State::kCalibrating;
@@ -1130,11 +1385,11 @@ void Exo::Run()
 
     if (shell_.ProcessPendingCommand())
     {
-        pe_->vofa_pause_until_ms_ = GetSysTimeMs() + 3000U;
+        pe_->telemetry_config_.pause_until_ms = GetSysTimeMs() + 3000U;
     }
 
     const uint32_t now_ms = GetSysTimeMs();
-    if (pe_->enable_vofa_telemetry_ && (now_ms >= pe_->vofa_pause_until_ms_))
+    if (pe_->telemetry_config_.enable && (now_ms >= pe_->telemetry_config_.pause_until_ms))
     {
         VofaSendTelemetry();
     }
@@ -1150,29 +1405,31 @@ void Exo::Calibrate()
 
 void Exo::ResetCalibrationFlags()
 {
-    pe_->left_side_.is_calibration_done_ = false;
-    pe_->left_side_.do_calibration_heel_fsr_ = true;
-    pe_->left_side_.do_calibration_toe_fsr_ = false;
-    pe_->left_side_.do_calibration_refinement_heel_fsr_ = true;
-    pe_->left_side_.do_calibration_refinement_toe_fsr_ = false;
+    pe_->left_side_.is_calibrated_ = false;
+    // pe_->left_side_.hip_joint_.is_calibrated_ = false; /** no need */
+    // pe_->left_side_.knee_joint_.is_calibrated_ = false;
+    // pe_->left_side_.ankle_joint_.is_calibrated_ = false;
+    pe_->left_side_.fsr_gait_data_.is_calibrated_ = false;
+    pe_->left_side_.fsr_gait_data_.do_calibration_heel_fsr_ = true;
+    pe_->left_side_.fsr_gait_data_.do_calibration_toe_fsr_ = false;
+    pe_->left_side_.fsr_gait_data_.do_calibration_refinement_heel_fsr_ = true;
+    pe_->left_side_.fsr_gait_data_.do_calibration_refinement_toe_fsr_ = false;
 
-    pe_->right_side_.is_calibration_done_ = false;
-    pe_->right_side_.do_calibration_heel_fsr_ = true;
-    pe_->right_side_.do_calibration_toe_fsr_ = false;
-    pe_->right_side_.do_calibration_refinement_heel_fsr_ = true;
-    pe_->right_side_.do_calibration_refinement_toe_fsr_ = false;
-
-    /** 最终标定的结果是以下用于归一化的最值 */
-    // left_side_.heel_fsr_.calibration_refinement_max_ = 2.45f;
-    // left_side_.heel_fsr_.calibration_refinement_min_ = 0.15f;
-    // right_side_.heel_fsr_.calibration_refinement_max_ = 2.45f;
-    // right_side_.heel_fsr_.calibration_refinement_min_ = 0.15f;
+    pe_->right_side_.is_calibrated_ = false;
+    // pe_->right_side_.hip_joint_.is_calibrated_ = false;
+    // pe_->right_side_.knee_joint_.is_calibrated_ = false;
+    // pe_->right_side_.ankle_joint_.is_calibrated_ = false;
+    pe_->right_side_.fsr_gait_data_.is_calibrated_ = false;
+    pe_->right_side_.fsr_gait_data_.do_calibration_heel_fsr_ = true;
+    pe_->right_side_.fsr_gait_data_.do_calibration_toe_fsr_ = false;
+    pe_->right_side_.fsr_gait_data_.do_calibration_refinement_heel_fsr_ = true;
+    pe_->right_side_.fsr_gait_data_.do_calibration_refinement_toe_fsr_ = false;
 }
 
 void Exo::Read()
 {
     pe_->battery_voltage_ = (g_adc_data[0] * 3.3f / 65535) * 11;
-    // pe_->battery_voltage_ = 24; /** just for debug */
+    pe_->battery_voltage_ = 24; /** just for debug */
     left_side_.Read();
     right_side_.Read();
 }
@@ -1196,14 +1453,9 @@ void Exo::Estimate()
     if (pe_->loco_mode_ == ExoData::LocoMode::kWalking)
     {
         /**  */
-        left_side_.FsrTimeBaseGaitPhaseEstimate();
-        right_side_.FsrTimeBaseGaitPhaseEstimate();
-
-        adaptive_oscilator_.UpdateGaitPhase(pe_->left_side_.knee_joint_.pos_rad_, pe_->right_side_.knee_joint_.pos_rad_, pe_->left_side_.knee_joint_.vel_radps_, pe_->right_side_.knee_joint_.vel_radps_, pe_->left_side_.heel_contact_state_, pe_->right_side_.heel_contact_state_);
-        pe_->ao_left_phase_rad_ = adaptive_oscilator_.left_phi_comp_rad_;
-        pe_->ao_right_phase_rad_ = adaptive_oscilator_.right_phi_comp_rad_;
-        pe_->ao_left_event_cnt_ = adaptive_oscilator_.left_event_cnt_;
-        pe_->ao_right_event_cnt_ = adaptive_oscilator_.right_event_cnt_;
+        left_side_.fsr_gait_estimator_.Update();
+        right_side_.fsr_gait_estimator_.Update();
+        adaptive_oscilator_.Update();
     }
 }
 
@@ -1256,17 +1508,19 @@ void Exo::VofaSendTelemetry()
 {
     static uint32_t loop_cnt = 0;
     shell_.SetVofaJustFloatData(0, loop_cnt++);
-    shell_.SetVofaJustFloatData(1, left_side_.heel_fsr_.raw_reading_);
-    shell_.SetVofaJustFloatData(2, left_side_.toe_fsr_.raw_reading_);
-    shell_.SetVofaJustFloatData(3, right_side_.heel_fsr_.raw_reading_);
-    shell_.SetVofaJustFloatData(4, right_side_.toe_fsr_.raw_reading_);
-    shell_.SetVofaJustFloatData(5, pe_->left_side_.percent_gait_ / 100.0f);
-    shell_.SetVofaJustFloatData(6, pe_->right_side_.percent_gait_ / 100.0f);
+    shell_.SetVofaJustFloatData(1, pe_->left_side_.fsr_gait_data_.heel_.raw_reading);
+    shell_.SetVofaJustFloatData(2, pe_->left_side_.fsr_gait_data_.toe_.raw_reading);
+    shell_.SetVofaJustFloatData(3, pe_->right_side_.fsr_gait_data_.heel_.raw_reading);
+    shell_.SetVofaJustFloatData(4, pe_->right_side_.fsr_gait_data_.toe_.raw_reading);
+    shell_.SetVofaJustFloatData(5, pe_->left_side_.fsr_gait_data_.percent_gait_ / 100.0f);
+    shell_.SetVofaJustFloatData(6, pe_->right_side_.fsr_gait_data_.percent_gait_ / 100.0f);
     shell_.SetVofaJustFloatData(7, left_side_.ankle_joint_.motor_.position_ref_);
     shell_.SetVofaJustFloatData(8, right_side_.ankle_joint_.motor_.position_ref_);
     shell_.SetVofaJustFloatData(9, left_side_.ankle_joint_.motor_.position_);
     shell_.SetVofaJustFloatData(10, right_side_.ankle_joint_.motor_.position_);
-    shell_.SendVofaJustFloatFrame(11);
+    shell_.SetVofaJustFloatData(11, pe_->left_side_.ankle_joint_.plantarflexion_force_N_);
+    shell_.SetVofaJustFloatData(12, pe_->right_side_.ankle_joint_.plantarflexion_force_N_);
+    shell_.SendVofaJustFloatFrame(13);
 }
 
 bool Exo::IsMotorConnect()
@@ -1276,12 +1530,12 @@ bool Exo::IsMotorConnect()
 
 bool Exo::IsCalibrateDone()
 {
-    return pe_->left_side_.is_calibration_done_ && pe_->right_side_.is_calibration_done_;
+    return pe_->left_side_.is_calibrated_ && pe_->right_side_.is_calibrated_;
 }
 
 bool Exo::IsStopWalking()
 {
-    return pe_->ao_left_event_cnt_ <= 1 && pe_->ao_right_event_cnt_ <= 1;
+    return pe_->ao_data_.ao_left_event_cnt_ <= 1 && pe_->ao_data_.ao_right_event_cnt_ <= 1;
 }
 
 ExoData::SysEvent Exo::AllowedEventsForState(ExoData::State state)
@@ -1325,20 +1579,20 @@ ExoData::SysEvent Exo::AllowedEventsForState(ExoData::State state)
 
 void Exo::SensorUartRxCallback(uint8_t *data, uint16_t data_size)
 {
-    if (data_size == 56)
+    if (data_size == sizeof(exo_sensor_packet_t))
     {
         exo_sensor_packet_t *packet = (exo_sensor_packet_t *)data;
-        left_side_.heel_fsr_.raw_reading_ = 3.4f - packet->left_foot.mV_heel / 1000.0f;
-        left_side_.toe_fsr_.raw_reading_ = 3.4f - packet->left_foot.mV_toe / 1000.0f;
-        left_side_.ps_->ankle_plantarflexion_force_N_ = packet->left_foot.mV_pull;
+        left_side_.ps_->fsr_gait_data_.heel_.raw_reading = 3.4f - packet->left_foot.mV_heel / 1000.0f;
+        left_side_.ps_->fsr_gait_data_.toe_.raw_reading = 3.4f - packet->left_foot.mV_toe / 1000.0f;
+        left_side_.ps_->ankle_joint_.plantarflexion_force_N_ = packet->left_foot.mV_pull;
         left_side_.ps_->foot_imu_.quat_i_ = packet->left_foot.quatI;
         left_side_.ps_->foot_imu_.quat_j_ = packet->left_foot.quatJ;
         left_side_.ps_->foot_imu_.quat_k_ = packet->left_foot.quatK;
         left_side_.ps_->foot_imu_.quat_real_ = packet->left_foot.quatReal;
         
-        right_side_.heel_fsr_.raw_reading_ = 3.4f - packet->right_foot.mV_heel / 1000.0f;
-        right_side_.toe_fsr_.raw_reading_ = 3.4f - packet->right_foot.mV_toe / 1000.0f;
-        right_side_.ps_->ankle_plantarflexion_force_N_ = packet->right_foot.mV_pull;
+        right_side_.ps_->fsr_gait_data_.heel_.raw_reading = 3.4f - packet->right_foot.mV_heel / 1000.0f;
+        right_side_.ps_->fsr_gait_data_.toe_.raw_reading = 3.4f - packet->right_foot.mV_toe / 1000.0f;
+        right_side_.ps_->ankle_joint_.plantarflexion_force_N_ = packet->right_foot.mV_pull;
         right_side_.ps_->foot_imu_.quat_i_ = packet->right_foot.quatI;
         right_side_.ps_->foot_imu_.quat_j_ = packet->right_foot.quatJ;
         right_side_.ps_->foot_imu_.quat_k_ = packet->right_foot.quatK;

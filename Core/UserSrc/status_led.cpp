@@ -1,11 +1,6 @@
 #include "status_led.hpp"
 #include "ws2812.h"
 
-StateLed::StateLed()
-{
-    status_idx_ = 255;
-}
-
 
 void StateLed::UpdateColorBDMA(uint8_t status_idx)
 {

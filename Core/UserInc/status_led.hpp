@@ -6,12 +6,12 @@
 class StateLed
 {
 public:
-    StateLed();
-    ~StateLed() = default;
+    explicit StateLed() : status_idx_(255) {}
+    virtual ~StateLed() = default;
 
     void UpdateColor(uint8_t status_idx);
     void UpdateColorBDMA(uint8_t status_idx);
-    
+private:
     uint8_t status_idx_;
 
     const uint8_t kRGBColors[9][3] = {
