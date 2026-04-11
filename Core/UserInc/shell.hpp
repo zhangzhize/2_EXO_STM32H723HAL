@@ -15,12 +15,12 @@ union DmaBuffer {
     uint8_t u8_data[SHELL_TX_BUF_SIZE_BYTES];
 };
 
-typedef void (*ShellCmdHandler)(void* context, int argc, char** argv);
+typedef void (*ShellCmdHandler)(void *context, int argc, char **argv);
 
 struct ShellCmdEntry {
-    const char* cmd_name;
+    const char *cmd_name;
     ShellCmdHandler handler;
-    void* context;
+    void *context;
 };
 
 enum class ShellRwParamType : uint8_t
@@ -32,30 +32,30 @@ enum class ShellRwParamType : uint8_t
 
 struct ShellRwParamEntry
 {
-    const char* name; 
-    ShellRwParamType type;   
-    void* ptr;        
+    const char *name;
+    ShellRwParamType type;
+    void *ptr;
 };
 
 class Shell
 {
 public:
-    explicit Shell(UART_HandleTypeDef* huart = &huart9);
+    explicit Shell(UART_HandleTypeDef &huart);
     virtual ~Shell() = default;
 
-    void Printf(const char* format, ...);
+    void Printf(const char *format, ...);
     void SetVofaJustFloatData(uint16_t index, float value);
     void SendVofaJustFloatFrame(uint16_t float_size);
-    void SendString(const char* str);
+    void SendString(const char *str);
     void SendData(uint16_t data_size);
 
-    bool RegisterCommand(const char* cmd_name, ShellCmdHandler handler, void* context);
-    void PushPendingCommand(const uint8_t* rx_data, uint16_t len);
+    bool RegisterCommand(const char *cmd_name, ShellCmdHandler handler, void *context);
+    void PushPendingCommand(const uint8_t *rx_data, uint16_t len);
     bool ProcessPendingCommand();
 
-    void RegisterRwParam(const char* name, float* ptr);
-    void RegisterRwParam(const char* name, int* ptr);
-    void RegisterRwParam(const char* name, bool* ptr);
+    void RegisterRwParam(const char *name, float *ptr);
+    void RegisterRwParam(const char *name, int *ptr);
+    void RegisterRwParam(const char *name, bool *ptr);
 
     static inline int GetInt(int argc, char *argv[], int index, int default_val = 0)
     {
@@ -77,26 +77,26 @@ public:
     }
 
 protected:
-    DmaBuffer* ptr_txbuffer_ = nullptr;
-    UART_HandleTypeDef *ptr_huart_ = nullptr;
+    DmaBuffer &txbuffer_;
+    UART_HandleTypeDef &huart_;
 
     static constexpr uint16_t kMaxPendingCmdLen = 256U;     /** 待处理命令的最大长度 */
     static constexpr uint16_t kMaxNumCmds = 20U;            /** 支持的最大命令个数 */
     static constexpr uint16_t kMaxNumSupportedArgvs = 10;    /** 每个命令支持的最大参数个数 */
     static constexpr uint16_t kMaxNumRwParams = 50;         /** 可读写参数的最大个数 */
 
-    template <typename T, void (T::*MemFn)(int, char**)>
-    static inline void CmdWrapper(void* context, int argc, char* argv[])
+    template <typename T, void (T::*MemFn)(int, char **)>
+    static inline void CmdWrapper(void *context, int argc, char *argv[])
     {
         if (context != nullptr)
         {
-            (static_cast<T*>(context)->*MemFn)(argc, argv);
+            (static_cast<T *>(context)->*MemFn)(argc, argv);
         }
     }
 private:
-    void OnCmdHelp(int argc, char** argv);
-    void OnCmdWriteParam(int argc, char** argv);
-    void OnCmdReadParam(int argc, char** argv);
+    void OnCmdHelp(int argc, char **argv);
+    void OnCmdWriteParam(int argc, char **argv);
+    void OnCmdReadParam(int argc, char **argv);
 
     ShellRwParamEntry param_table_[kMaxNumRwParams];
     ShellCmdEntry cmd_table_[kMaxNumCmds];

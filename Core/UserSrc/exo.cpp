@@ -1,45 +1,20 @@
 #include "exo.hpp"
 #include "utils.h"
-#include <string.h>
 #include <algorithm>
-#include <cstring>
-#include <cstdio>
 extern "C" {
 #include "arm_math.h"
 }
 
 extern uint32_t g_adc_data[3];  /**< definition in alt_main.cpp */
 
-
-enum ExoJointCanID : uint8_t
-{
-    kLeftHip = 0x01,
-    kRightHip = 0x02,
-    kLeftKnee = 0x2A,
-    kRightKnee = 0x55,
-    kLeftAnkle = 0x2A,
-    kRightAnkle = 0x55,
-};
-
-AnkleJoint::AnkleJoint(bool is_left, ExoData *pe) : pe_(pe), ps_(is_left ? &pe->left_side_ : &pe->right_side_), pj_(is_left ? &pe->left_side_.ankle_joint_ : &pe->right_side_.ankle_joint_), force_profile_generator_(), motor_(is_left ? ExoJointCanID::kLeftAnkle : ExoJointCanID::kRightAnkle), pid_(0.2f, 0.4f, 0.0f, -1.0f, 10.0f)
-{
-}
-
 void AnkleJoint::Calibrate()
 {
-    if (!pj_->is_used_)
-    {
-        return;
-    }
-    /** #Todo: Implement joint calibration logic, if needed */
+    if (!pj_.is_used_) return;
 }
 
 bool AnkleJoint::IsMotorConnect()
 {
-    if (!pj_->is_used_)
-    {
-        return true;
-    }
+    if (!pj_.is_used_) return true;
 
     if (motor_.feedback_flag_ > 0)
     {
@@ -58,10 +33,7 @@ void AnkleJoint::Shutdown()
 
 void AnkleJoint::Standby()
 {
-    if (!pj_->is_used_)
-    {
-        return;
-    }
+    if (!pj_.is_used_) return;
 
     // motor_.torque_forward_ = 0.0f;
     // motor_.position_ref_ = 0.1f;
@@ -74,34 +46,25 @@ void AnkleJoint::Standby()
 
 void AnkleJoint::Read()
 {
-    if (!pj_->is_used_)
-    {
-        return;
-    }
+  if (!pj_.is_used_) return;
 
-    if (pj_->is_left_)
-    {
-        pj_->pos_rad_ = motor_.position_;
-        pj_->vel_radps_ = motor_.speed_;
-        pj_->tor_Nm_ = motor_.torque_;
-    }
-    else
-    {
-        pj_->pos_rad_ = -motor_.position_;
-        pj_->vel_radps_ = -motor_.speed_;
-        pj_->tor_Nm_ = -motor_.torque_;
-    }
+  if (pj_.is_left_) {
+    pj_.pos_rad_ = motor_.position_;
+    pj_.vel_radps_ = motor_.speed_;
+    pj_.tor_Nm_ = motor_.torque_;
+  } else {
+    pj_.pos_rad_ = -motor_.position_;
+    pj_.vel_radps_ = -motor_.speed_;
+    pj_.tor_Nm_ = -motor_.torque_;
+  }
 }
 
 void AnkleJoint::Assist()
 {
-    if (!pj_->is_used_)
-    {
-        return;
-    }
+    if (!pj_.is_used_) return;
 
     /** 1. 获取 FSR 算出的相位百分比 (0.0f~100.0f) */
-    float phase_percent = pj_->is_left_ ? pe_->left_side_.fsr_gait_data_.percent_gait_ : pe_->right_side_.fsr_gait_data_.percent_gait_;
+    float phase_percent = pj_.is_left_ ? pe_.left_side_.fsr_gait_data_.percent_gait_ : pe_.right_side_.fsr_gait_data_.percent_gait_;
 
     /** 2. 根据步态相位设置参考位置 */
     float cable_position_ref = cable_released_position_;
@@ -121,7 +84,7 @@ void AnkleJoint::Assist()
         }
     }
 
-    if (!pj_->is_left_)
+    if (!pj_.is_left_)
     {
         cable_position_ref = -cable_position_ref;
     }
@@ -135,25 +98,14 @@ void AnkleJoint::Assist()
     motor_.MotionControl();
 }
 
-KneeJoint::KneeJoint(bool is_left, ExoData *pe) : pe_(pe), ps_(is_left ? &pe->left_side_ : &pe->right_side_), pj_(is_left ? &pe->left_side_.knee_joint_ : &pe->right_side_.knee_joint_), force_profile_generator_(), motor_(is_left ? ExoJointCanID::kLeftKnee : ExoJointCanID::kRightKnee), disturbance_observer_(5.0f)
-{
-}
-
 void KneeJoint::Calibrate()
 {
-    if (!pj_->is_used_)
-    {
-        return;
-    }
-    /** #Todo: Implement joint calibration logic, if needed  */
+    if (!pj_.is_used_) return;
 }
 
 bool KneeJoint::IsMotorConnect()
 {
-    if (!pj_->is_used_)
-    {
-        return true;
-    }
+    if (!pj_.is_used_) return true;
 
     if (motor_.feedback_flag_ > 0)
     {
@@ -172,10 +124,7 @@ void KneeJoint::Shutdown()
 
 void KneeJoint::Standby()
 {
-    if (!pj_->is_used_)
-    {
-        return;
-    }
+    if (!pj_.is_used_) return;
 
     // motor_.torque_forward_ = 0.0f;
     // motor_.position_ref_ = 0.0f;
@@ -188,52 +137,46 @@ void KneeJoint::Standby()
 
 void KneeJoint::Read()
 {
-    if (!pj_->is_used_)
-    {
-        return;
-    }
+    if (!pj_.is_used_) return;
 
-    if (pj_->is_left_)
+    if (pj_.is_left_)
     {
-        pj_->pos_rad_ = motor_.position_;
-        pj_->vel_radps_ = motor_.speed_;
-        pj_->tor_Nm_ = motor_.torque_;
+        pj_.pos_rad_ = motor_.position_;
+        pj_.vel_radps_ = motor_.speed_;
+        pj_.tor_Nm_ = motor_.torque_;
     }
     else
     {
-        pj_->pos_rad_ = -motor_.position_;
-        pj_->vel_radps_ = -motor_.speed_;
-        pj_->tor_Nm_ = -motor_.torque_;
+        pj_.pos_rad_ = -motor_.position_;
+        pj_.vel_radps_ = -motor_.speed_;
+        pj_.tor_Nm_ = -motor_.torque_;
     }
 }
 
 void KneeJoint::Assist()
 {
-    if (!pj_->is_used_)
-    {
-        return;
-    }
+    if (!pj_.is_used_) return;
 
     float force_profile = 0.0f;
 
-    // float phase_rad = pj_->is_left_ ? pe_->ao_left_phase_rad_ : pe_->ao_right_phase_rad_;
-    float phase_rad = pj_->is_left_ ? pe_->left_side_.fsr_gait_data_.percent_gait_ : pe_->right_side_.fsr_gait_data_.percent_gait_;
+    // float phase_rad = pj_.is_left_ ? pe_.ao_left_phase_rad_ : pe_.ao_right_phase_rad_;
+    float phase_rad = pj_.is_left_ ? pe_.left_side_.fsr_gait_data_.percent_gait_ : pe_.right_side_.fsr_gait_data_.percent_gait_;
     phase_rad = phase_rad * _2PI / 100.0f;
-    // uint32_t gait_event_cnt = pj_->is_left_ ? pe_->ao_left_event_cnt_ : pe_->ao_right_event_cnt_;
+    // uint32_t gait_event_cnt = pj_.is_left_ ? pe_.left_event_cnt_ : pe_.right_event_cnt_;
 
-    // float phase_rad = pj_->is_left_ ? pe_->ao_left_phase_rad_ : pe_->ao_right_phase_rad_;
+    // float phase_rad = pj_.is_left_ ? pe_.ao_left_phase_rad_ : pe_.ao_right_phase_rad_;
     // float phase_percent = phase_rad * _2PI / 100.0f;
 
-    // float phase_percent = pj_->is_left_ ? pe_->left_side_.percent_gait_ : pe_->right_side_.percent_gait_;
+    // float phase_percent = pj_.is_left_ ? pe_.left_side_.percent_gait_ : pe_.right_side_.percent_gait_;
 
-    // uint32_t gait_event_cnt = pj_->is_left_ ? pe_->ao_left_event_cnt_ : pe_->ao_right_event_cnt_;
+    // uint32_t gait_event_cnt = pj_.is_left_ ? pe_.left_event_cnt_ : pe_.right_event_cnt_;
 
-    force_profile = force_profile_generator_.GetForceProfile(phase_rad, pj_->pos_rad_, pj_->vel_radps_);
-    if (!pj_->is_left_)
+    force_profile = force_profile_generator_.GetForceProfile(phase_rad, pj_.pos_rad_, pj_.vel_radps_);
+    if (!pj_.is_left_)
     {
         force_profile = -force_profile;
     }
-    motor_.torque_forward_ = force_profile * pe_->user_weight_kg_;
+    motor_.torque_forward_ = force_profile * pe_.user_weight_kg_;
     motor_.position_ref_ = 0.0f;
     motor_.speed_ref_ = 0.0f;
     motor_.motion_mode_kp_ = 0.0f;
@@ -249,11 +192,11 @@ void KneeJoint::ImpedanceControl()
     static float ddot_q_ref_ = 0.0f;
     static uint64_t t0 = GetSysTimeUs();
     static float M0_ = 1.0f;
-    static float Md_ = 0.0f;
+    static float Md_ = 1.0f;
     static float Bd_ = 1.0f;
     static float Kd_ = 1.0f;
 
-    if (!pj_->is_used_)
+    if (!pj_.is_used_)
     {
         return;
     }
@@ -265,11 +208,11 @@ void KneeJoint::ImpedanceControl()
     q_ref_ = amplitude * sin_t;
     dot_q_ref_ = amplitude * omega * cos_t;
     ddot_q_ref_ = - amplitude * omega * omega * sin_t;
-    disturbance_observer_.UpdateObserver(pj_->pos_rad_, pj_->tor_Nm_ / M0_);
+    disturbance_observer_.UpdateObserver(pj_.pos_rad_, pj_.tor_Nm_ / M0_);
 
     float hat_disturbance = - M0_ * disturbance_observer_.hat_x2_;
-    float dot_tilde_q = dot_q_ref_ - pj_->vel_radps_;
-    float tilde_q = q_ref_ - pj_->pos_rad_;
+    float dot_tilde_q = dot_q_ref_ - pj_.vel_radps_;
+    float tilde_q = q_ref_ - pj_.pos_rad_;
 
     motor_.torque_forward_ = M0_ * ddot_q_ref_ + M0_ / Md_ * (Bd_ * dot_tilde_q + Kd_ * tilde_q - hat_disturbance) + hat_disturbance;
     motor_.position_ref_ = 0;
@@ -279,37 +222,83 @@ void KneeJoint::ImpedanceControl()
     motor_.MotionControl();
 }
 
-HipJoint::HipJoint(bool is_left, ExoData *exo_data) : pe_(exo_data), ps_(is_left ? &pe_->left_side_ : &pe_->right_side_), pj_(is_left ? &pe_->left_side_.hip_joint_ : &pe_->right_side_.hip_joint_), motor_(is_left ? ExoJointCanID::kLeftHip : ExoJointCanID::kRightHip)
+void KneeSeaJoint::Calibrate()
 {
+    if (!pj_.is_used_) return;
+}
+
+void KneeSeaJoint::Read()
+{
+    if (!pj_.is_used_) return;
+
+    /** #TODO 将电机的数据和磁栅尺的数据进行处理 */
+
+    /** 滑块位移 = 电机输出转动角度 * 螺母导程 - 偏置 */
+    pj_.pos_slider_mm_ = pj_.screw_lead_mm_ * motor_.shaft_pos_feedback_rad_ - pj_.pos_slider_offset_mm_;
+    pj_.vel_slider_mmps_ = pj_.screw_lead_mm_ * motor_.shaft_speed_feedback_radps_;
+
+    /** sea输出位移 = 磁栅尺反馈位置 - 偏置 */
+    pj_.pos_linear_encoder_mm_ = mag_encoder_.scaled_offsetted_position_ - pj_.pos_linear_encoder_offset_mm_;
+    pj_.vel_linear_encoder_mmps_ = 0.0f;  /** #HACK 暂时不需要  */
+
+    /** 弹簧力 = 2 * 刚度 * 压缩长度 */
+    pj_.force_spring_N_ = 2.0f * pj_.spring_stiffness_Npmm_ * (pj_.pos_slider_mm_ - pj_.pos_linear_encoder_mm_);
+
+    /** 关节的pos_rad_, vel_radps, tor_Nm_ 需要进一步计算 */
+
+    mag_encoder_.SendRequest();
+}
+
+bool KneeSeaJoint::IsMotorConnect()
+{
+    if (!pj_.is_used_) return true;
+
+    return true; /** 无需主动连接通信 */
+}
+
+void KneeSeaJoint::Shutdown()
+{
+    motor_.DisableMotor();
+}
+
+void KneeSeaJoint::Standby()
+{
+    if (!pj_.is_used_) return;
+
+    motor_.EnableMotor();
+}
+
+void KneeSeaJoint::Assist()
+{
+    /** #TODO 实现底层的反馈控制器 */
 }
 
 void HipJoint::Calibrate()
 {
-    if (!pj_->is_used_) return;
-    /** #Todo: Implement joint calibration logic, if needed  */
+    if (!pj_.is_used_) return;
 }
 
 void HipJoint::Read()
 {
-    if (!pj_->is_used_) return;
+    if (!pj_.is_used_) return;
 
-    if (pj_->is_left_)
+    if (pj_.is_left_)
     {
-        pj_->pos_rad_ = motor_.feedback_.pos_rad_;
-        pj_->vel_radps_ = motor_.feedback_.vel_radps_;
-        pj_->tor_Nm_ = motor_.feedback_.tor_Nm_;
+        pj_.pos_rad_ = motor_.feedback_.pos_rad_;
+        pj_.vel_radps_ = motor_.feedback_.vel_radps_;
+        pj_.tor_Nm_ = motor_.feedback_.tor_Nm_;
     }
     else
     {
-        pj_->pos_rad_ = -motor_.feedback_.pos_rad_;
-        pj_->vel_radps_ = -motor_.feedback_.vel_radps_;
-        pj_->tor_Nm_ = -motor_.feedback_.tor_Nm_;
+        pj_.pos_rad_ = -motor_.feedback_.pos_rad_;
+        pj_.vel_radps_ = -motor_.feedback_.vel_radps_;
+        pj_.tor_Nm_ = -motor_.feedback_.tor_Nm_;
     }
 }
 
 bool HipJoint::IsMotorConnect()
 {
-    if (!pj_->is_used_) return true;
+    if (!pj_.is_used_) return true;
 
     if (motor_.feedback_.flag_ > 0)
     {
@@ -328,7 +317,7 @@ void HipJoint::Shutdown()
 
 void HipJoint::Standby()
 {
-    if (!pj_->is_used_) return;
+    if (!pj_.is_used_) return;
 
     motor_.ctrl_param_.mode_id_ = DMMotorModeID::kMIT;
     motor_.ctrl_param_.kp_set_ = 0.0f;
@@ -400,17 +389,17 @@ static HipFFShared g_hip_ff;
 
 void HipJoint::Assist()
 {
-    if (!pj_->is_used_) return;
+    if (!pj_.is_used_) return;
 
-    const float posL_now = pe_->left_side_.hip_joint_.pos_rad_;
-    const float posR_now = pe_->right_side_.hip_joint_.pos_rad_;
+    const float posL_now = pe_.left_side_.hip_joint_.pos_rad_;
+    const float posR_now = pe_.right_side_.hip_joint_.pos_rad_;
     const uint32_t now_ms = GetSysTimeMs();
 
-    if (pj_->is_left_)
+    if (pj_.is_left_)
     {
         g_hip_ff.UpdateAndCompute(now_ms, posL_now, posR_now);
     }
-    const float tau_me = pj_->is_left_ ? g_hip_ff.tau_left : g_hip_ff.tau_right;
+    const float tau_me = pj_.is_left_ ? g_hip_ff.tau_left : g_hip_ff.tau_right;
 
     motor_.ctrl_param_.mode_id_ = DMMotorModeID::kMIT;
     motor_.ctrl_param_.kp_set_ = 0.0f;
@@ -424,96 +413,94 @@ void HipJoint::Assist()
 
 void FsrGaitEstimator::Calibrate()
 {
-    if (!gait_data_ || !gait_data_->is_used_) return;
+    if (!gait_data_.is_used_) return;
 
-    ProcessCalibration(gait_data_->heel_, gait_data_->do_calibration_heel_fsr_, gait_data_->do_calibration_refinement_heel_fsr_);
-    ProcessCalibration(gait_data_->toe_, gait_data_->do_calibration_toe_fsr_, gait_data_->do_calibration_refinement_toe_fsr_);
+    ProcessCalibration(gait_data_.heel_, gait_data_.do_calibration_heel_fsr_, gait_data_.do_calibration_refinement_heel_fsr_);
+    ProcessCalibration(gait_data_.toe_, gait_data_.do_calibration_toe_fsr_, gait_data_.do_calibration_refinement_toe_fsr_);
 
-    gait_data_->is_calibrated_ = !(gait_data_->do_calibration_heel_fsr_ || gait_data_->do_calibration_refinement_heel_fsr_ || gait_data_->do_calibration_toe_fsr_ || gait_data_->do_calibration_refinement_toe_fsr_);
+    gait_data_.is_calibrated_ = !(gait_data_.do_calibration_heel_fsr_ || gait_data_.do_calibration_refinement_heel_fsr_ || gait_data_.do_calibration_toe_fsr_ || gait_data_.do_calibration_refinement_toe_fsr_);
 }
 
 void FsrGaitEstimator::Update() {
-    if (!gait_data_ || !gait_data_->is_used_) return;
+    if (!gait_data_.is_used_) return;
 
     // 1. 先由引擎处理硬件原始数据，并更新校准标志位
-    ProcessSensorUpdate(gait_data_->heel_);
-    ProcessSensorUpdate(gait_data_->toe_);
+    ProcessSensorUpdate(gait_data_.heel_);
+    ProcessSensorUpdate(gait_data_.toe_);
 
     // 2. 获取处理后的状态，进入原有的步态解算逻辑
-    gait_data_->heel_contact_state_ = gait_data_->heel_.ground_contact;
-    gait_data_->toe_contact_state_ = gait_data_->toe_.ground_contact;
+    gait_data_.heel_contact_state_ = gait_data_.heel_.ground_contact;
+    gait_data_.toe_contact_state_ = gait_data_.toe_.ground_contact;
     
-    /** #HACK: 暂时只用足跟fsr检测strike */
-    // gait_data_->ground_strike_ = (!gait_data_->prev_heel_contact_state_ && !gait_data_->prev_toe_contact_state_) && ((gait_data_->heel_contact_state_ && !gait_data_->prev_heel_contact_state_) || (gait_data_->toe_contact_state_ && !gait_data_->prev_toe_contact_state_));
-    gait_data_->ground_strike_ = (gait_data_->heel_contact_state_ && !gait_data_->prev_heel_contact_state_);
-    gait_data_->toe_off_       = (!gait_data_->toe_contact_state_ && gait_data_->prev_toe_contact_state_);
-    gait_data_->toe_strike_    = (gait_data_->toe_contact_state_ && !gait_data_->prev_toe_contact_state_);
+    /** #HACK 暂时只用足跟fsr检测strike */
+    // gait_data_.ground_strike_ = (!gait_data_.prev_heel_contact_state_ && !gait_data_.prev_toe_contact_state_) && ((gait_data_.heel_contact_state_ && !gait_data_.prev_heel_contact_state_) || (gait_data_.toe_contact_state_ && !gait_data_.prev_toe_contact_state_));
+    gait_data_.ground_strike_ = (gait_data_.heel_contact_state_ && !gait_data_.prev_heel_contact_state_);
+    gait_data_.toe_off_       = (!gait_data_.toe_contact_state_ && gait_data_.prev_toe_contact_state_);
+    gait_data_.toe_strike_    = (gait_data_.toe_contact_state_ && !gait_data_.prev_toe_contact_state_);
 
-    gait_data_->prev_heel_contact_state_ = gait_data_->heel_contact_state_;
-    gait_data_->prev_toe_contact_state_  = gait_data_->toe_contact_state_;
+    gait_data_.prev_heel_contact_state_ = gait_data_.heel_contact_state_;
+    gait_data_.prev_toe_contact_state_  = gait_data_.toe_contact_state_;
 
     /** 3. 步态事件时间戳与历史窗口更新 */
     uint32_t now_ms = GetSysTimeMs();
-    if (gait_data_->ground_strike_)
+    if (gait_data_.ground_strike_)
     {
-        gait_data_->prev_ground_strike_timestamp_ = gait_data_->ground_strike_timestamp_;
-        gait_data_->ground_strike_timestamp_ = now_ms;
-        gait_data_->expected_step_duration_ = UpdateExpectedDuration();
+        gait_data_.prev_ground_strike_timestamp_ = gait_data_.ground_strike_timestamp_;
+        gait_data_.ground_strike_timestamp_ = now_ms;
+        gait_data_.expected_step_duration_ = UpdateExpectedDuration();
     }
-    if (gait_data_->toe_strike_)
+    if (gait_data_.toe_strike_)
     {
-        gait_data_->prev_toe_strike_timestamp_ = gait_data_->toe_strike_timestamp_;
-        gait_data_->toe_strike_timestamp_ = now_ms;
-        gait_data_->expected_swing_duration_ = UpdateExpectedSwingDuration();
+        gait_data_.prev_toe_strike_timestamp_ = gait_data_.toe_strike_timestamp_;
+        gait_data_.toe_strike_timestamp_ = now_ms;
+        gait_data_.expected_swing_duration_ = UpdateExpectedSwingDuration();
     }
-    if (gait_data_->toe_off_)
+    if (gait_data_.toe_off_)
     {
-        gait_data_->prev_toe_off_timestamp_ = gait_data_->toe_off_timestamp_;
-        gait_data_->toe_off_timestamp_ = now_ms;
-        gait_data_->expected_stance_duration_ = UpdateExpectedStanceDuration();
+        gait_data_.prev_toe_off_timestamp_ = gait_data_.toe_off_timestamp_;
+        gait_data_.toe_off_timestamp_ = now_ms;
+        gait_data_.expected_stance_duration_ = UpdateExpectedStanceDuration();
     }
 
     // 4. 百分比解算 (Phase Calculation)
-    if (gait_data_->expected_step_duration_ > 0.0f)
+    if (gait_data_.expected_step_duration_ > 0.0f)
     {
-        gait_data_->percent_gait_ = 100.0f * ((static_cast<float>(now_ms) - static_cast<float>(gait_data_->ground_strike_timestamp_)) / gait_data_->expected_step_duration_);
-        if (gait_data_->percent_gait_ > 100.0f)
-            gait_data_->percent_gait_ = 100.0f;
+        gait_data_.percent_gait_ = 100.0f * ((static_cast<float>(now_ms) - static_cast<float>(gait_data_.ground_strike_timestamp_)) / gait_data_.expected_step_duration_);
+        if (gait_data_.percent_gait_ > 100.0f)
+            gait_data_.percent_gait_ = 100.0f;
     }
 
-    if (gait_data_->expected_stance_duration_ > 0.0f)
+    if (gait_data_.expected_stance_duration_ > 0.0f)
     {
-        gait_data_->percent_stance_ = 100.0f * ((static_cast<float>(now_ms) - static_cast<float>(gait_data_->toe_strike_timestamp_)) / gait_data_->expected_stance_duration_);
-        if (gait_data_->percent_stance_ > 100.0f)
-            gait_data_->percent_stance_ = 100.0f;
+        gait_data_.percent_stance_ = 100.0f * ((static_cast<float>(now_ms) - static_cast<float>(gait_data_.toe_strike_timestamp_)) / gait_data_.expected_stance_duration_);
+        if (gait_data_.percent_stance_ > 100.0f)
+            gait_data_.percent_stance_ = 100.0f;
     }
-    if (!gait_data_->heel_contact_state_ && !gait_data_->toe_contact_state_)
+    if (!gait_data_.heel_contact_state_ && !gait_data_.toe_contact_state_)
     {
-        gait_data_->percent_stance_ = 0.0f;
+        gait_data_.percent_stance_ = 0.0f;
     }
 
-    if (gait_data_->expected_swing_duration_ > 0.0f)
+    if (gait_data_.expected_swing_duration_ > 0.0f)
     {
-        gait_data_->percent_swing_ = 100.0f * ((static_cast<float>(now_ms) - static_cast<float>(gait_data_->toe_off_timestamp_)) / gait_data_->expected_swing_duration_);
-        if (gait_data_->percent_swing_ > 100.0f)
-            gait_data_->percent_swing_ = 100.0f;
+        gait_data_.percent_swing_ = 100.0f * ((static_cast<float>(now_ms) - static_cast<float>(gait_data_.toe_off_timestamp_)) / gait_data_.expected_swing_duration_);
+        if (gait_data_.percent_swing_ > 100.0f)
+            gait_data_.percent_swing_ = 100.0f;
     }
-    if (gait_data_->heel_contact_state_ || gait_data_->toe_contact_state_)
+    if (gait_data_.heel_contact_state_ || gait_data_.toe_contact_state_)
     {
-        gait_data_->percent_swing_ = 0.0f;
+        gait_data_.percent_swing_ = 0.0f;
     }
 }
 
 
 void FsrGaitEstimator::Reset()
 {
-    if (!gait_data_) return;
-    
     for (int i = 0; i < FsrGaitData::kNumStepsAvg; i++)
     {
-        gait_data_->step_times_[i] = 0;
-        gait_data_->stance_times_[i] = 0;
-        gait_data_->swing_times_[i] = 0;
+        gait_data_.step_times_[i] = 0;
+        gait_data_.stance_times_[i] = 0;
+        gait_data_.swing_times_[i] = 0;
     }
 }
 
@@ -623,38 +610,38 @@ void FsrGaitEstimator::ProcessSensorUpdate(FsrSensorData& sensor)
 
 float FsrGaitEstimator::UpdateExpectedDuration()
 {
-    uint32_t step_time = gait_data_->ground_strike_timestamp_ - gait_data_->prev_ground_strike_timestamp_;
-    float expected_step_duration = gait_data_->expected_step_duration_;
+    uint32_t step_time = gait_data_.ground_strike_timestamp_ - gait_data_.prev_ground_strike_timestamp_;
+    float expected_step_duration = gait_data_.expected_step_duration_;
 
-    if (0 == gait_data_->prev_ground_strike_timestamp_) return expected_step_duration;
+    if (0 == gait_data_.prev_ground_strike_timestamp_) return expected_step_duration;
 
     uint8_t num_uninitialized = 0;
     for (int i = 0; i < FsrGaitData::kNumStepsAvg; i++)
     {
-        num_uninitialized += (gait_data_->step_times_[i] == 0);
+        num_uninitialized += (gait_data_.step_times_[i] == 0);
     }
 
-    uint32_t* max_val = std::max_element(gait_data_->step_times_, gait_data_->step_times_ + FsrGaitData::kNumStepsAvg);
-    uint32_t* min_val = std::min_element(gait_data_->step_times_, gait_data_->step_times_ + FsrGaitData::kNumStepsAvg);
+    uint32_t *max_val = std::max_element(gait_data_.step_times_, gait_data_.step_times_ + FsrGaitData::kNumStepsAvg);
+    uint32_t *min_val = std::min_element(gait_data_.step_times_, gait_data_.step_times_ + FsrGaitData::kNumStepsAvg);
 
     if  (num_uninitialized > 0)
     {
         for (int i = (FsrGaitData::kNumStepsAvg - 1); i>0; i--)
         {
-            gait_data_->step_times_[i] = gait_data_->step_times_[i-1];
+            gait_data_.step_times_[i] = gait_data_.step_times_[i-1];
         }
-        gait_data_->step_times_[0] = step_time;
+        gait_data_.step_times_[0] = step_time;
     }
 
-    else if ((step_time <= (gait_data_->expected_duration_window_upper_coeff_ * *max_val)) && (step_time >= (gait_data_->expected_duration_window_lower_coeff_ * *min_val)))
+    else if ((step_time <= (gait_data_.expected_duration_window_upper_coeff_ * *max_val)) && (step_time >= (gait_data_.expected_duration_window_lower_coeff_ * *min_val)))
     {
         int sum_step_times = step_time;
         for (int i = (FsrGaitData::kNumStepsAvg - 1); i>0; i--)
         {
-            sum_step_times += gait_data_->step_times_[i-1];
-            gait_data_->step_times_[i] = gait_data_->step_times_[i-1];
+            sum_step_times += gait_data_.step_times_[i-1];
+            gait_data_.step_times_[i] = gait_data_.step_times_[i-1];
         }
-        gait_data_->step_times_[0] = step_time;
+        gait_data_.step_times_[0] = step_time;
 
         expected_step_duration = sum_step_times / FsrGaitData::kNumStepsAvg;
     }
@@ -663,37 +650,37 @@ float FsrGaitEstimator::UpdateExpectedDuration()
 
 float FsrGaitEstimator::UpdateExpectedStanceDuration()
 {
-    uint32_t stance_time = gait_data_->toe_off_timestamp_ - gait_data_->toe_strike_timestamp_;
-    float expected_stance_duration = gait_data_->expected_stance_duration_;
+    uint32_t stance_time = gait_data_.toe_off_timestamp_ - gait_data_.toe_strike_timestamp_;
+    float expected_stance_duration = gait_data_.expected_stance_duration_;
 
-    if (0 == gait_data_->prev_toe_strike_timestamp_) return expected_stance_duration;
+    if (0 == gait_data_.prev_toe_strike_timestamp_) return expected_stance_duration;
     
     uint8_t num_uninitialized = 0;
     for (int i = 0; i < FsrGaitData::kNumStepsAvg; i++)
     {
-        num_uninitialized += (gait_data_->stance_times_[i] == 0);
+        num_uninitialized += (gait_data_.stance_times_[i] == 0);
     }
 
-    uint32_t* max_val = std::max_element(gait_data_->stance_times_, gait_data_->stance_times_ + FsrGaitData::kNumStepsAvg);
-    uint32_t* min_val = std::min_element(gait_data_->stance_times_, gait_data_->stance_times_ + FsrGaitData::kNumStepsAvg);
+    uint32_t *max_val = std::max_element(gait_data_.stance_times_, gait_data_.stance_times_ + FsrGaitData::kNumStepsAvg);
+    uint32_t *min_val = std::min_element(gait_data_.stance_times_, gait_data_.stance_times_ + FsrGaitData::kNumStepsAvg);
 
     if (num_uninitialized > 0)
     {
         for (int i = (FsrGaitData::kNumStepsAvg - 1); i>0; i--)
         {
-            gait_data_->stance_times_[i] = gait_data_->stance_times_[i - 1];
+            gait_data_.stance_times_[i] = gait_data_.stance_times_[i - 1];
         }
-        gait_data_->stance_times_[0] = stance_time;
+        gait_data_.stance_times_[0] = stance_time;
     }
-    else if ((stance_time <= (gait_data_->expected_duration_window_upper_coeff_ * *max_val)) && (stance_time >= (gait_data_->expected_duration_window_lower_coeff_ * *min_val)))
+    else if ((stance_time <= (gait_data_.expected_duration_window_upper_coeff_ * *max_val)) && (stance_time >= (gait_data_.expected_duration_window_lower_coeff_ * *min_val)))
     {
         int sum_stance_times = stance_time;
         for (int i = (FsrGaitData::kNumStepsAvg - 1); i>0; i--)
         {
-            sum_stance_times += gait_data_->stance_times_[i - 1];
-            gait_data_->stance_times_[i] = gait_data_->stance_times_[i - 1];
+            sum_stance_times += gait_data_.stance_times_[i - 1];
+            gait_data_.stance_times_[i] = gait_data_.stance_times_[i - 1];
         }
-        gait_data_->stance_times_[0] = stance_time;
+        gait_data_.stance_times_[0] = stance_time;
 
         expected_stance_duration = sum_stance_times / FsrGaitData::kNumStepsAvg;
     }
@@ -702,10 +689,10 @@ float FsrGaitEstimator::UpdateExpectedStanceDuration()
 
 float FsrGaitEstimator::UpdateExpectedSwingDuration()
 {
-    uint32_t swing_time = gait_data_->toe_strike_timestamp_ - gait_data_->toe_off_timestamp_;
-    float expected_swing_duration = gait_data_->expected_swing_duration_;
+    uint32_t swing_time = gait_data_.toe_strike_timestamp_ - gait_data_.toe_off_timestamp_;
+    float expected_swing_duration = gait_data_.expected_swing_duration_;
 
-    if (0 == gait_data_->prev_toe_off_timestamp_)
+    if (0 == gait_data_.prev_toe_off_timestamp_)
     {
         return expected_swing_duration;
     }
@@ -714,29 +701,29 @@ float FsrGaitEstimator::UpdateExpectedSwingDuration()
 
     for (int i = 0; i < FsrGaitData::kNumStepsAvg; i++)
     {
-        num_uninitialized += (gait_data_->swing_times_[i] == 0);
+        num_uninitialized += (gait_data_.swing_times_[i] == 0);
     }
 
-    uint32_t* max_val = std::max_element(gait_data_->swing_times_, gait_data_->swing_times_ + FsrGaitData::kNumStepsAvg);
-    uint32_t* min_val = std::min_element(gait_data_->swing_times_, gait_data_->swing_times_ + FsrGaitData::kNumStepsAvg);
+    uint32_t *max_val = std::max_element(gait_data_.swing_times_, gait_data_.swing_times_ + FsrGaitData::kNumStepsAvg);
+    uint32_t *min_val = std::min_element(gait_data_.swing_times_, gait_data_.swing_times_ + FsrGaitData::kNumStepsAvg);
 
     if (num_uninitialized > 0)
     {
         for (int i = (FsrGaitData::kNumStepsAvg - 1); i>0; i--)
         {
-            gait_data_->swing_times_[i] = gait_data_->swing_times_[i - 1];
+            gait_data_.swing_times_[i] = gait_data_.swing_times_[i - 1];
         }
-        gait_data_->swing_times_[0] = swing_time;
+        gait_data_.swing_times_[0] = swing_time;
     }
-    else if ((swing_time <= (gait_data_->expected_duration_window_upper_coeff_ * *max_val)) && (swing_time >= (gait_data_->expected_duration_window_lower_coeff_ * *min_val)))
+    else if ((swing_time <= (gait_data_.expected_duration_window_upper_coeff_ * *max_val)) && (swing_time >= (gait_data_.expected_duration_window_lower_coeff_ * *min_val)))
     {
         int sum_swing_times = swing_time;
         for (int i = (FsrGaitData::kNumStepsAvg - 1); i>0; i--)
         {
-            sum_swing_times += gait_data_->swing_times_[i - 1];
-            gait_data_->swing_times_[i] = gait_data_->swing_times_[i - 1];
+            sum_swing_times += gait_data_.swing_times_[i - 1];
+            gait_data_.swing_times_[i] = gait_data_.swing_times_[i - 1];
         }
-        gait_data_->swing_times_[0] = swing_time;
+        gait_data_.swing_times_[0] = swing_time;
 
         expected_swing_duration = sum_swing_times / FsrGaitData::kNumStepsAvg;
     }
@@ -746,21 +733,25 @@ float FsrGaitEstimator::UpdateExpectedSwingDuration()
 
 void Side::Calibrate()
 {
+    /** #TODO 实现关节的标定 */
     hip_joint_.Calibrate();
     knee_joint_.Calibrate();
     ankle_joint_.Calibrate();
+    knee_sea_joint_.Calibrate();
+
     fsr_gait_estimator_.Calibrate();
 
-    ps_->is_calibrated_ =
-        (ps_->fsr_gait_data_.is_calibrated_ || !ps_->fsr_gait_data_.is_used_) &&
-        (ps_->hip_joint_.is_calibrated_ || !ps_->hip_joint_.is_used_) &&
-        (ps_->knee_joint_.is_calibrated_ || !ps_->knee_joint_.is_used_) &&
-        (ps_->ankle_joint_.is_calibrated_ || !ps_->ankle_joint_.is_used_);
+    ps_.is_calibrated_ =
+        (ps_.fsr_gait_data_.is_calibrated_ || !ps_.fsr_gait_data_.is_used_) &&
+        (ps_.hip_joint_.is_calibrated_ || !ps_.hip_joint_.is_used_) &&
+        (ps_.knee_joint_.is_calibrated_ || !ps_.knee_joint_.is_used_) &&
+        (ps_.ankle_joint_.is_calibrated_ || !ps_.ankle_joint_.is_used_) &&
+        (ps_.knee_sea_joint_.is_calibrated_ || !ps_.knee_sea_joint_.is_used_); /** 在初始化时已令is_calibrated_ = true */
 }
 
 void Side::Read()
 {
-    if (!ps_->is_used_)
+    if (!ps_.is_used_)
     {
         return;
     }
@@ -768,11 +759,13 @@ void Side::Read()
     hip_joint_.Read();
     knee_joint_.Read();
     ankle_joint_.Read();
+
+    knee_sea_joint_.Read();
 }
 
 bool Side::IsMotorConnect()
 {
-    if (!ps_->is_used_)
+    if (!ps_.is_used_)
     {
         return true;
     }
@@ -786,19 +779,22 @@ bool Side::IsMotorConnect()
 
 void Side::Standby()
 {
-    if (!ps_->is_used_)
+    if (!ps_.is_used_)
     {
         return;
     }
 
+    /** #TODO Standby的策略需要优化 */
     hip_joint_.Standby();
     knee_joint_.Standby();
     ankle_joint_.Standby();
+
+    knee_sea_joint_.Standby();
 }
 
 void Side::Assist()
 {
-    if (!ps_->is_used_)
+    if (!ps_.is_used_)
     {
         return;
     }
@@ -806,13 +802,17 @@ void Side::Assist()
     hip_joint_.Assist();
     knee_joint_.Assist();
     ankle_joint_.Assist();
+
+    knee_sea_joint_.Assist();
 }
 
 void Side::Shutdown()
 {
-    hip_joint_.motor_.DisableMotor();
-    knee_joint_.motor_.DisableMotor(0);
-    ankle_joint_.motor_.DisableMotor(0);
+    hip_joint_.Shutdown();
+    knee_joint_.Shutdown();
+    ankle_joint_.Shutdown();
+    knee_sea_joint_.Shutdown();
+
     fsr_gait_estimator_.Reset();
 }
 
@@ -834,12 +834,12 @@ void AdaptiveOscillator::Update()
     }
 
     /**< 示教信号 */
-    float left_angle_rad = pe_->left_side_.knee_joint_.pos_rad_;
-    float right_angle_rad = pe_->right_side_.knee_joint_.pos_rad_;
-    float left_velocity = pe_->left_side_.knee_joint_.vel_radps_;
-    float right_velocity = pe_->right_side_.knee_joint_.vel_radps_;
-    bool left_heel_contact_state = pe_->left_side_.fsr_gait_data_.heel_contact_state_;
-    bool right_heel_contact_state = pe_->right_side_.fsr_gait_data_.heel_contact_state_;
+    float left_angle_rad = pe_.left_side_.knee_joint_.pos_rad_;
+    float right_angle_rad = pe_.right_side_.knee_joint_.pos_rad_;
+    float left_velocity = pe_.left_side_.knee_joint_.vel_radps_;
+    float right_velocity = pe_.right_side_.knee_joint_.vel_radps_;
+    bool left_heel_contact_state = pe_.left_side_.fsr_gait_data_.heel_contact_state_;
+    bool right_heel_contact_state = pe_.right_side_.fsr_gait_data_.heel_contact_state_;
     float x_teach = left_angle_rad - right_angle_rad;
 
     /**< 检测步态事件 */
@@ -904,7 +904,7 @@ void AdaptiveOscillator::Update()
         {
             alpha = 1.0f - expf(- delta_ts_s / AdaptiveOscillator::kEmaTauS);
         }
-        if ((pe_->ao_data_.ao_left_event_cnt_ >= 1) != (pe_->ao_data_.ao_right_event_cnt_ >= 1))
+        if ((pe_.ao_data_.left_event_cnt_ >= 1) != (pe_.ao_data_.right_event_cnt_ >= 1))
         {
             vel_energy_ema_ = vel_energy;
         }
@@ -920,7 +920,7 @@ void AdaptiveOscillator::Update()
         }
     }
     bool is_stopping_low_energy = (low_energy_duration_us > kMaxStoppingDurationUs);
-
+    
     static uint64_t both_heel_contact_duration_us = 0;
     if (true) // just for debug
     {
@@ -937,15 +937,16 @@ void AdaptiveOscillator::Update()
     // bool is_stopping = is_stopping_low_energy || is_stopping_both_heel_contact; // 低能量太容易触发
     bool is_stopping = is_stopping_both_heel_contact;
 
-    bool is_long_time_no_event = ((tnow_sys_us - left_tk_sys_us_ > AdaptiveOscillator::kMaxTstrideUs) && (pe_->ao_data_.ao_left_event_cnt_ >= 1)) || ((tnow_sys_us - right_tk_sys_us_ > AdaptiveOscillator::kMaxTstrideUs) && (pe_->ao_data_.ao_right_event_cnt_ >= 1));
+    bool is_long_time_no_event = ((tnow_sys_us - left_tk_sys_us_ > AdaptiveOscillator::kMaxTstrideUs) && (pe_.ao_data_.left_event_cnt_ >= 1)) || ((tnow_sys_us - right_tk_sys_us_ > AdaptiveOscillator::kMaxTstrideUs) && (pe_.ao_data_.right_event_cnt_ >= 1));
 
-    bool is_two_side_event_cnt_abnormal = (pe_->ao_data_.ao_left_event_cnt_ > pe_->ao_data_.ao_right_event_cnt_ + 1) || (pe_->ao_data_.ao_right_event_cnt_ > pe_->ao_data_.ao_left_event_cnt_ + 1);
+
+    bool is_two_side_event_cnt_abnormal = (pe_.ao_data_.left_event_cnt_ > pe_.ao_data_.right_event_cnt_ + 1) || (pe_.ao_data_.right_event_cnt_ > pe_.ao_data_.left_event_cnt_ + 1);
 
 
     if (is_long_time_no_event || is_two_side_event_cnt_abnormal || is_stopping)
     {
-        pe_->ao_data_.ao_left_event_cnt_ = 0;
-        pe_->ao_data_.ao_right_event_cnt_ = 0;
+        pe_.ao_data_.left_event_cnt_ = 0;
+        pe_.ao_data_.right_event_cnt_ = 0;
         left_angle_pos_peak_prev = 0.45f;
         right_angle_pos_peak_prev = 0.45f;
     }
@@ -965,18 +966,18 @@ void AdaptiveOscillator::Update()
 
     if (is_left_event)
     {
-        if ((pe_->ao_data_.ao_left_event_cnt_ < 1) || ((pe_->ao_data_.ao_left_event_cnt_ >= 1) && (tnow_sys_us - left_tk_sys_us_ > kMinTstrideUs)))
+        if ((pe_.ao_data_.left_event_cnt_ < 1) || ((pe_.ao_data_.left_event_cnt_ >= 1) && (tnow_sys_us - left_tk_sys_us_ > kMinTstrideUs)))
         {
-            pe_->ao_data_.ao_left_event_cnt_ ++;
+            pe_.ao_data_.left_event_cnt_ ++;
             left_tk_sys_us_ = tnow_sys_us;
             is_left_event = true;
         }
     }
     if (is_right_event)
     {
-        if ((pe_->ao_data_.ao_right_event_cnt_ < 1) || ((pe_->ao_data_.ao_right_event_cnt_ >= 1) && (tnow_sys_us - right_tk_sys_us_ > kMinTstrideUs)))
+        if ((pe_.ao_data_.right_event_cnt_ < 1) || ((pe_.ao_data_.right_event_cnt_ >= 1) && (tnow_sys_us - right_tk_sys_us_ > kMinTstrideUs)))
         {
-            pe_->ao_data_.ao_right_event_cnt_ ++;
+            pe_.ao_data_.right_event_cnt_ ++;
             right_tk_sys_us_ = tnow_sys_us;
             is_right_event = true;
         }
@@ -987,7 +988,7 @@ void AdaptiveOscillator::Update()
     float dot_omega = 0;
     float dot_alpha[kNumAOs] = {0};
     float dot_alpha0 = 0;
-    if (pe_->ao_data_.ao_left_event_cnt_ >= 1 || pe_->ao_data_.ao_right_event_cnt_ >= 1)
+    if (pe_.ao_data_.left_event_cnt_ >= 1 || pe_.ao_data_.right_event_cnt_ >= 1)
     {
         hat_x_ = alpha0_;
         float A = fabsf(alpha0_);
@@ -1054,8 +1055,8 @@ void AdaptiveOscillator::Update()
     float dot_left_phi_e = left_epsilon_phi_tk_ * omega_ * expf(-omega_ * (tnow_sys_s - left_tk_s));
     left_phi_e_ += dot_left_phi_e * delta_ts_s;
 
-    pe_->ao_data_.left_phi_comp_rad_ = fmodf(phi_n + left_phi_e_, _2PI);
-    if (pe_->ao_data_.left_phi_comp_rad_ < 0.0f) pe_->ao_data_.left_phi_comp_rad_ += _2PI;
+    pe_.ao_data_.left_phi_comp_rad_ = fmodf(phi_n + left_phi_e_, _2PI);
+    if (pe_.ao_data_.left_phi_comp_rad_ < 0.0f) pe_.ao_data_.left_phi_comp_rad_ += _2PI;
 
     if (is_right_event)
     {
@@ -1076,8 +1077,8 @@ void AdaptiveOscillator::Update()
     float right_tk_s = right_tk_sys_us_ * 1e-6f;
     float dot_right_phi_e = right_epsilon_phi_tk_ * omega_ * expf(-omega_ * (tnow_sys_s - right_tk_s));
     right_phi_e_ += dot_right_phi_e * delta_ts_s;
-    pe_->ao_data_.right_phi_comp_rad_ = fmodf(phi_n + right_phi_e_, _2PI);
-    if (pe_->ao_data_.right_phi_comp_rad_ < 0.0f) pe_->ao_data_.right_phi_comp_rad_ += _2PI;
+    pe_.ao_data_.right_phi_comp_rad_ = fmodf(phi_n + right_phi_e_, _2PI);
+    if (pe_.ao_data_.right_phi_comp_rad_ < 0.0f) pe_.ao_data_.right_phi_comp_rad_ += _2PI;
 
     tprev_sys_us_ = tnow_sys_us;
 }
@@ -1090,8 +1091,8 @@ void AdaptiveOscillator::Reset()
 
     hat_x_ = 0.0f;
     omega_ = _2PI * 1.0f;
-    phi_[kNumAOs] = {0.0f};
-    alpha_[kNumAOs] = {0.2f};
+    arm_fill_f32(0.0f, phi_, kNumAOs);
+    arm_fill_f32(0.2f, alpha_, kNumAOs);
     alpha0_ = 0.0f;
     vel_energy_ema_ = 0.0f;
 
@@ -1103,50 +1104,62 @@ void AdaptiveOscillator::Reset()
     right_phi_e_ = 0.0f;
 }
 
-
-ExoShell::ExoShell(Exo* ptr_exo) : ptr_exo_(ptr_exo)
+ExoShell::ExoShell(UART_HandleTypeDef &huart, Exo &exo) : Shell(huart), exo_(exo)
 {
     RegisterCommand("setled", CmdWrapper<ExoShell, &ExoShell::OnCmdSetLed>, this);
     RegisterCommand("vofa", CmdWrapper<ExoShell, &ExoShell::OnCmdVofaTelemetry>, this);
     RegisterCommand("setlocomode", CmdWrapper<ExoShell, &ExoShell::OnCmdSetLocoMode>, this);
 
-    RegisterCommand("estop", [](void* ctx, int, char**) {
-        static_cast<ExoShell*>(ctx)->ptr_exo_->pe_->pending_events_ |= ExoData::SysEvent::kEmergencyStop;
-        static_cast<ExoShell*>(ctx)->SendString("!!! EMERGENCY STOP !!!\r\n");
-    }, this);
-    RegisterCommand("wakeup", [](void* ctx, int, char**) {
-        static_cast<ExoShell*>(ctx)->ptr_exo_->pe_->pending_events_ |= ExoData::SysEvent::kWakeup;
-        static_cast<ExoShell*>(ctx)->SendString("-> Wakeup Requested\r\n");
-    }, this);
-    RegisterCommand("calib", [](void* ctx, int, char**) {
-        static_cast<ExoShell*>(ctx)->ptr_exo_->pe_->pending_events_ |= ExoData::SysEvent::kStartCalibrate;
-        static_cast<ExoShell*>(ctx)->SendString("-> Calibration Requested\r\n");
-    }, this);
-    RegisterCommand("start", [](void* ctx, int, char**) {
-        static_cast<ExoShell*>(ctx)->ptr_exo_->pe_->pending_events_ |= ExoData::SysEvent::kStartAssist;
-        static_cast<ExoShell*>(ctx)->SendString("-> Start Assist Requested\r\n");
-    }, this);
-    RegisterCommand("stop", [](void* ctx, int, char**) {
-        static_cast<ExoShell*>(ctx)->ptr_exo_->pe_->pending_events_ |= ExoData::SysEvent::kStopAssist;
-        static_cast<ExoShell*>(ctx)->SendString("-> Stop Assist Requested\r\n");
-    }, this);
-    RegisterCommand("sleep", [](void* ctx, int, char**) {
-        static_cast<ExoShell*>(ctx)->ptr_exo_->pe_->pending_events_ |= ExoData::SysEvent::kEnterSleep;
-        static_cast<ExoShell*>(ctx)->Printf("-> Sleep Requested\r\n");
-    }, this);
-    RegisterCommand("clearfaults", [](void* ctx, int, char**) {
-        static_cast<ExoShell*>(ctx)->ptr_exo_->pe_->pending_events_ |= ExoData::SysEvent::kClearFaults;
-        static_cast<ExoShell*>(ctx)->Printf("-> Clear Faults Requested\r\n");
+    RegisterCommand("estop", [](void *ctx, int, char **) {
+        auto& shell = *static_cast<ExoShell *>(ctx);
+        shell.exo_.pe_.pending_events_ |= ExoData::SysEvent::kEmergencyStop;
+        shell.SendString("!!! EMERGENCY STOP !!!\r\n");
     }, this);
 
-    RegisterRwParam("weight", &ptr_exo_->pe_->user_weight_kg_);
-    RegisterRwParam("la_on",  &ptr_exo_->left_side_.ankle_joint_.assistance_start_phase_percent_);
-    RegisterRwParam("ra_on",  &ptr_exo_->right_side_.ankle_joint_.assistance_start_phase_percent_);
-    RegisterRwParam("la_off", &ptr_exo_->left_side_.ankle_joint_.assistance_end_phase_percent_);
-    RegisterRwParam("ra_off", &ptr_exo_->right_side_.ankle_joint_.assistance_end_phase_percent_);
+    RegisterCommand("wakeup", [](void *ctx, int, char **) {
+        auto& shell = *static_cast<ExoShell *>(ctx);
+        shell.exo_.pe_.pending_events_ |= ExoData::SysEvent::kWakeup;
+        shell.SendString("-> Wakeup Requested\r\n");
+    }, this);
+
+    RegisterCommand("calib", [](void *ctx, int, char **) {
+        auto& shell = *static_cast<ExoShell *>(ctx);
+        shell.exo_.pe_.pending_events_ |= ExoData::SysEvent::kStartCalibrate;
+        shell.SendString("-> Calibration Requested\r\n");
+    }, this);
+
+    RegisterCommand("start", [](void *ctx, int, char **) {
+        auto& shell = *static_cast<ExoShell *>(ctx);
+        shell.exo_.pe_.pending_events_ |= ExoData::SysEvent::kStartAssist;
+        shell.SendString("-> Start Assist Requested\r\n");
+    }, this);
+
+    RegisterCommand("stop", [](void *ctx, int, char **) {
+        auto& shell = *static_cast<ExoShell *>(ctx);
+        shell.exo_.pe_.pending_events_ |= ExoData::SysEvent::kStopAssist;
+        shell.SendString("-> Stop Assist Requested\r\n");
+    }, this);
+
+    RegisterCommand("sleep", [](void *ctx, int, char **) {
+        auto& shell = *static_cast<ExoShell *>(ctx);
+        shell.exo_.pe_.pending_events_ |= ExoData::SysEvent::kEnterSleep;
+        shell.Printf("-> Sleep Requested\r\n");
+    }, this);
+
+    RegisterCommand("clearfaults", [](void *ctx, int, char **) {
+        auto& shell = *static_cast<ExoShell *>(ctx);
+        shell.exo_.pe_.pending_events_ |= ExoData::SysEvent::kClearFaults;
+        shell.Printf("-> Clear Faults Requested\r\n");
+    }, this);
+
+    RegisterRwParam("weight", &exo_.pe_.user_weight_kg_);
+    RegisterRwParam("la_on",  &exo_.left_side_.ankle_joint_.assistance_start_phase_percent_);
+    RegisterRwParam("la_off", &exo_.left_side_.ankle_joint_.assistance_end_phase_percent_);
+    RegisterRwParam("la_pre", &exo_.left_side_.ankle_joint_.cable_pre_tensioned_position_);
+    RegisterRwParam("la_ten", &exo_.left_side_.ankle_joint_.cable_tensioned_position_);
 }
 
-void ExoShell::OnCmdSetLed(int argc, char** argv)
+void ExoShell::OnCmdSetLed(int argc, char **argv)
 {
     if (argc < 2 || argv == nullptr || argv[1] == nullptr)
     {
@@ -1155,11 +1168,11 @@ void ExoShell::OnCmdSetLed(int argc, char** argv)
     }
 
     int state = GetInt(argc, argv, 1);
-    ptr_exo_->state_led_.UpdateColorBDMA(state);
+    exo_.state_led_.UpdateColorBDMA(state);
     SendString("LED state set!\r\n");
 }
 
-void ExoShell::OnCmdVofaTelemetry(int argc, char** argv)
+void ExoShell::OnCmdVofaTelemetry(int argc, char **argv)
 {
     if (argc < 2 || argv == nullptr || argv[1] == nullptr)
     {
@@ -1169,11 +1182,11 @@ void ExoShell::OnCmdVofaTelemetry(int argc, char** argv)
 
     if (strcmp(argv[1], "on") == 0)
     {
-        ptr_exo_->pe_->telemetry_config_.enable = true;
+        exo_.pe_.telemetry_config_.enable = true;
     }
     else if (strcmp(argv[1], "off") == 0)
     {
-        ptr_exo_->pe_->telemetry_config_.enable = false;
+        exo_.pe_.telemetry_config_.enable = false;
         SendString("VOFA telemetry: OFF\r\n");
     }
     else
@@ -1194,19 +1207,19 @@ void ExoShell::OnCmdSetLocoMode(int argc, char **argv)
     const char *mode_str = GetString(argc, argv, 1, "");
     if (strcmp(mode_str, "auto") == 0)
     {
-        ptr_exo_->pe_->override_usr_.enable_locomode_override = false;
+        exo_.pe_.override_usr_.enable_locomode_override = false;
         SendString("Mode Autonomous\r\n");
     }
     else if (strcmp(mode_str, "walking") == 0)
     {
-        ptr_exo_->pe_->override_usr_.enable_locomode_override = true;
-        ptr_exo_->pe_->override_usr_.forced_locomode = ExoData::LocoMode::kWalking;
+        exo_.pe_.override_usr_.enable_locomode_override = true;
+        exo_.pe_.override_usr_.forced_locomode = ExoData::LocoMode::kWalking;
         SendString("Mode set to: kWalking\r\n");
     }
     else if (strcmp(mode_str, "sit2stand") == 0)
     {
-        ptr_exo_->pe_->override_usr_.enable_locomode_override = true;
-        ptr_exo_->pe_->override_usr_.forced_locomode = ExoData::LocoMode::kSitToStand;
+        exo_.pe_.override_usr_.enable_locomode_override = true;
+        exo_.pe_.override_usr_.forced_locomode = ExoData::LocoMode::kSitToStand;
         SendString("Mode set to: kSitToStand\r\n");
     }
     else
@@ -1221,18 +1234,19 @@ void Exo::Initialize()
     ResetCalibrationFlags();
 
     /** 调试: 选择助力的关节 */
-    pe_->left_side_.hip_joint_.is_used_ = false;
-    pe_->right_side_.hip_joint_.is_used_ = false;
-    pe_->left_side_.knee_joint_.is_used_ = false;
-    pe_->right_side_.knee_joint_.is_used_ = false;
-    pe_->left_side_.ankle_joint_.is_used_ = true;
-    pe_->right_side_.ankle_joint_.is_used_ = true;
+    pe_.left_side_.hip_joint_.is_used_ = false;
+    pe_.right_side_.hip_joint_.is_used_ = false;
+    pe_.left_side_.knee_joint_.is_used_ = false;
+    pe_.right_side_.knee_joint_.is_used_ = false;
+    pe_.left_side_.ankle_joint_.is_used_ = true;
+    pe_.right_side_.ankle_joint_.is_used_ = true;
+
+    pe_.left_side_.knee_sea_joint_.is_used_ = false;
+    pe_.right_side_.knee_sea_joint_.is_used_ = false;
 
     /** 调试: 髋关节参数. */
 
     /** 调试: 膝关节参数. */
-    left_side_.knee_joint_.force_profile_generator_.stiffness_ = 0.5f;
-    right_side_.knee_joint_.force_profile_generator_.stiffness_ = 0.5f;
 
     /** 调试: 踝关节参数 */
     left_side_.ankle_joint_.cable_released_position_ = 0.2f;
@@ -1251,72 +1265,68 @@ void Exo::Initialize()
 void Exo::Run()
 {
     Read();
-    if (pe_->state_ != ExoData::State::kSleep)
+    if (pe_.state_ != ExoData::State::kSleep)
     {
         CheckSystemHealth();   /** 重新计算error_code_ */
     }
 
     /** 根据系统当前状态过滤无效事件 */
-    pe_->pending_events_ &= AllowedEventsForState(pe_->state_);
+    pe_.pending_events_ &= AllowedEventsForState(pe_.state_);
 
     /** 紧急关停事件判断 */
-    const bool is_estop_triggered = ((pe_->pending_events_ & ExoData::SysEvent::kEmergencyStop) != 0);
+    const bool is_estop_triggered = ((pe_.pending_events_ & ExoData::SysEvent::kEmergencyStop) != 0);
     if (is_estop_triggered)
     {
         ClearNonCriticalEvents(pe_);
-        pe_->state_ = ExoData::State::kSleep;
+        pe_.state_ = ExoData::State::kSleep;
         Shutdown();
-        return;   /** 没清estop事件, 永久锁死 */
+        return;      /** 不清除estop事件标志, 并永久锁死(因为无法再处理命令) */
     }
 
-    const bool battery_low = ((pe_->error_code_ & ExoData::Error::kBatteryLow) != 0);
-    const bool has_any_fault = (pe_->error_code_ != ExoData::Error::kNone);
+    const bool battery_low = ((pe_.error_code_ & ExoData::Error::kBatteryLow) != 0);
+    const bool has_any_fault = (pe_.error_code_ != ExoData::Error::kNone);
     if (battery_low)
     {
-        if (pe_->state_ != ExoData::State::kFaultLowBattery)
+        if (pe_.state_ != ExoData::State::kFaultLowBattery)
         {
             ClearNonCriticalEvents(pe_);
-            pe_->state_ = ExoData::State::kFaultLowBattery;
+            pe_.state_ = ExoData::State::kFaultLowBattery;
         }
     }
     else if (has_any_fault)
     {
-        if (pe_->state_ != ExoData::State::kFaultSystem)
+        if (pe_.state_ != ExoData::State::kFaultSystem)
         {
             ClearNonCriticalEvents(pe_);
-            pe_->state_ = ExoData::State::kFaultSystem;
+            pe_.state_ = ExoData::State::kFaultSystem;
         }
     }
-    else if ((pe_->pending_events_ & ExoData::SysEvent::kEnterSleep) != 0)
+    else if ((pe_.pending_events_ & ExoData::SysEvent::kEnterSleep) != 0)
     {
-        pe_->pending_events_ &= ~ExoData::SysEvent::kEnterSleep;
-        pe_->state_ = ExoData::State::kSleep;
+        pe_.pending_events_ &= ~ExoData::SysEvent::kEnterSleep;
+        pe_.state_ = ExoData::State::kSleep;
         Shutdown();
     }
 
-    switch (pe_->state_)
+    switch (pe_.state_)
     {
     case ExoData::State::kSleep:
-        if (((pe_->pending_events_ & ExoData::SysEvent::kWakeup) != 0) && pe_->battery_voltage_ >= 19.5f)
+        if (((pe_.pending_events_ & ExoData::SysEvent::kWakeup) != 0) && pe_.battery_voltage_ >= 19.5f)
         {
-            pe_->pending_events_ &= ~ExoData::SysEvent::kWakeup;
-            pe_->state_ = ExoData::State::kWaitMotorComm;
+            pe_.pending_events_ &= ~ExoData::SysEvent::kWakeup;
+            pe_.state_ = ExoData::State::kWaitMotorComm;
         }
         break;
 
     case ExoData::State::kWaitMotorComm:
-        // if (IsMotorConnect())
-        if (true)
+        if (IsMotorConnect())
         {
-            /** 无需要用户命令启动 */
-            // pe_->state_ = ExoData::State::kCalibrating;
-            // ResetCalibrationFlags();
-            /** 需要用户命令启动 */
-            if ((pe_->pending_events_ & ExoData::SysEvent::kStartCalibrate) != 0)
+            /** 需要用户命令启动calib */
+            if ((pe_.pending_events_ & ExoData::SysEvent::kStartCalibrate) != 0)
             {
-                pe_->pending_events_ &= ~ExoData::SysEvent::kStartCalibrate;
+                pe_.pending_events_ &= ~ExoData::SysEvent::kStartCalibrate;
                 ResetCalibrationFlags();
-                pe_->state_ = ExoData::State::kCalibrating;
+                pe_.state_ = ExoData::State::kCalibrating;
             }
         }
         break;
@@ -1326,37 +1336,37 @@ void Exo::Run()
         Standby();   /** 为了获取电机/关节状态, 保持通信 */
         if (IsCalibrateDone())
         {
-            pe_->state_ = ExoData::State::kReady;
+            pe_.state_ = ExoData::State::kReady;
         }
         break;
     case ExoData::State::kReady:
         Estimate();
         Standby();   /** 为了获取电机/关节状态, 保持通信 */
         
-        if ((pe_->pending_events_ & ExoData::SysEvent::kStartCalibrate) != 0)
+        if ((pe_.pending_events_ & ExoData::SysEvent::kStartCalibrate) != 0)
         {
-            pe_->pending_events_ &= ~ExoData::SysEvent::kStartCalibrate;
+            pe_.pending_events_ &= ~ExoData::SysEvent::kStartCalibrate;
             ResetCalibrationFlags();
-            pe_->state_ = ExoData::State::kCalibrating;
+            pe_.state_ = ExoData::State::kCalibrating;
         }
-        else if ((pe_->pending_events_ & ExoData::SysEvent::kStartAssist) != 0)
+        else if ((pe_.pending_events_ & ExoData::SysEvent::kStartAssist) != 0)
         {
-            pe_->pending_events_ &= ~ExoData::SysEvent::kStartAssist;
-            pe_->state_ = ExoData::State::kAssisting;
+            pe_.pending_events_ &= ~ExoData::SysEvent::kStartAssist;
+            pe_.state_ = ExoData::State::kAssisting;
         }
         break;
     case ExoData::State::kAssisting:
         Estimate();
-        if ((pe_->pending_events_ & ExoData::SysEvent::kStopAssist) != 0)
+        if ((pe_.pending_events_ & ExoData::SysEvent::kStopAssist) != 0)  /** 用户停止辅助 */
         {
-            pe_->pending_events_ &= ~ExoData::SysEvent::kStopAssist;
+            pe_.pending_events_ &= ~ExoData::SysEvent::kStopAssist;
             Standby();
-            pe_->state_ = ExoData::State::kReady;
+            pe_.state_ = ExoData::State::kReady;
         }
-        // else if (IsStaticMotionIntent())
+        // else if (IsStaticMotionIntent())     /** 自动检测停止辅助 */  
         // {
         //     Standby();
-        //     pe_->state_ = ExoData::State::kReady;
+        //     pe_.state_ = ExoData::State::kReady;
         // }
         else
         {
@@ -1365,18 +1375,18 @@ void Exo::Run()
         break;
     case ExoData::State::kFaultLowBattery:
         Shutdown();
-        if (pe_->battery_voltage_ >= 19.5f)
+        if (pe_.battery_voltage_ >= 19.5f)
         {
-            pe_->state_ = ExoData::State::kSleep;
+            pe_.state_ = ExoData::State::kSleep;
         }
         break;
     case ExoData::State::kFaultSystem:
         Shutdown();
-        if (((pe_->pending_events_ & ExoData::SysEvent::kClearFaults) != 0))
+        if (((pe_.pending_events_ & ExoData::SysEvent::kClearFaults) != 0)) /** 当前阶段最好不用ClearFaults命令 */  
         {
-            pe_->pending_events_ &= ~ExoData::SysEvent::kClearFaults;
-            pe_->error_code_ = ExoData::Error::kNone;
-            pe_->state_ = ExoData::State::kSleep;
+            pe_.pending_events_ &= ~ExoData::SysEvent::kClearFaults;
+            pe_.error_code_ = ExoData::Error::kNone;
+            pe_.state_ = ExoData::State::kSleep;
         }
         break;
     default:
@@ -1385,16 +1395,16 @@ void Exo::Run()
 
     if (shell_.ProcessPendingCommand())
     {
-        pe_->telemetry_config_.pause_until_ms = GetSysTimeMs() + 3000U;
+        pe_.telemetry_config_.pause_until_ms = GetSysTimeMs() + 3000U;
     }
 
     const uint32_t now_ms = GetSysTimeMs();
-    if (pe_->telemetry_config_.enable && (now_ms >= pe_->telemetry_config_.pause_until_ms))
+    if (pe_.telemetry_config_.enable && (now_ms >= pe_.telemetry_config_.pause_until_ms))
     {
         VofaSendTelemetry();
     }
 
-    state_led_.UpdateColorBDMA(static_cast<uint8_t>(pe_->state_));
+    state_led_.UpdateColorBDMA(static_cast<uint8_t>(pe_.state_));
 }
 
 void Exo::Calibrate()
@@ -1405,57 +1415,59 @@ void Exo::Calibrate()
 
 void Exo::ResetCalibrationFlags()
 {
-    pe_->left_side_.is_calibrated_ = false;
-    // pe_->left_side_.hip_joint_.is_calibrated_ = false; /** no need */
-    // pe_->left_side_.knee_joint_.is_calibrated_ = false;
-    // pe_->left_side_.ankle_joint_.is_calibrated_ = false;
-    pe_->left_side_.fsr_gait_data_.is_calibrated_ = false;
-    pe_->left_side_.fsr_gait_data_.do_calibration_heel_fsr_ = true;
-    pe_->left_side_.fsr_gait_data_.do_calibration_toe_fsr_ = false;
-    pe_->left_side_.fsr_gait_data_.do_calibration_refinement_heel_fsr_ = true;
-    pe_->left_side_.fsr_gait_data_.do_calibration_refinement_toe_fsr_ = false;
+    pe_.left_side_.is_calibrated_ = false;
+    // pe_.left_side_.hip_joint_.is_calibrated_ = false; /** no need */
+    // pe_.left_side_.knee_joint_.is_calibrated_ = false;
+    // pe_.left_side_.ankle_joint_.is_calibrated_ = false;
+    pe_.left_side_.fsr_gait_data_.is_calibrated_ = false;
+    pe_.left_side_.fsr_gait_data_.do_calibration_heel_fsr_ = true;
+    pe_.left_side_.fsr_gait_data_.do_calibration_toe_fsr_ = false;
+    pe_.left_side_.fsr_gait_data_.do_calibration_refinement_heel_fsr_ = true;
+    pe_.left_side_.fsr_gait_data_.do_calibration_refinement_toe_fsr_ = false;
 
-    pe_->right_side_.is_calibrated_ = false;
-    // pe_->right_side_.hip_joint_.is_calibrated_ = false;
-    // pe_->right_side_.knee_joint_.is_calibrated_ = false;
-    // pe_->right_side_.ankle_joint_.is_calibrated_ = false;
-    pe_->right_side_.fsr_gait_data_.is_calibrated_ = false;
-    pe_->right_side_.fsr_gait_data_.do_calibration_heel_fsr_ = true;
-    pe_->right_side_.fsr_gait_data_.do_calibration_toe_fsr_ = false;
-    pe_->right_side_.fsr_gait_data_.do_calibration_refinement_heel_fsr_ = true;
-    pe_->right_side_.fsr_gait_data_.do_calibration_refinement_toe_fsr_ = false;
+    pe_.right_side_.is_calibrated_ = false;
+    // pe_.right_side_.hip_joint_.is_calibrated_ = false;
+    // pe_.right_side_.knee_joint_.is_calibrated_ = false;
+    // pe_.right_side_.ankle_joint_.is_calibrated_ = false;
+    pe_.right_side_.fsr_gait_data_.is_calibrated_ = false;
+    pe_.right_side_.fsr_gait_data_.do_calibration_heel_fsr_ = true;
+    pe_.right_side_.fsr_gait_data_.do_calibration_toe_fsr_ = false;
+    pe_.right_side_.fsr_gait_data_.do_calibration_refinement_heel_fsr_ = true;
+    pe_.right_side_.fsr_gait_data_.do_calibration_refinement_toe_fsr_ = false;
 }
 
 void Exo::Read()
 {
-    pe_->battery_voltage_ = (g_adc_data[0] * 3.3f / 65535) * 11;
-    pe_->battery_voltage_ = 24; /** just for debug */
+    pe_.battery_voltage_ = (g_adc_data[0] * 3.3f / 65535) * 11;
+    // pe_.battery_voltage_ = 24; /** #HACK 强制令电压读数大于唤醒电压 */
     left_side_.Read();
     right_side_.Read();
 }
 
 void Exo::Estimate()
 {
-
     /** high level control */
-    /** #TODO: 目前先由用户强制选择运动模式 */
-    if (pe_->override_usr_.enable_locomode_override)
+    // if (pe_.override_usr_.enable_locomode_override)
+    if (true)  /** #HACK: 目前先使用用户选择的运动模式 */
     {
-        pe_->loco_mode_ = pe_->override_usr_.forced_locomode;
+        pe_.loco_mode_ = pe_.override_usr_.forced_locomode;
     }
     else
     {
-        pe_->loco_mode_ = pe_->override_usr_.forced_locomode;
+        /** #TODO: 在此执行自动运动意图检测, 并得到pe_.loco_mode_ */
     }
 
     /** Mid level control */
-    /** #TODO: 目前先调试平地步行辅助 */
-    if (pe_->loco_mode_ == ExoData::LocoMode::kWalking)
+    if (pe_.loco_mode_ == ExoData::LocoMode::kWalking)
     {
         /**  */
         left_side_.fsr_gait_estimator_.Update();
         right_side_.fsr_gait_estimator_.Update();
-        adaptive_oscilator_.Update();
+        ao_.Update();
+    }
+    else
+    {
+        /** #TODO: 进行其他活动的中层控制; 如检测坐立转换时刻 */
     }
 }
 
@@ -1479,47 +1491,46 @@ void Exo::Shutdown()
 
 void Exo::CheckSystemHealth()
 {
-    pe_->error_code_ = ExoData::Error::kNone;
+    pe_.error_code_ = ExoData::Error::kNone;
 
-    if (pe_->battery_voltage_ < 19.0f)
+    if (pe_.battery_voltage_ < 19.0f)
     {
-        pe_->error_code_ |= ExoData::Error::kBatteryLow;
+        pe_.error_code_ |= ExoData::Error::kBatteryLow;
     }
     if (left_side_.knee_joint_.motor_.error_code_ != 0 || left_side_.knee_joint_.motor_.fault_code_ != 0)
     {
-        pe_->error_code_ |= ExoData::Error::kLeftKneeFault;
+        pe_.error_code_ |= ExoData::Error::kLeftKneeFault;
     }
     if (right_side_.knee_joint_.motor_.error_code_ != 0 || right_side_.knee_joint_.motor_.fault_code_ != 0)
     {
-        pe_->error_code_ |= ExoData::Error::kRightKneeFault;
+        pe_.error_code_ |= ExoData::Error::kRightKneeFault;
     }
     if (left_side_.ankle_joint_.motor_.error_code_ != 0 || left_side_.ankle_joint_.motor_.fault_code_ != 0)
     {
-        pe_->error_code_ |= ExoData::Error::kLeftAnkleFault;
+        pe_.error_code_ |= ExoData::Error::kLeftAnkleFault;
     }
     if (right_side_.ankle_joint_.motor_.error_code_ != 0 || right_side_.ankle_joint_.motor_.fault_code_ != 0)
     {
-        pe_->error_code_ |= ExoData::Error::kRightAnkleFault;
+        pe_.error_code_ |= ExoData::Error::kRightAnkleFault;
     }
 }
 
-/** #HACK: 发送想记录的数据 */
 void Exo::VofaSendTelemetry()
 {
     static uint32_t loop_cnt = 0;
     shell_.SetVofaJustFloatData(0, loop_cnt++);
-    shell_.SetVofaJustFloatData(1, pe_->left_side_.fsr_gait_data_.heel_.raw_reading);
-    shell_.SetVofaJustFloatData(2, pe_->left_side_.fsr_gait_data_.toe_.raw_reading);
-    shell_.SetVofaJustFloatData(3, pe_->right_side_.fsr_gait_data_.heel_.raw_reading);
-    shell_.SetVofaJustFloatData(4, pe_->right_side_.fsr_gait_data_.toe_.raw_reading);
-    shell_.SetVofaJustFloatData(5, pe_->left_side_.fsr_gait_data_.percent_gait_ / 100.0f);
-    shell_.SetVofaJustFloatData(6, pe_->right_side_.fsr_gait_data_.percent_gait_ / 100.0f);
+    shell_.SetVofaJustFloatData(1, pe_.left_side_.fsr_gait_data_.heel_.raw_reading);
+    shell_.SetVofaJustFloatData(2, pe_.left_side_.fsr_gait_data_.toe_.raw_reading);
+    shell_.SetVofaJustFloatData(3, pe_.right_side_.fsr_gait_data_.heel_.raw_reading);
+    shell_.SetVofaJustFloatData(4, pe_.right_side_.fsr_gait_data_.toe_.raw_reading);
+    shell_.SetVofaJustFloatData(5, pe_.left_side_.fsr_gait_data_.percent_gait_ / 100.0f);
+    shell_.SetVofaJustFloatData(6, pe_.right_side_.fsr_gait_data_.percent_gait_ / 100.0f);
     shell_.SetVofaJustFloatData(7, left_side_.ankle_joint_.motor_.position_ref_);
     shell_.SetVofaJustFloatData(8, right_side_.ankle_joint_.motor_.position_ref_);
     shell_.SetVofaJustFloatData(9, left_side_.ankle_joint_.motor_.position_);
     shell_.SetVofaJustFloatData(10, right_side_.ankle_joint_.motor_.position_);
-    shell_.SetVofaJustFloatData(11, pe_->left_side_.ankle_joint_.plantarflexion_force_N_);
-    shell_.SetVofaJustFloatData(12, pe_->right_side_.ankle_joint_.plantarflexion_force_N_);
+    shell_.SetVofaJustFloatData(11, pe_.left_side_.ankle_joint_.plantarflexion_force_N_);
+    shell_.SetVofaJustFloatData(12, pe_.right_side_.ankle_joint_.plantarflexion_force_N_);
     shell_.SendVofaJustFloatFrame(13);
 }
 
@@ -1530,12 +1541,12 @@ bool Exo::IsMotorConnect()
 
 bool Exo::IsCalibrateDone()
 {
-    return pe_->left_side_.is_calibrated_ && pe_->right_side_.is_calibrated_;
+    return pe_.left_side_.is_calibrated_ && pe_.right_side_.is_calibrated_;
 }
 
 bool Exo::IsStopWalking()
 {
-    return pe_->ao_data_.ao_left_event_cnt_ <= 1 && pe_->ao_data_.ao_right_event_cnt_ <= 1;
+    return pe_.ao_data_.left_event_cnt_ <= 1 && pe_.ao_data_.right_event_cnt_ <= 1;
 }
 
 ExoData::SysEvent Exo::AllowedEventsForState(ExoData::State state)
@@ -1567,6 +1578,9 @@ ExoData::SysEvent Exo::AllowedEventsForState(ExoData::State state)
         allowed_events |= ExoData::SysEvent::kEnterSleep;
         break;
 
+    case ExoData::State::kFaultLowBattery:
+        break;
+
     case ExoData::State::kFaultSystem:
         allowed_events |= ExoData::SysEvent::kClearFaults;
         break;
@@ -1577,71 +1591,77 @@ ExoData::SysEvent Exo::AllowedEventsForState(ExoData::State state)
     return allowed_events;
 }
 
-void Exo::SensorUartRxCallback(uint8_t *data, uint16_t data_size)
+void Exo::SensorUartRxCallback(const uint8_t *data, uint16_t data_size)
 {
     if (data_size == sizeof(exo_sensor_packet_t))
     {
         exo_sensor_packet_t *packet = (exo_sensor_packet_t *)data;
-        left_side_.ps_->fsr_gait_data_.heel_.raw_reading = 3.4f - packet->left_foot.mV_heel / 1000.0f;
-        left_side_.ps_->fsr_gait_data_.toe_.raw_reading = 3.4f - packet->left_foot.mV_toe / 1000.0f;
-        left_side_.ps_->ankle_joint_.plantarflexion_force_N_ = packet->left_foot.mV_pull;
-        left_side_.ps_->foot_imu_.quat_i_ = packet->left_foot.quatI;
-        left_side_.ps_->foot_imu_.quat_j_ = packet->left_foot.quatJ;
-        left_side_.ps_->foot_imu_.quat_k_ = packet->left_foot.quatK;
-        left_side_.ps_->foot_imu_.quat_real_ = packet->left_foot.quatReal;
+        left_side_.ps_.fsr_gait_data_.heel_.raw_reading = 3.4f - packet->left_foot.mV_heel / 1000.0f;
+        left_side_.ps_.fsr_gait_data_.toe_.raw_reading = 3.4f - packet->left_foot.mV_toe / 1000.0f;
+        left_side_.ps_.ankle_joint_.plantarflexion_force_N_ = packet->left_foot.mV_pull;
+        left_side_.ps_.foot_imu_.quat_i_ = packet->left_foot.quatI;
+        left_side_.ps_.foot_imu_.quat_j_ = packet->left_foot.quatJ;
+        left_side_.ps_.foot_imu_.quat_k_ = packet->left_foot.quatK;
+        left_side_.ps_.foot_imu_.quat_real_ = packet->left_foot.quatReal;
         
-        right_side_.ps_->fsr_gait_data_.heel_.raw_reading = 3.4f - packet->right_foot.mV_heel / 1000.0f;
-        right_side_.ps_->fsr_gait_data_.toe_.raw_reading = 3.4f - packet->right_foot.mV_toe / 1000.0f;
-        right_side_.ps_->ankle_joint_.plantarflexion_force_N_ = packet->right_foot.mV_pull;
-        right_side_.ps_->foot_imu_.quat_i_ = packet->right_foot.quatI;
-        right_side_.ps_->foot_imu_.quat_j_ = packet->right_foot.quatJ;
-        right_side_.ps_->foot_imu_.quat_k_ = packet->right_foot.quatK;
-        right_side_.ps_->foot_imu_.quat_real_ = packet->right_foot.quatReal;
+        right_side_.ps_.fsr_gait_data_.heel_.raw_reading = 3.4f - packet->right_foot.mV_heel / 1000.0f;
+        right_side_.ps_.fsr_gait_data_.toe_.raw_reading = 3.4f - packet->right_foot.mV_toe / 1000.0f;
+        right_side_.ps_.ankle_joint_.plantarflexion_force_N_ = packet->right_foot.mV_pull;
+        right_side_.ps_.foot_imu_.quat_i_ = packet->right_foot.quatI;
+        right_side_.ps_.foot_imu_.quat_j_ = packet->right_foot.quatJ;
+        right_side_.ps_.foot_imu_.quat_k_ = packet->right_foot.quatK;
+        right_side_.ps_.foot_imu_.quat_real_ = packet->right_foot.quatReal;
     }
 }
 
-void Exo::UsrBLEUartRxCallback(uint8_t *data, uint16_t data_size)
+void Exo::UsrShellUartRxCallback(const uint8_t *data, uint16_t data_size)
 {
     shell_.PushPendingCommand(data, data_size);
 }
 
-void Exo::CanRxCallback(uint32_t can_id, uint8_t *data)
+
+void Exo::CanRxCallback(FDCAN_HandleTypeDef *hfdcan, uint32_t can_id, const uint8_t *data)
 {
+    if (hfdcan != &hw_.motor_can) return;
+
+    /** 默认下面全部电机都使用fdcan1 */
     left_side_.hip_joint_.motor_.CanRxCallBack(can_id, data);
     right_side_.hip_joint_.motor_.CanRxCallBack(can_id, data);
     left_side_.knee_joint_.motor_.CanRxCallBack(can_id, data);
     right_side_.knee_joint_.motor_.CanRxCallBack(can_id, data);
     left_side_.ankle_joint_.motor_.CanRxCallBack(can_id, data);
     right_side_.ankle_joint_.motor_.CanRxCallBack(can_id, data);
+    dji_esc_hub_.CanRxCallBack(can_id, data); 
 }
 
-
-
+void Exo::UartRxCallback(UART_HandleTypeDef *huart, const uint8_t *data, uint16_t data_size)
+{
+    if (huart == &hw_.sensor_uart)
+    {
+        SensorUartRxCallback(data, data_size);
+    }
+    else if (huart == &hw_.shell_uart)
+    {
+        UsrShellUartRxCallback(data, data_size);
+    }
+    else
+    {
+        left_side_.knee_sea_joint_.mag_encoder_.UartRxCallback(huart, data, data_size);
+        right_side_.knee_sea_joint_.mag_encoder_.UartRxCallback(huart, data, data_size);
+    }
+}
 
 /* ------------------ C wrapper ------------------- */
-void CallExoCanRxCallBack(Exo *ptr_exo, uint32_t can_ext_id, uint8_t *rx_data)
+void CallExoCanRxCallBack(Exo *exo, FDCAN_HandleTypeDef *hfdcan, uint32_t can_ext_id, const uint8_t *rx_data)
 {
-    if (ptr_exo == nullptr || rx_data == nullptr)
-    {
-        return;
-    }
-    ptr_exo->CanRxCallback(can_ext_id, rx_data);
+    if (exo == nullptr || rx_data == nullptr) return;
+
+    exo->CanRxCallback(hfdcan, can_ext_id, rx_data);
 }
 
-void CallExoSensorUartRxCallback(Exo *ptr_exo, uint8_t *data, uint16_t data_size)
+void CallExoUartRxCallback(Exo *exo, UART_HandleTypeDef *huart, uint8_t *data, uint16_t data_size)
 {
-    if (ptr_exo == nullptr || data == nullptr)
-    {
-        return;
-    }
-    ptr_exo->SensorUartRxCallback(data, data_size);
-}
+    if (exo == nullptr || huart == nullptr || data == nullptr) return;
 
-void CallExoUsrBLEUartRxCallback(Exo *ptr_exo, uint8_t *data, uint16_t data_size)
-{
-    if (ptr_exo == nullptr || data == nullptr)
-    {
-        return;
-    }
-    ptr_exo->UsrBLEUartRxCallback(data, data_size);
+    exo->UartRxCallback(huart, data, data_size);
 }

@@ -20,17 +20,20 @@
 #include "disturbance_observer.hpp"
 #include "shell.hpp"
 #include "utils.h"
-
+#include "mag_encoder.hpp"
+#include "dji_esc.hpp"
 
 /** Forward declarations */
 class IMUData;
 class JointData;
 class AnkleData;
+class KneeSeaJointData;
 class FsrGaitData;
 class SideData;
 class ExoData;
 class AnkleJoint;
 class KneeJoint;
+class KneeSeaJoint;
 class FsrGaitEstimator;
 class AdaptiveOscillator;
 class Side;
@@ -88,6 +91,7 @@ public:
 
     bool is_left_ = true;
     bool is_used_ = false;
+    bool is_calibrated_ = true;
 };
 
 class JointData
@@ -100,9 +104,9 @@ public:
     float vel_radps_ = 0.0f;
     float tor_Nm_ = 0.0f;
 
-    bool is_left_ = true;
+    bool is_left_;
     bool is_used_ = false;
-    bool is_calibrated_ = true; /** no need to calibrate */
+    bool is_calibrated_ = true;    /** no need to calibrate */
 };
 
 class AnkleData : public JointData
@@ -112,6 +116,23 @@ public:
     virtual ~AnkleData() = default;
 
     float plantarflexion_force_N_ = 0.0f; 
+};
+
+class KneeSeaJointData : public JointData
+{
+public:
+    explicit KneeSeaJointData(bool is_left = true) : JointData(is_left) {}
+    virtual ~KneeSeaJointData() = default;
+
+    float pos_slider_mm_ = 0.0f;
+    float pos_slider_offset_mm_ = 0.0f;
+    float pos_linear_encoder_mm_ = 0.0f;
+    float pos_linear_encoder_offset_mm_ = 0.0f;
+    float vel_slider_mmps_ = 0.0f;
+    float vel_linear_encoder_mmps_ = 0.0f;
+    float force_spring_N_ = 0.0f;
+    float screw_lead_mm_ = 5.0f;
+    float spring_stiffness_Npmm_ = 100.0f;
 };
 
 struct FsrSensorData
@@ -190,7 +211,7 @@ public:
     bool do_calibration_heel_fsr_ = false;
     bool do_calibration_refinement_heel_fsr_ = false;
 
-    bool is_left_ = true;
+    bool is_left_;
     bool is_used_ = true;
     bool is_calibrated_ = false;
 };
@@ -201,8 +222,8 @@ public:
     explicit AoData() = default;
     virtual ~AoData() = default;
 
-    uint32_t ao_left_event_cnt_ = 0;
-    uint32_t ao_right_event_cnt_ = 0;
+    uint32_t left_event_cnt_ = 0;
+    uint32_t right_event_cnt_ = 0;
     float left_phi_comp_rad_ = 0.0f;
     float right_phi_comp_rad_ = 0.0f;
 
@@ -212,16 +233,17 @@ public:
 class SideData
 {
 public:
-    explicit SideData(bool is_left = true) : hip_joint_(is_left), knee_joint_(is_left), ankle_joint_(is_left), fsr_gait_data_(is_left), foot_imu_(is_left), is_left_(is_left) {}
+    explicit SideData(bool is_left = true) : hip_joint_(is_left), knee_joint_(is_left), knee_sea_joint_(is_left), ankle_joint_(is_left), fsr_gait_data_(is_left), foot_imu_(is_left), is_left_(is_left) {}
     virtual ~SideData() = default;
 
     JointData hip_joint_;
     JointData knee_joint_;
+    KneeSeaJointData knee_sea_joint_;
     AnkleData ankle_joint_;
     FsrGaitData fsr_gait_data_;
     ImuData foot_imu_;
 
-    bool is_left_ = true;
+    bool is_left_;
     bool is_used_ = true;
     bool is_calibrated_ = false;
 };
@@ -324,11 +346,30 @@ public:
 DEFINE_ENUM_CLASS_BITWISE_OPS(ExoData::Error)
 DEFINE_ENUM_CLASS_BITWISE_OPS(ExoData::SysEvent)
 
+struct ExoHardware
+{
+    FDCAN_HandleTypeDef &motor_can;           // 用于大疆/Robstride电机通信
+    UART_HandleTypeDef &sensor_uart;          // 用于接收无线传感器数据
+    UART_HandleTypeDef &shell_uart;           // 用于命令行 Shell / VOFA 调试
+    UART_HandleTypeDef &left_mag_encoder_uart;    // 用于磁栅尺编码器1
+    UART_HandleTypeDef &right_mag_encoder_uart;   // 用于磁栅尺编码器2
+};
+
+enum ExoJointCanID : uint8_t
+{
+    kLeftHip = 0x01,
+    kRightHip = 0x02,
+    kLeftKnee = 0x2A,
+    kRightKnee = 0x55,
+    kLeftAnkle = 0x2A,
+    kRightAnkle = 0x55,
+};
+
 class AnkleJoint
 {
 public:
-    AnkleJoint(bool is_left, ExoData *exo_data);
-    ~AnkleJoint() = default;
+    explicit AnkleJoint(bool is_left, ExoData &pe)  : pe_(pe), ps_(is_left ? pe_.left_side_ : pe_.right_side_), pj_(is_left ? pe_.left_side_.ankle_joint_ : pe_.right_side_.ankle_joint_), force_profile_generator_(), motor_(is_left ? ExoJointCanID::kLeftAnkle : ExoJointCanID::kRightAnkle), pid_(0.2f, 0.4f, 0.0f, -1.0f, 10.0f) {}
+    virtual ~AnkleJoint() = default;
     void Calibrate();
     void Read();
     bool IsMotorConnect();
@@ -336,9 +377,9 @@ public:
     void Standby();
     void Assist();
 
-    ExoData *pe_;
-    SideData *ps_;
-    JointData *pj_;
+    ExoData &pe_;
+    SideData &ps_;
+    JointData &pj_;
     AnkleForceProfileGenerator force_profile_generator_;
     Robstride motor_;
     PIDController pid_;
@@ -353,8 +394,8 @@ public:
 class KneeJoint
 {
 public:
-    KneeJoint(bool is_left, ExoData *exo_data);
-    ~KneeJoint() = default;
+    explicit KneeJoint(bool is_left, ExoData &pe) : pe_(pe), ps_(is_left ? pe.left_side_ : pe.right_side_), pj_(is_left ? pe.left_side_.knee_joint_ : pe.right_side_.knee_joint_), force_profile_generator_(), motor_(is_left ? ExoJointCanID::kLeftKnee : ExoJointCanID::kRightKnee), disturbance_observer_(5.0f) {}
+    virtual ~KneeJoint() = default;
     void Calibrate();
     void Read();
     bool IsMotorConnect();
@@ -362,37 +403,56 @@ public:
     void Standby();
     void Assist();
 
-    ExoData *pe_;
-    SideData *ps_;
-    JointData *pj_;
+    ExoData &pe_;
+    SideData &ps_;
+    JointData &pj_;
     KneeForceProfileGenerator force_profile_generator_;
     Robstride motor_;
     DisturbanceObserver disturbance_observer_;
     void ImpedanceControl();
 };
 
-class HipJoint
+class KneeSeaJoint
 {
 public:
-    HipJoint(bool is_left, ExoData *exo_data);
-    ~HipJoint() = default;
+    explicit KneeSeaJoint(bool is_left,  ExoData &pe, DjiEscHub &dji_esc_hub, UART_HandleTypeDef &huart) : pe_(pe), ps_(is_left ? pe.left_side_ : pe.right_side_), pj_(is_left ? pe.left_side_.knee_sea_joint_ : pe.right_side_.knee_sea_joint_), motor_(dji_esc_hub, is_left ? DjiEsc::EscId::kId1 : DjiEsc::EscId::kId2), mag_encoder_(huart) {}
+    virtual ~KneeSeaJoint() = default;
+
     void Calibrate();
     void Read();
     bool IsMotorConnect();
     void Shutdown();
     void Standby();
     void Assist();
-    ExoData *pe_;
-    SideData *ps_;
-    JointData *pj_;
-    // HipForceProfileGenerator force_profile_generator_;
+
+    ExoData &pe_;
+    SideData &ps_;
+    KneeSeaJointData &pj_;
+    DjiEsc motor_;   /** 固定: 膝左id=1, 膝右id=2 */
+    MagEncoder mag_encoder_;
+};
+
+class HipJoint
+{
+public:
+    explicit HipJoint(bool is_left, ExoData &pe) : pe_(pe), ps_(is_left ? pe_.left_side_ : pe_.right_side_), pj_(is_left ? pe_.left_side_.hip_joint_ : pe_.right_side_.hip_joint_), motor_(is_left ? ExoJointCanID::kLeftHip : ExoJointCanID::kRightHip) {}
+    virtual ~HipJoint() = default;
+    void Calibrate();
+    void Read();
+    bool IsMotorConnect();
+    void Shutdown();
+    void Standby();
+    void Assist();
+    ExoData &pe_;
+    SideData &ps_;
+    JointData &pj_;
     DMMotor motor_;
 };
 
 class FsrGaitEstimator
 {
 public:
-    explicit FsrGaitEstimator(FsrGaitData* gait_data) : gait_data_(gait_data) {}
+    explicit FsrGaitEstimator(FsrGaitData &gait_data) : gait_data_(gait_data) {}
     virtual ~FsrGaitEstimator() = default;
 
     void Calibrate();
@@ -417,38 +477,19 @@ private:
         }
     }
 
-    FsrGaitData* gait_data_ = nullptr;
-};
-
-class Side
-{
-public:
-    explicit Side(bool is_left, ExoData *pe) : pe_(pe), ps_(is_left ? &pe_->left_side_ : &pe_->right_side_), hip_joint_(is_left, pe), knee_joint_(is_left, pe), ankle_joint_(is_left, pe), fsr_gait_estimator_(&ps_->fsr_gait_data_) {}
-    virtual ~Side() = default;
-    void Calibrate();
-    void Read();
-    void Assist();
-    bool IsMotorConnect();
-    void Standby();
-    void Shutdown();
-    ExoData *pe_;
-    SideData *ps_;
-    HipJoint hip_joint_;
-    KneeJoint knee_joint_;
-    AnkleJoint ankle_joint_;
-    FsrGaitEstimator fsr_gait_estimator_;
+    FsrGaitData &gait_data_;
 };
 
 class AdaptiveOscillator
 {
 public:
-    explicit AdaptiveOscillator(ExoData *pe) : pe_(pe) {}
+    explicit AdaptiveOscillator(ExoData &pe) : pe_(pe) {}
     virtual ~AdaptiveOscillator() = default;
 
     void Update();
     void Reset();
 private:
-    ExoData *pe_ = nullptr;
+    ExoData &pe_;
 
     static constexpr uint64_t kMaxTstrideUs = 3.0 * 1000000;
     static constexpr uint64_t kMinTstrideUs = 0.1 * 1000000;
@@ -481,25 +522,46 @@ private:
     float right_phi_e_ = 0.0f;
 };
 
+class Side
+{
+public:
+    explicit Side(bool is_left, ExoData &pe, DjiEscHub &dji_esc_hub, UART_HandleTypeDef &huart) : pe_(pe), ps_(is_left ? pe_.left_side_ : pe_.right_side_), hip_joint_(is_left, pe), knee_joint_(is_left, pe), knee_sea_joint_(is_left, pe, dji_esc_hub, huart), ankle_joint_(is_left, pe), fsr_gait_estimator_(ps_.fsr_gait_data_) {}
+    virtual ~Side() = default;
+    void Calibrate();
+    void Read();
+    void Assist();
+    bool IsMotorConnect();
+    void Standby();
+    void Shutdown();
+
+    ExoData &pe_;
+    SideData &ps_;
+    HipJoint hip_joint_;
+    KneeJoint knee_joint_;
+    KneeSeaJoint knee_sea_joint_;
+    AnkleJoint ankle_joint_;
+    FsrGaitEstimator fsr_gait_estimator_;
+};
+
 class ExoShell : public Shell
 {
 public:
-    explicit ExoShell(Exo* ptr_exo);
+    explicit ExoShell(UART_HandleTypeDef &huart, Exo &exo);
     ~ExoShell() = default;
 
-    void OnCmdSetLed(int argc, char** argv);
-    void OnCmdVofaTelemetry(int argc, char** argv);
-    void OnCmdSetLocoMode(int argc, char** argv);
+    void OnCmdSetLed(int argc, char **argv);
+    void OnCmdVofaTelemetry(int argc, char **argv);
+    void OnCmdSetLocoMode(int argc, char **argv);
 private:
-    Exo* ptr_exo_;
+    Exo &exo_;
 };
-
 
 class Exo
 {
 public:
-    explicit Exo(ExoData *pe) : pe_(pe), adaptive_oscilator_(pe), left_side_(true, pe), right_side_(false, pe), shell_(this) {}
+    explicit Exo(ExoData &pe, ExoHardware &hw) : pe_(pe), hw_(hw), dji_esc_hub_(hw.motor_can), ao_(pe), left_side_(true, pe, dji_esc_hub_, hw.left_mag_encoder_uart), right_side_(false, pe, dji_esc_hub_, hw.right_mag_encoder_uart), shell_(hw.shell_uart, *this) {}
     ~Exo() = default;
+
     void Initialize();
     void Run();
     void Read();
@@ -516,34 +578,36 @@ public:
     bool IsCalibrateDone();
     bool IsStopWalking();
 
-    void CanRxCallback(uint32_t can_id, uint8_t *data);
-    void SensorUartRxCallback(uint8_t *data, uint16_t data_size);
-    void UsrBLEUartRxCallback(uint8_t *data, uint16_t data_size);
+    void CanRxCallback(FDCAN_HandleTypeDef *hfdcan, uint32_t can_id, const uint8_t *data);
+    void UartRxCallback(UART_HandleTypeDef *huart, const uint8_t *data, uint16_t data_size);
 
-    ExoData *pe_;
-    AdaptiveOscillator adaptive_oscilator_;
+    ExoData &pe_;
+    ExoHardware &hw_;
+
+    DjiEscHub dji_esc_hub_;
+    AdaptiveOscillator ao_;
     Side left_side_;
     Side right_side_;
     ExoShell shell_;
     StateLed state_led_;
+
 private:
+    void SensorUartRxCallback(const uint8_t *data, uint16_t data_size);
+    void UsrShellUartRxCallback(const uint8_t *data, uint16_t data_size);
     static ExoData::SysEvent AllowedEventsForState(ExoData::State s);
-    static inline void ClearNonCriticalEvents(ExoData* pe)
+    static inline void ClearNonCriticalEvents(ExoData &pe)
     {
-        if (pe == nullptr) return;
-        pe->pending_events_ &= ~ExoData::SysEvent::kWakeup;
-        pe->pending_events_ &= ~ExoData::SysEvent::kStartCalibrate;
-        pe->pending_events_ &= ~ExoData::SysEvent::kStartAssist;
-        pe->pending_events_ &= ~ExoData::SysEvent::kStopAssist;
-        pe->pending_events_ &= ~ExoData::SysEvent::kEnterSleep;
-        pe->pending_events_ &= ~ExoData::SysEvent::kClearFaults;
+        pe.pending_events_ &= ~ExoData::SysEvent::kWakeup;
+        pe.pending_events_ &= ~ExoData::SysEvent::kStartCalibrate;
+        pe.pending_events_ &= ~ExoData::SysEvent::kStartAssist;
+        pe.pending_events_ &= ~ExoData::SysEvent::kStopAssist;
+        pe.pending_events_ &= ~ExoData::SysEvent::kEnterSleep;
     }
 };
 
 extern "C" {
-void CallExoCanRxCallBack(Exo *ptr_exo, uint32_t can_ext_id, uint8_t *rx_data);
-void CallExoSensorUartRxCallback(Exo *ptr_exo, uint8_t *data, uint16_t data_size);
-void CallExoUsrBLEUartRxCallback(Exo *ptr_exo, uint8_t *data, uint16_t data_size);
+void CallExoCanRxCallBack(Exo *exo, FDCAN_HandleTypeDef *hfdcan, uint32_t can_ext_id, const uint8_t *rx_data);
+void CallExoUartRxCallback(Exo *exo, UART_HandleTypeDef *huart, uint8_t *data, uint16_t data_size);
 }
 
 

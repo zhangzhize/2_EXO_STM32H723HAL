@@ -1,5 +1,5 @@
 #include "dm_motor.hpp"
-#include "fdcan.h"
+#include "bsp_can.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -50,7 +50,7 @@ static float uint_to_float(int x_int, float x_min, float x_max, int bits)
   */
 static void DMSendData(uint32_t can_std_id, uint8_t *data, uint32_t data_size)
 {
-    FDCanSendData(&hfdcan1, can_std_id, FDCAN_STANDARD_ID, data, data_size);
+    FDCanSendData(can_std_id, FDCAN_STANDARD_ID, data, data_size);
 }
 
 DMMotor::DMMotor(uint16_t can_id)
@@ -224,7 +224,7 @@ void DMMotor::ClearCtrlParam(void)
     ctrl_param_.kd_set_ = 0.0f;
 }
 
-/** #TODO：检查can_id_low和can_id_high */
+/** #TODO 检查can_id_low和can_id_high */
 void DMMotor::ReadReg(DMMotorReg reg)
 {
     uint8_t can_id_low = can_id_ & 0xFF;
@@ -260,12 +260,9 @@ void DMMotor::SaveToFlash(void)
     DMSendData(0x7FF, data, 4);
 }
 
-void DMMotor::CanRxCallBack(uint32_t can_id, uint8_t *can_rxdata)
+void DMMotor::CanRxCallBack(uint32_t can_id, const uint8_t *can_rxdata)
 {
-    if (can_id != (uint32_t)mst_id_)
-    {
-        return;
-    }
+    if (can_id != (uint32_t)mst_id_) return;
 
     if (can_rxdata[0] == (can_id_ & 0xFF) && can_rxdata[1] == ((can_id_ >> 8) & 0xFF) && can_rxdata[2] == 0x33)
     {
@@ -419,7 +416,7 @@ void DMMotor::CanRxCallBack(uint32_t can_id, uint8_t *can_rxdata)
     else 
     {
         feedback_.flag_ = 1;
-        /** #TODO: 检查 feedback_.id_ 的读取方式是否正确*/
+        /** #TODO 检查 feedback_.id_ 的读取方式是否正确*/
         feedback_.id_ = can_rxdata[0] & 0x0F;
         feedback_.state_ = (can_rxdata[0] >> 4);
         int p_int_ = (can_rxdata[1] << 8) | can_rxdata[2];
@@ -431,7 +428,6 @@ void DMMotor::CanRxCallBack(uint32_t can_id, uint8_t *can_rxdata)
         feedback_.Tmos_ = (float)(can_rxdata[6]);
         feedback_.Tcoil_ = (float)(can_rxdata[7]);
     }
-
 }
 
 

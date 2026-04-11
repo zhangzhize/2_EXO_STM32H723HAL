@@ -1,0 +1,17 @@
+# 声明我们的基础风格是纯正的 Google 规范
+BasedOnStyle: Google
+
+# 核心配置：允许没有 else 的短 if 语句放在同一行
+AllowShortIfStatementsOnASingleLine: WithoutElse
+
+# 强制规定指针星号靠近变量
+PointerAlignment: Right
+
+# 4空格缩进
+IndentWidth: 4
+
+# 每行最多120字符
+ColumnLimit: 120
+
+# 括号全部另起一行
+BreakBeforeBraces: Allman

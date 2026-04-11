@@ -1,5 +1,5 @@
 #include "robstride.hpp"
-#include "fdcan.h"
+#include "bsp_can.h"
 
 enum ComTypeCode
 {
@@ -41,7 +41,7 @@ enum ComTypeCode
   */
 static void RobstrideSendData(uint32_t can_ext_id, uint8_t *data, uint32_t data_size)
 {
-    FDCanSendData(&hfdcan1, can_ext_id, FDCAN_EXTENDED_ID, data, data_size);
+    FDCanSendData(can_ext_id, FDCAN_EXTENDED_ID, data, data_size);
 }
 
 /**
@@ -143,7 +143,7 @@ void Robstride::ObtainDeviceIDRequest(void)
   * @param[in]      can_rxdata:CAN接收数据帧的数据区, 8字节
   * @retval         无
   */
-void Robstride::ObtainDeviceIDReceive(uint8_t *can_rxdata)
+void Robstride::ObtainDeviceIDReceive(const uint8_t *can_rxdata)
 {
 	mcu_id_ = can_rxdata[0];
 }
@@ -192,7 +192,7 @@ void Robstride::MotionControl(void)
   * @param[in]      robstride_motor:灵足电机结构体指针
   * @retval         无
   */
-void Robstride::StatusFeedbackReceive(uint32_t can_ext_id, uint8_t *can_rxdata)
+void Robstride::StatusFeedbackReceive(uint32_t can_ext_id, const uint8_t *can_rxdata)
 {
 	position_ = UintToFloat(can_rxdata[0]<<8|can_rxdata[1],P_MIN,P_MAX,16); /* 当前角度[0~65536] (-4pi~4pi)rad */
 	speed_ = UintToFloat(can_rxdata[2]<<8|can_rxdata[3],V_MIN,V_MAX,16); /* 当前角速度[0~65536] (-44~44)rad/s */
@@ -294,7 +294,7 @@ void Robstride::ReadSingleParamRequest(uint16_t param_index)
   * @param[in]      can_rxdata:CAN接收数据帧的数据区, 8字节
   * @retval         无
   */
-void Robstride::ReadSingleParamReceive(uint32_t can_ext_id, uint8_t *can_rxdata)
+void Robstride::ReadSingleParamReceive(uint32_t can_ext_id, const uint8_t *can_rxdata)
 {
     uint16_t param_index = 0;
     uint8_t bytes[4] = {can_rxdata[4],can_rxdata[5],can_rxdata[6],can_rxdata[7]};
@@ -447,10 +447,9 @@ void Robstride::SetSingleParam(uint16_t param_index, float value)
   * @param[in]      can_rxdata:CAN接收数据帧的数据区, 8字节
   * @retval         无
   */
-void Robstride::FaultFeedbackReceive(uint8_t *can_rxdata)
+void Robstride::FaultFeedbackReceive(const uint8_t *can_rxdata)
 {
 	fault_code_ = can_rxdata[0]<<24 | can_rxdata[1]<<16 | can_rxdata[2]<<8 | can_rxdata[3];
-    /** #TODO: Report fault information */
     DisableMotor(ROBSTRIDE_KEEP_FAULT);
 }
 
@@ -501,7 +500,7 @@ void Robstride::StatusFeedbackAutoRequest(bool do_enable)
   * @param[in]      robstride_motor:灵足电机结构体数组
   * @retval         无
   */
-void Robstride::StatusFeedbackAutoReceive(uint32_t can_ext_id, uint8_t *can_rxdata)
+void Robstride::StatusFeedbackAutoReceive(uint32_t can_ext_id, const uint8_t *can_rxdata)
 {
 	position_ = UintToFloat(can_rxdata[0]<<8|can_rxdata[1],P_MIN,P_MAX,16); /* 当前角度[0~65536] (-4pi~4pi)rad */
 	speed_ = UintToFloat(can_rxdata[2]<<8|can_rxdata[3],V_MIN,V_MAX,16); /* 当前角速度[0~65536] (-44~44)rad/s */
@@ -624,7 +623,7 @@ void Robstride::GoZeroPosMode(void)
   * @param[in]      can_ext_id: 已接收的扩展帧ID, can_rxdata: 接收到的数据数组
   * @retval         none
   */
-void Robstride::CanRxCallBack(uint32_t can_ext_id, uint8_t *can_rxdata)
+void Robstride::CanRxCallBack(uint32_t can_ext_id, const uint8_t* can_rxdata)
 {
     uint8_t robstride_can_id = 0;
     uint8_t com_type = 0;

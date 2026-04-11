@@ -107,7 +107,6 @@ AnkleForceProfileGenerator::AnkleForceProfileGenerator()
     rise_time_phase_rad_ = peak_time_phase_rad_ - start_time_phase_rad_;
     fall_time_phase_rad_ = end_time_phase_rad_ - peak_time_phase_rad_;
 
-
     float ptr_xs[5] = {0, start_time_phase_rad_, peak_time_phase_rad_, end_time_phase_rad_, _2PI};
     float ptr_ys[5] = {0, 0, peak_torque_Nmkg_, 0, 0};
     float ptr_dys[5] = {0, 0, 0, 0, 0};

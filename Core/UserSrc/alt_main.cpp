@@ -12,8 +12,10 @@
 #include "usart.h"
 #include "usb_device.h"
 #include "gpio.h"
-#include "dwt.h"
 
+#include "dwt.h"
+#include "bsp_can.h"
+#include "bsp_usart.h"
 #include "utils.h"
 #include "shell.hpp"
 #include "ws2812.h"
@@ -30,16 +32,19 @@ uint8_t cdc_rx_flag = 0;
 
 __attribute__((section(".dma_buf"), aligned(32))) uint32_t g_adc_data[3] = {0};
 
-Shell *gptr_shell = new Shell();
-ExoData *gptr_exo_data = new ExoData();
-Exo *gptr_exo = new Exo(gptr_exo_data);
+ExoHardware g_exo_hw = {
+    .motor_can = hfdcan1,
+    .sensor_uart = huart8,
+    .shell_uart = huart9,
+    .left_mag_encoder_uart = huart2,
+    .right_mag_encoder_uart = huart3,
+};
+
+ExoData g_exo_data;
+Exo *gptr_exo = new Exo(g_exo_data, g_exo_hw);
 Mahony *gptr_mahony = new Mahony();
 
 void CableTensionTest();
-
-float getRoll();
-float getPitch();
-float getYaw();
 
 void AltMainTask(void *argument)
 {
@@ -70,16 +75,6 @@ void AltMainTask(void *argument)
 
     /* 初始化CAN */
     BspCanInit();
-    // BspStdCanInit();
-    // BspExtCanInit();
-    
-    /* 给电机上电 */
-    HAL_GPIO_WritePin(POWER_24V_1_GPIO_Port, POWER_24V_1_Pin|POWER_24V_2_Pin, GPIO_PIN_SET);
-    HAL_Delay(1000);
-    
-    /** #HACK: 在此修改外骨骼参数  */
-    gptr_exo->Initialize();
-    HAL_Delay(1000);
 
     /* 板载IMU */
     // float gyro[3], accel[3], temperature;
@@ -95,6 +90,11 @@ void AltMainTask(void *argument)
         // HAL_Delay(5);
     // }
 
+    /* 给电机上电 */
+    HAL_GPIO_WritePin(POWER_24V_1_GPIO_Port, POWER_24V_1_Pin|POWER_24V_2_Pin, GPIO_PIN_SET);
+    HAL_Delay(1000);
+    gptr_exo->Initialize();
+    HAL_Delay(1000);
 	/* 启动定时器 */
 	HAL_TIM_Base_Start_IT(&htim2);
 	while (1)
@@ -109,101 +109,7 @@ void AltMainTask(void *argument)
 	}
 }
 
-void CableTensionTest()
-{
-    gptr_exo->left_side_.ankle_joint_.motor_.position_ref_ = gptr_exo->left_side_.ankle_joint_.cable_released_position_;
-    // gptr_exo->left_side_.ankle_joint_.motor_.MotionControl();
-    gptr_exo->right_side_.ankle_joint_.motor_.position_ref_ = -gptr_exo->right_side_.ankle_joint_.cable_released_position_;
-    gptr_exo->right_side_.ankle_joint_.motor_.MotionControl();
-    HAL_Delay(1000);
-
-    gptr_exo->left_side_.ankle_joint_.motor_.position_ref_ = gptr_exo->left_side_.ankle_joint_.cable_pre_tensioned_position_;
-    // gptr_exo->left_side_.ankle_joint_.motor_.MotionControl();
-    gptr_exo->right_side_.ankle_joint_.motor_.position_ref_ = -gptr_exo->right_side_.ankle_joint_.cable_pre_tensioned_position_;
-    gptr_exo->right_side_.ankle_joint_.motor_.MotionControl();
-    HAL_Delay(1000);
-
-    gptr_exo->left_side_.ankle_joint_.motor_.position_ref_ = gptr_exo->left_side_.ankle_joint_.cable_tensioned_position_;
-    // gptr_exo->left_side_.ankle_joint_.motor_.MotionControl();
-    gptr_exo->right_side_.ankle_joint_.motor_.position_ref_ = -gptr_exo->right_side_.ankle_joint_.cable_tensioned_position_;
-    gptr_exo->right_side_.ankle_joint_.motor_.MotionControl();
-    HAL_Delay(1000);
-}
-
-
-// Return the roll (rotation around the x-axis) in Radians
-float getRoll()
-{
-    float dqw = gptr_exo_data->right_side_.foot_imu_.quat_real_;
-    float dqx = gptr_exo_data->right_side_.foot_imu_.quat_i_;
-    float dqy = gptr_exo_data->right_side_.foot_imu_.quat_j_;
-    float dqz =gptr_exo_data->right_side_.foot_imu_.quat_k_;
-
-    float norm = sqrt(dqw * dqw + dqx * dqx + dqy * dqy + dqz * dqz);
-    dqw = dqw / norm;
-    dqx = dqx / norm;
-    dqy = dqy / norm;
-    dqz = dqz / norm;
-
-    float ysqr = dqy * dqy;
-
-    // roll (x-axis rotation)
-    float t0 = +2.0f * (dqw * dqx + dqy * dqz);
-    float t1 = +1.0f - 2.0f * (dqx * dqx + ysqr);
-    float roll = atan2(t0, t1);
-
-    return (roll);
-}
-
-// Return the pitch (rotation around the y-axis) in Radians
-float getPitch()
-{
-    float dqw = gptr_exo_data->right_side_.foot_imu_.quat_real_;
-    float dqx = gptr_exo_data->right_side_.foot_imu_.quat_i_;
-    float dqy = gptr_exo_data->right_side_.foot_imu_.quat_j_;
-    float dqz =gptr_exo_data->right_side_.foot_imu_.quat_k_;
-
-    float norm = sqrt(dqw * dqw + dqx * dqx + dqy * dqy + dqz * dqz);
-    dqw = dqw / norm;
-    dqx = dqx / norm;
-    dqy = dqy / norm;
-    dqz = dqz / norm;
-
-    // float ysqr = dqy * dqy;
-
-    // pitch (y-axis rotation)
-    float t2 = +2.0f * (dqw * dqy - dqz * dqx);
-    t2 = t2 > 1.0f ? 1.0f : t2;
-    t2 = t2 < -1.0f ? -1.0f : t2;
-    float pitch = asin(t2);
-
-    return (pitch);
-}
-
-// Return the yaw / heading (rotation around the z-axis) in Radians
-float getYaw()
-{
-    float dqw = gptr_exo_data->right_side_.foot_imu_.quat_real_;
-    float dqx = gptr_exo_data->right_side_.foot_imu_.quat_i_;
-    float dqy = gptr_exo_data->right_side_.foot_imu_.quat_j_;
-    float dqz =gptr_exo_data->right_side_.foot_imu_.quat_k_;
-
-    float norm = sqrt(dqw * dqw + dqx * dqx + dqy * dqy + dqz * dqz);
-    dqw = dqw / norm;
-    dqx = dqx / norm;
-    dqy = dqy / norm;
-    dqz = dqz / norm;
-
-    float ysqr = dqy * dqy;
-
-    // yaw (z-axis rotation)
-    float t3 = +2.0f * (dqw * dqz + dqx * dqy);
-    float t4 = +1.0f - 2.0f * (ysqr + dqz * dqz);
-    float yaw = atan2(t3, t4);
-
-    return (yaw);
-}
-
+/** 下面的函数都是测试函数, 不用关注 */
 
 /**
  * @brief        Update quaternion

@@ -8,10 +8,8 @@
 
 __attribute__((section(".dma_buf"), aligned(32))) DmaBuffer g_uart_tx_dma_buf;
 
-Shell::Shell(UART_HandleTypeDef* huart)
+Shell::Shell(UART_HandleTypeDef &huart): txbuffer_(g_uart_tx_dma_buf), huart_(huart)
 {
-    ptr_txbuffer_ = &g_uart_tx_dma_buf;
-    ptr_huart_ = huart;
     is_cmd_pending_ = false;
     param_count_ = 0;
     
@@ -20,14 +18,14 @@ Shell::Shell(UART_HandleTypeDef* huart)
     RegisterCommand("read", CmdWrapper<Shell, &Shell::OnCmdReadParam>, this);
 }
 
-void Shell::Printf(const char* format, ...)
+void Shell::Printf(const char *format, ...)
 {
-    if (!format || !ptr_txbuffer_ || !ptr_huart_) return;
-    if (ptr_huart_->gState != HAL_UART_STATE_READY) return;
+    if (!format) return;
+    if (huart_.gState != HAL_UART_STATE_READY) return;
 
     va_list args;
     va_start(args, format);
-    int len = vsnprintf(ptr_txbuffer_->c_data, SHELL_TX_BUF_SIZE_BYTES, format, args);
+    int len = vsnprintf(txbuffer_.c_data, SHELL_TX_BUF_SIZE_BYTES, format, args);
     va_end(args);
 
     if (len > 0)
@@ -39,62 +37,54 @@ void Shell::Printf(const char* format, ...)
 
 void Shell::SetVofaJustFloatData(uint16_t index, float value)
 {
-    if (index >= SHELL_VOFA_MAX_FLOAT_SIZE || ptr_txbuffer_ == nullptr) return;
+    if (index >= SHELL_VOFA_MAX_FLOAT_SIZE) return;
 
-    if (index < SHELL_VOFA_MAX_FLOAT_SIZE && ptr_txbuffer_ != nullptr)
+    if (index < SHELL_VOFA_MAX_FLOAT_SIZE)
     {
-        ptr_txbuffer_->f_data[index] = value; 
+        txbuffer_.f_data[index] = value;
     }
 }
 
 void Shell::SendVofaJustFloatFrame(uint16_t float_size)
 {
-    if (ptr_txbuffer_ == nullptr || float_size == 0 || float_size > SHELL_VOFA_MAX_FLOAT_SIZE)
-    {
-        return;
-    }
+    if (float_size == 0 || float_size > SHELL_VOFA_MAX_FLOAT_SIZE) return;
 
     uint16_t count = 4 * float_size;
     /* 补上JUST FLOAT格式 帧尾 */
-    ptr_txbuffer_->u8_data[count++] = 0x00;
-    ptr_txbuffer_->u8_data[count++] = 0x00;
-    ptr_txbuffer_->u8_data[count++] = 0x80;
-    ptr_txbuffer_->u8_data[count++] = 0x7f;
+    txbuffer_.u8_data[count++] = 0x00;
+    txbuffer_.u8_data[count++] = 0x00;
+    txbuffer_.u8_data[count++] = 0x80;
+    txbuffer_.u8_data[count++] = 0x7f;
     SendData(count);
 }
 
 void Shell::SendString(const char *str)
 {
-    if (str == nullptr || ptr_txbuffer_ == nullptr) return;
-    if (ptr_huart_->gState != HAL_UART_STATE_READY) return;
+    if (str == nullptr) return;
+    if (huart_.gState != HAL_UART_STATE_READY) return;
 
     const uint16_t max_len = SHELL_TX_BUF_SIZE_BYTES - 1;
     const size_t len = strnlen(str, max_len);
-    memcpy(ptr_txbuffer_->u8_data, str, len);
-    ptr_txbuffer_->u8_data[len] = '\0';
+    memcpy(txbuffer_.u8_data, str, len);
+    txbuffer_.u8_data[len] = '\0';
 
     SendData(static_cast<uint16_t>(len));
 }
 
 void Shell::SendData(uint16_t data_size)
 {
-    if (ptr_huart_ == nullptr || ptr_txbuffer_ == nullptr || data_size == 0 || data_size > SHELL_TX_BUF_SIZE_BYTES)
+    if (data_size == 0 || data_size > SHELL_TX_BUF_SIZE_BYTES) return;
+
+    if (huart_.gState == HAL_UART_STATE_READY && data_size < SHELL_TX_BUF_SIZE_BYTES)
     {
-        return;
-    }
-    if (ptr_huart_->gState == HAL_UART_STATE_READY && data_size < SHELL_TX_BUF_SIZE_BYTES)
-    {
-        HAL_UART_Transmit_DMA(ptr_huart_, ptr_txbuffer_->u8_data, data_size);
-	    // CDC_Transmit_HS(ptr_txbuffer_->u8_data, data_size);   //zzz: just for debug
+        HAL_UART_Transmit_DMA(&huart_, txbuffer_.u8_data, data_size);
+	    // CDC_Transmit_HS(txbuffer_.u8_data, data_size);   //zzz: just for debug
     }
 }
 
-bool Shell::RegisterCommand(const char* cmd_name, ShellCmdHandler handler, void* context)
+bool Shell::RegisterCommand(const char *cmd_name, ShellCmdHandler handler, void *context)
 {
-    if (cmd_count_ >= kMaxNumCmds)
-    {
-        return false;
-    }
+    if (cmd_count_ >= kMaxNumCmds) return false;
 
     cmd_table_[cmd_count_].cmd_name = cmd_name;
     cmd_table_[cmd_count_].handler = handler;
@@ -103,13 +93,10 @@ bool Shell::RegisterCommand(const char* cmd_name, ShellCmdHandler handler, void*
     return true;
 }
 
-void Shell::PushPendingCommand(const uint8_t* rx_data, uint16_t len)
+void Shell::PushPendingCommand(const uint8_t *rx_data, uint16_t len)
 {
     /** Throw away new command if previous one is still pending */
-    if (is_cmd_pending_)  
-    {
-        return; 
-    }
+    if (is_cmd_pending_) return;
 
     /** Copy new command to pending buffer */
     uint16_t copy_len = (len < sizeof(pending_cmd_buf_) - 1) ? len : (sizeof(pending_cmd_buf_) - 1);
@@ -120,17 +107,14 @@ void Shell::PushPendingCommand(const uint8_t* rx_data, uint16_t len)
 
 bool Shell::ProcessPendingCommand()
 {
-    if (!is_cmd_pending_)
-    {
-        return false;
-    }
+    if (!is_cmd_pending_) return false;
 
-    char* cmd_line = reinterpret_cast<char*>(pending_cmd_buf_);
-    char* argv[kMaxNumSupportedArgvs];
+    char *cmd_line = reinterpret_cast<char *>(pending_cmd_buf_);
+    char *argv[kMaxNumSupportedArgvs];
     int argc = 0;
-    char* saveptr;
+    char *saveptr;
 
-    char* token = strtok_r(cmd_line, " \r\n", &saveptr);
+    char *token = strtok_r(cmd_line, " \r\n", &saveptr);
     while (token != nullptr && argc < kMaxNumSupportedArgvs)
     {
         argv[argc++] = token;
@@ -177,17 +161,14 @@ void Shell::RegisterRwParam(const char *name, bool *ptr)
         param_table_[param_count_++] = {name, ShellRwParamType::kBool, static_cast<void *>(ptr)};
 }
 
-void Shell::OnCmdHelp(int argc, char** argv)
+void Shell::OnCmdHelp(int argc, char **argv)
 {
     (void)argc;
     (void)argv;
 
-    if (ptr_huart_->gState != HAL_UART_STATE_READY)
-    {
-        return;
-    }
+    if (huart_.gState != HAL_UART_STATE_READY) return;
 
-    char* buf = ptr_txbuffer_->c_data;
+    char *buf = txbuffer_.c_data;
     const size_t max_len = SHELL_TX_BUF_SIZE_BYTES;
     size_t offset = 0;
 
@@ -208,9 +189,9 @@ void Shell::OnCmdWriteParam(int argc, char **argv)
         return;
     }
 
-    const char* target_name = argv[1];
-    
-    for (uint16_t i = 0; i < param_count_; i++) 
+    const char *target_name = argv[1];
+
+    for (uint16_t i = 0; i < param_count_; i++)
     {
         if (strcmp(param_table_[i].name, target_name) == 0) 
         {
@@ -218,19 +199,19 @@ void Shell::OnCmdWriteParam(int argc, char **argv)
             {
                 case ShellRwParamType::kFloat: {
                     float val = strtof(argv[2], nullptr);
-                    *(static_cast<float*>(param_table_[i].ptr)) = val;
+                    *(static_cast<float *>(param_table_[i].ptr)) = val;
                     Printf("OK: %s = %.3f\r\n", target_name, val);
                     break;
                 }
                 case ShellRwParamType::kInt: {
                     int val = atoi(argv[2]);
-                    *(static_cast<int*>(param_table_[i].ptr)) = val;
+                    *(static_cast<int *>(param_table_[i].ptr)) = val;
                     Printf("OK: %s = %d\r\n", target_name, val);
                     break;
                 }
                 case ShellRwParamType::kBool: {
                     bool val = (atoi(argv[2]) > 0);
-                    *(static_cast<bool*>(param_table_[i].ptr)) = val;
+                    *(static_cast<bool *>(param_table_[i].ptr)) = val;
                     Printf("OK: %s = %s\r\n", target_name, val ? "true" : "false");
                     break;
                 }
@@ -292,20 +273,20 @@ void Shell::OnCmdReadParam(int argc, char **argv)
         return;
     }
 
-    const char* target_name = argv[1];
-    for (uint16_t i = 0; i < param_count_; i++) 
+    const char *target_name = argv[1];
+    for (uint16_t i = 0; i < param_count_; i++)
     {
         if (strcmp(param_table_[i].name, target_name) == 0) 
         {
             switch (param_table_[i].type) {
                 case ShellRwParamType::kFloat:
-                    Printf("%s = %.3f\r\n", target_name, *(static_cast<float*>(param_table_[i].ptr)));
+                    Printf("%s = %.3f\r\n", target_name, *(static_cast<float *>(param_table_[i].ptr)));
                     break;
                 case ShellRwParamType::kInt:
-                    Printf("%s = %d\r\n", target_name, *(static_cast<int*>(param_table_[i].ptr)));
+                    Printf("%s = %d\r\n", target_name, *(static_cast<int *>(param_table_[i].ptr)));
                     break;
                 case ShellRwParamType::kBool:
-                    Printf("%s = %s\r\n", target_name, *(static_cast<bool*>(param_table_[i].ptr)) ? "true" : "false");
+                    Printf("%s = %s\r\n", target_name, *(static_cast<bool *>(param_table_[i].ptr)) ? "true" : "false");
                     break;
             }
             return;

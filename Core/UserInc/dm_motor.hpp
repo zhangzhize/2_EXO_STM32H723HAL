@@ -163,7 +163,7 @@ public:
     void WriteReg(DMMotorReg reg, uint8_t value[4]);
     void ReadFeedback(void);
     void SaveToFlash(void);
-    void CanRxCallBack(uint32_t can_id, uint8_t *can_rxdata);
+    void CanRxCallBack(uint32_t can_id, const uint8_t *can_rxdata);
 
     uint16_t can_id_;
     uint16_t mst_id_;

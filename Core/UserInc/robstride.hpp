@@ -121,21 +121,21 @@ public:
 
     /* 说明书中的通信类型 */
     void ObtainDeviceIDRequest(void);
-    void ObtainDeviceIDReceive(uint8_t *can_rxdata);
+    void ObtainDeviceIDReceive(const uint8_t *can_rxdata);
     void MotionControl(void);
     void StatusFeedbackRequest(void);
-    void StatusFeedbackReceive(uint32_t can_ext_id, uint8_t *can_rxdata);
+    void StatusFeedbackReceive(uint32_t can_ext_id, const uint8_t *can_rxdata);
     void EnableMotor(void);
     void DisableMotor(uint8_t do_clear_error);
     void SetMecPosZero(void);
     void SetMotorCanID(uint8_t can_id);
     void ReadSingleParamRequest(uint16_t param_index);
-    void ReadSingleParamReceive(uint32_t can_ext_id, uint8_t *can_rxdata);
+    void ReadSingleParamReceive(uint32_t can_ext_id, const uint8_t *can_rxdata);
     void SetSingleParam(uint16_t param_index, float value);
-    void FaultFeedbackReceive(uint8_t *can_rxdata);
+    void FaultFeedbackReceive(const uint8_t *can_rxdata);
     void SetBaudRate(void);
     void StatusFeedbackAutoRequest(bool do_enable);
-    void StatusFeedbackAutoReceive(uint32_t can_ext_id, uint8_t *can_rxdata);
+    void StatusFeedbackAutoReceive(uint32_t can_ext_id, const uint8_t *can_rxdata);
     void SetProtocal(void);
     /* 封装 */
     void PositionControlPP(void);
@@ -143,7 +143,7 @@ public:
     void SpeedControl(void);
     void CurrentControl(void);
     void GoZeroPosMode(void);
-    void CanRxCallBack(uint32_t can_ext_id, uint8_t *can_rxdata);
+    void CanRxCallBack(uint32_t can_ext_id, const uint8_t *can_rxdata);
     void SetMotorMode(void);
 };
 
