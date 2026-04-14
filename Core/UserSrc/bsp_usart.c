@@ -46,8 +46,8 @@ int fputc(int ch, FILE *f)
 #endif
 
 #include "usbd_cdc_if.h"
-extern struct Exo *gptr_exo;
-extern void CallExoUartRxCallback(struct Exo *ptr_exo, UART_HandleTypeDef *huart, uint8_t *data, uint16_t data_size);
+extern struct Exo *g_exo;
+extern void CallExoUartRxCallback(struct Exo *ptr_exo, UART_HandleTypeDef *huart, uint16_t data_size);
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
 {
@@ -59,7 +59,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
         // CDC_Transmit_HS(buf, size);
         if (size <= UART8_RX_BUF_SIZE)
         {
-            CallExoUartRxCallback(gptr_exo, huart, uart8_rx_buffer, size);
+            CallExoUartRxCallback(g_exo, huart, size);
         }
         HAL_UARTEx_ReceiveToIdle_DMA(&huart8, uart8_rx_buffer, UART8_RX_BUF_SIZE);
         __HAL_DMA_DISABLE_IT(huart8.hdmarx, DMA_IT_HT);
@@ -72,7 +72,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
         // CDC_Transmit_HS(buf, size);
         if (size <= UART9_RX_BUF_SIZE)
         {
-            CallExoUartRxCallback(gptr_exo, huart, uart9_rx_buffer, size);
+            CallExoUartRxCallback(g_exo, huart, size);
         }
         HAL_UARTEx_ReceiveToIdle_DMA(&huart9, uart9_rx_buffer, UART9_RX_BUF_SIZE);
         __HAL_DMA_DISABLE_IT(huart9.hdmarx, DMA_IT_HT);
@@ -80,7 +80,7 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
     else
     {
         /** MagEncoder内部会调用HAL_UARTEx_ReceiveToIdle_DMA */
-        CallExoUartRxCallback(gptr_exo, huart, uart9_rx_buffer, size);
+        CallExoUartRxCallback(g_exo, huart, size);
     }
 }
 

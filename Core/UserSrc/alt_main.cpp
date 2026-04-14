@@ -41,10 +41,8 @@ ExoHardware g_exo_hw = {
 };
 
 ExoData g_exo_data;
-Exo *gptr_exo = new Exo(g_exo_data, g_exo_hw);
+Exo *g_exo = new Exo(g_exo_data, g_exo_hw);
 Mahony *gptr_mahony = new Mahony();
-
-void CableTensionTest();
 
 void AltMainTask(void *argument)
 {
@@ -93,18 +91,17 @@ void AltMainTask(void *argument)
     /* 给电机上电 */
     HAL_GPIO_WritePin(POWER_24V_1_GPIO_Port, POWER_24V_1_Pin|POWER_24V_2_Pin, GPIO_PIN_SET);
     HAL_Delay(1000);
-    gptr_exo->Initialize();
+    g_exo->Initialize();
     HAL_Delay(1000);
 	/* 启动定时器 */
 	HAL_TIM_Base_Start_IT(&htim2);
 	while (1)
 	{   
-        // CableTensionTest();
         if (g_timer2_5ms_flag == 1)
         {
             g_timer2_5ms_flag = 0;
             /* 外骨骼 */
-            gptr_exo->Run();
+            g_exo->Run();
         }
 	}
 }

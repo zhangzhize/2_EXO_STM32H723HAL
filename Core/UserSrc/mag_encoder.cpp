@@ -29,20 +29,57 @@ void MagEncoder::SendRequest()
         is_first_reading_ = false;
         HAL_UARTEx_ReceiveToIdle_DMA(&huart_, rx_buffer_, 32);
     }
+    tx_buffer_[0] = 0x01;
+    tx_buffer_[1] = 0x03;
+    tx_buffer_[2] = 0x00;
+    tx_buffer_[3] = 0x00;
+    tx_buffer_[4] = 0x00;
+    tx_buffer_[5] = 0x02;
+    tx_buffer_[6] = 0xc4;
+    tx_buffer_[7] = 0x0B;
     HAL_UART_Transmit_DMA(&huart_, tx_buffer_, 8);
+
     state_ = State::kWaitingForData;
 }
 
-
 void MagEncoder::UartRxCallback(UART_HandleTypeDef *huart, const uint8_t* data, uint16_t data_size)
 {
-    if (data == nullptr || data_size < 7 || huart != &huart_) return;
+    if (data == nullptr || data_size != 9 || huart != &huart_) return;
+
+    uint16_t crc_received = data[8] << 8 | data[7];
+    uint16_t crc_calculated = Crc16Modbus(data, 7);
+    if (crc_received != crc_calculated) return;
 
     raw_position_reading_ = HexArrayToDec(data, data_size);
-    scaled_offsetted_position_ = (float)raw_position_reading_ / scale_factor_;
-    state_ = State::kIdle;
+    scaled_position_ = (float)raw_position_reading_ / scale_factor_;
     HAL_UARTEx_ReceiveToIdle_DMA(&huart_, rx_buffer_, 32);
+    state_ = State::kIdle;
 }
+
+uint16_t MagEncoder::Crc16Modbus(const uint8_t *data, uint16_t data_size)
+{
+    uint16_t crc = 0xFFFF;
+    uint16_t i, j;
+    for (i = 0; i < data_size; i++)
+    {
+        crc ^= data[i];
+
+        for (j = 0; j < 8; j++)
+        {
+            if (crc & 0x0001)
+            {
+                crc >>= 1;
+                crc ^= 0xA001;
+            }
+            else
+            {
+                crc >>= 1;
+            }
+        }
+    }
+    return crc;
+}
+
 
 uint32_t MagEncoder::HexArrayToDec(const uint8_t* hex_array, uint8_t size)
 {

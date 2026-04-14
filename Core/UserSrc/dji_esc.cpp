@@ -64,7 +64,7 @@ void DjiEscHub::CanRxCallBack(uint32_t can_std_id, const uint8_t *rx_data)
 
 /** speed_pid_的输出是iqref, 那么其最后一个参数output_limit设置为参考电流的最大值 */
 DjiEsc::DjiEsc(DjiEscHub& hub, EscId esc_id, MotorType motor_type)
-    : position_pid_(5.0f, 10.0f, 0.0f, -500.0f, 10000.0f),
+    : position_pid_(40.0f, 25.0f, 0.0f, -500.0f, 10000.0f),
     speed_pid_(0.05f, 0.02f, 0.0f, -100.0f, motor_type == MotorType::kM3508 ? 20.0f : 10.0f),
     esc_id_(esc_id),
     motor_type_(motor_type),

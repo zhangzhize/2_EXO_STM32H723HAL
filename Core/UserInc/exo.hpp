@@ -341,6 +341,7 @@ public:
 
     float user_weight_kg_ = 60.0f;
     float battery_voltage_ = 24.0f;
+    bool do_test = false;
 };
 
 DEFINE_ENUM_CLASS_BITWISE_OPS(ExoData::Error)
@@ -550,7 +551,6 @@ public:
     ~ExoShell() = default;
 
     void OnCmdSetLed(int argc, char **argv);
-    void OnCmdVofaTelemetry(int argc, char **argv);
     void OnCmdSetLocoMode(int argc, char **argv);
 private:
     Exo &exo_;
@@ -579,7 +579,7 @@ public:
     bool IsStopWalking();
 
     void CanRxCallback(FDCAN_HandleTypeDef *hfdcan, uint32_t can_id, const uint8_t *data);
-    void UartRxCallback(UART_HandleTypeDef *huart, const uint8_t *data, uint16_t data_size);
+    void UartRxCallback(UART_HandleTypeDef *huart, uint16_t data_size);
 
     ExoData &pe_;
     ExoHardware &hw_;
@@ -607,7 +607,7 @@ private:
 
 extern "C" {
 void CallExoCanRxCallBack(Exo *exo, FDCAN_HandleTypeDef *hfdcan, uint32_t can_ext_id, const uint8_t *rx_data);
-void CallExoUartRxCallback(Exo *exo, UART_HandleTypeDef *huart, uint8_t *data, uint16_t data_size);
+void CallExoUartRxCallback(Exo *exo, UART_HandleTypeDef *huart, uint16_t data_size);
 }
 
 

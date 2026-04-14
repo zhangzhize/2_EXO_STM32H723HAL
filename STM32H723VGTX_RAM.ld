@@ -164,6 +164,22 @@ SECTIONS
     . = . + _Min_Stack_Size;
     . = ALIGN(8);
   } >DTCMRAM
+  
+  /* zzz */
+  .dma_buf (NOLOAD) :
+  {
+    . = ALIGN(32);
+    KEEP(*(.dma_buf))
+    . = ALIGN(32);
+  } >RAM_D2
+
+  /* zzz */
+  .bdma_buf (NOLOAD) :
+  {
+    . = ALIGN(32);
+    KEEP(*(.bdma_buf))
+    . = ALIGN(32);
+  } >RAM_D3
 
   /* Remove information from the standard libraries */
   /DISCARD/ :

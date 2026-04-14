@@ -71,7 +71,7 @@ static uint32_t FDCanReceive(FDCAN_HandleTypeDef *hfdcan, uint32_t *rec_id, uint
 	return 0;
 }
 
-extern struct Exo *gptr_exo;
+extern struct Exo *g_exo;
 extern void CallExoCanRxCallBack(struct Exo *ptr_exo, FDCAN_HandleTypeDef *hfdcan, uint32_t can_ext_id, uint8_t *rx_data);
 
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
@@ -84,7 +84,7 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
         rx_len = FDCanReceive(&BSP_CAN_HANDLE, &can_id, rx_data);
         if (rx_len == FDCAN_DLC_BYTES_8)
         {
-            CallExoCanRxCallBack(gptr_exo, hfdcan, can_id, rx_data);
+            CallExoCanRxCallBack(g_exo, hfdcan, can_id, rx_data);
         }
 	}
 }
