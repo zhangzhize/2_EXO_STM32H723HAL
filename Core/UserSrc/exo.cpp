@@ -10,7 +10,7 @@ extern uint32_t g_adc_data[3];  /**< definition in alt_main.cpp */
 
 void AnkleJoint::Calibrate()
 {
-    if (!pj_.is_used_) return;
+    if (!pj_.is_used_ || pj_.is_calibrated_) return;
 }
 
 bool AnkleJoint::IsMotorConnect()
@@ -101,7 +101,7 @@ void AnkleJoint::Assist()
 
 void KneeJoint::Calibrate()
 {
-    if (!pj_.is_used_) return;
+    if (!pj_.is_used_ || pj_.is_calibrated_) return;
 }
 
 bool KneeJoint::IsMotorConnect()
@@ -225,7 +225,27 @@ void KneeJoint::ImpedanceControl()
 
 void KneeSeaJoint::Calibrate()
 {
-    if (!pj_.is_used_) return;
+    if (!pj_.is_used_ || pj_.is_calibrated_) return;
+
+    static uint8_t near_zero_cnt = 0;
+    pj_.pos_ref_rad_ = 0;
+    joint_pos_pid_.output_limit_ = motor_.max_iqref_amp_ / 5.0f;
+    JointPosControl();
+
+    if (pj_.pos_rad_ > -0.01f && pj_.pos_rad_ < 0.01f)
+    {
+        if (near_zero_cnt++ > 100)
+        {
+            near_zero_cnt = 0;
+            joint_pos_pid_.output_limit_ = motor_.max_iqref_amp_;
+            pj_.pos_slider_offset_mm_ = pj_.pos_slider_mm_;
+            pj_.is_calibrated_ = true;
+        }
+    }
+    else
+    {
+        near_zero_cnt = 0;
+    }
 }
 
 void KneeSeaJoint::Read()
@@ -266,14 +286,31 @@ void KneeSeaJoint::Shutdown()
 
 void KneeSeaJoint::Standby()
 {
-    if (!pj_.is_used_) return;
+    if (!pj_.is_used_ || !pj_.is_calibrated_) return;
 
-    motor_.EnableMotor();
+    float force_profile = 0.0f;
+    force_profile = pj_.is_left_ ? force_profile : -force_profile;
+
+    /** 弹簧零力控制 */
+    pj_.force_spring_ref_N_ = force_profile * pe_.user_weight_kg_;
+    SpringForceControl(); 
 }
 
 void KneeSeaJoint::Assist()
 {
-    /** #TODO 实现底层的反馈控制器 */
+    if (!pj_.is_used_) return;
+
+    float force_profile = 0.0f;
+
+    float phase_percent = pj_.is_left_ ? pe_.left_side_.fsr_gait_data_.percent_gait_ : pe_.right_side_.fsr_gait_data_.percent_gait_;
+    float phase_rad = phase_percent * _2PI / 100.0f;
+
+    /** #HACK 先走几步再助力? */
+    force_profile = force_profile_generator_.GetForceProfile(phase_rad, pj_.pos_rad_, pj_.vel_radps_);
+    force_profile = pj_.is_left_ ? force_profile : -force_profile;
+
+    pj_.force_spring_ref_N_ = force_profile * pe_.user_weight_kg_;
+    SpringForceControl();
 }
 
 void KneeSeaJoint::JointPosControl()
@@ -309,7 +346,7 @@ void KneeSeaJoint::SpringForceControl()
 
 void HipJoint::Calibrate()
 {
-    if (!pj_.is_used_) return;
+    if (!pj_.is_used_ || pj_.is_calibrated_) return;
 }
 
 void HipJoint::Read()
@@ -447,7 +484,7 @@ void HipJoint::Assist()
 
 void FsrGaitEstimator::Calibrate()
 {
-    if (!gait_data_.is_used_) return;
+    if (!gait_data_.is_used_ || gait_data_.is_calibrated_) return;
 
     ProcessCalibration(gait_data_.heel_, gait_data_.do_calibration_heel_fsr_, gait_data_.do_calibration_refinement_heel_fsr_);
     ProcessCalibration(gait_data_.toe_, gait_data_.do_calibration_toe_fsr_, gait_data_.do_calibration_refinement_toe_fsr_);
@@ -773,14 +810,18 @@ void Side::Calibrate()
     ankle_joint_.Calibrate();
     knee_sea_joint_.Calibrate();
 
-    fsr_gait_estimator_.Calibrate();
+    if (ps_.knee_sea_joint_.is_calibrated_ || !ps_.knee_sea_joint_.is_used_)
+    {
+        /** 已在knee_sea_joint_.Standby做了零力控制; 膝关节标定完成、进入零力控制后膝关节才走得动, 才能标定fsr */
+        fsr_gait_estimator_.Calibrate();
+    }
 
     ps_.is_calibrated_ =
         (ps_.fsr_gait_data_.is_calibrated_ || !ps_.fsr_gait_data_.is_used_) &&
         (ps_.hip_joint_.is_calibrated_ || !ps_.hip_joint_.is_used_) &&
         (ps_.knee_joint_.is_calibrated_ || !ps_.knee_joint_.is_used_) &&
         (ps_.ankle_joint_.is_calibrated_ || !ps_.ankle_joint_.is_used_) &&
-        (ps_.knee_sea_joint_.is_calibrated_ || !ps_.knee_sea_joint_.is_used_); /** 在初始化时已令is_calibrated_ = true */
+        (ps_.knee_sea_joint_.is_calibrated_ || !ps_.knee_sea_joint_.is_used_);
 }
 
 void Side::Read()
@@ -1298,51 +1339,58 @@ void Exo::Run()
         CheckSystemHealth();   /** 重新计算error_code_ */
     }
 
-    /** 在此之前先标定好让位置去到零点, 然后记录 pos_linear_encoder_offset_mm_ */
-    static bool is_zeroed = false;
-    static uint8_t low_err_count = 0;
-    static float force_ref_N = 0;
-    if (pe_.do_test)
-    {
-        if (!is_zeroed)
-        {
-            pe_.left_side_.knee_sea_joint_.pos_ref_rad_ = 0;
-            left_side_.knee_sea_joint_.JointPosControl();
-            if (pe_.left_side_.knee_sea_joint_.pos_rad_ > -0.01 && pe_.left_side_.knee_sea_joint_.pos_rad_ < 0.01)
-            {
-                low_err_count ++;
-                if (low_err_count > 200)
-                {
-                    low_err_count = 0;
-                    pe_.left_side_.knee_sea_joint_.pos_slider_offset_mm_ = pe_.left_side_.knee_sea_joint_.pos_slider_mm_;
-                    is_zeroed = true;
-                }
-            }
-            else
-            {
-                low_err_count = 0;
-                is_zeroed = false;
-            }
-        }
-        else
-        {
-            float sys_ms = (float)GetSysTimeMs();
-            float freq = 4.0f;
-            float amp = 150.0f;
-            float radi = _2PI * freq * sys_ms / 1000.0f;
+    /** 力跟踪测试: 在此之前先标定好让位置去到零点, 然后记录 pos_linear_encoder_offset_mm_ */
+    // static bool is_zeroed = false;
+    // static uint8_t low_err_count = 0;
+    // static float force_ref_N = 0;
+    // if (pe_.do_test)
+    // {
+    //     if (!is_zeroed)
+    //     {
+    //         pe_.left_side_.knee_sea_joint_.pos_ref_rad_ = 0;
+    //         left_side_.knee_sea_joint_.JointPosControl();
 
-            force_ref_N = arm_sin_f32(radi) * amp;
-            pe_.left_side_.knee_sea_joint_.force_spring_ref_N_ = force_ref_N;
-            left_side_.knee_sea_joint_.SpringForceControl();
-        }
-    }
-    else
-    {
-        pe_.left_side_.knee_sea_joint_.force_spring_ref_N_ = force_ref_N;
-        left_side_.knee_sea_joint_.motor_.DisableMotor();
-    }
-    dji_esc_hub_.SendAllCanTxData(); /** important */
+    //         if (pe_.left_side_.knee_sea_joint_.pos_rad_ > -0.01 && pe_.left_side_.knee_sea_joint_.pos_rad_ < 0.01)
+    //         {
+    //             low_err_count ++;
+    //             if (low_err_count > 200)
+    //             {
+    //                 low_err_count = 0;
+    //                 pe_.left_side_.knee_sea_joint_.pos_slider_offset_mm_ = pe_.left_side_.knee_sea_joint_.pos_slider_mm_;
+    //                 is_zeroed = true;
+    //             }
+    //         }
+    //         else
+    //         {
+    //             low_err_count = 0;
+    //             is_zeroed = false;
+    //         }
+    //     }
+    //     else
+    //     {
+    //         float sys_ms = (float)GetSysTimeMs();
+    //         float freq = 4.0f;
+    //         float amp = 150.0f;
+    //         float radi = _2PI * freq * sys_ms / 1000.0f;
 
+    //         force_ref_N = arm_sin_f32(radi) * amp;
+    //         pe_.left_side_.knee_sea_joint_.force_spring_ref_N_ = force_ref_N;
+    //         left_side_.knee_sea_joint_.SpringForceControl();
+    //     }
+    // }
+    // else
+    // {
+    //     if (!is_zeroed)
+    //     {
+    //         pe_.left_side_.knee_sea_joint_.force_spring_ref_N_ = force_ref_N;
+    //         left_side_.knee_sea_joint_.motor_.DisableMotor();
+    //     }
+    //     else
+    //     {
+    //         pe_.left_side_.knee_sea_joint_.force_spring_ref_N_ = 0;
+    //         left_side_.knee_sea_joint_.SpringForceControl();
+    //     }
+    // }
 
     /** 根据系统当前状态过滤无效事件, 比如在kSleep状态下只接受wakeup命令 */
     pe_.pending_events_ &= AllowedEventsForState(pe_.state_);
@@ -1409,7 +1457,7 @@ void Exo::Run()
 
     case ExoData::State::kCalibrating:
         Calibrate();
-        Standby();   /** 为了获取电机/关节状态, 保持通信 */
+        Standby();   /** 为了获取电机/关节状态, 保持通信; 膝sea零力控制 */
         /** 标定完毕则转入kReady */
         if (IsCalibrateDone())
         {
@@ -1481,6 +1529,8 @@ void Exo::Run()
     default:
         break;
     }
+    dji_esc_hub_.SendAllCanTxData(); /** important */
+
 
     /** 处理上位机蓝牙发下来的命令, 所有命令见ExoShell的构造函数 */  
     if (shell_.ProcessPendingCommand())
@@ -1514,6 +1564,7 @@ void Exo::ResetCalibrationFlags()
     pe_.left_side_.hip_joint_.is_calibrated_ = true;  /** 暂不需要标定 */
     pe_.left_side_.knee_joint_.is_calibrated_ = true;
     pe_.left_side_.ankle_joint_.is_calibrated_ = true;
+    pe_.left_side_.knee_sea_joint_.is_calibrated_ = false; /** 需要标定 */
     pe_.left_side_.fsr_gait_data_.is_calibrated_ = false;
     pe_.left_side_.fsr_gait_data_.do_calibration_heel_fsr_ = true;
     pe_.left_side_.fsr_gait_data_.do_calibration_toe_fsr_ = false;
@@ -1524,6 +1575,7 @@ void Exo::ResetCalibrationFlags()
     pe_.right_side_.hip_joint_.is_calibrated_ = true; /** 暂不需要标定 */
     pe_.right_side_.knee_joint_.is_calibrated_ = true;
     pe_.right_side_.ankle_joint_.is_calibrated_ = true;
+    pe_.right_side_.knee_sea_joint_.is_calibrated_ = false; /** 需要标定 */
     pe_.right_side_.fsr_gait_data_.is_calibrated_ = false;
     pe_.right_side_.fsr_gait_data_.do_calibration_heel_fsr_ = true;
     pe_.right_side_.fsr_gait_data_.do_calibration_toe_fsr_ = false;
