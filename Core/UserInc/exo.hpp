@@ -100,13 +100,18 @@ public:
     explicit JointData(bool is_left = true) : is_left_(is_left) {}
     virtual ~JointData() = default;
 
-    float pos_rad_ = 0.0f;
-    float vel_radps_ = 0.0f;
-    float tor_Nm_ = 0.0f;
+    float pos_ref_rad_ = 0.0;       /** 人体关节角度参考 */
+    float pos_rad_ = 0.0f;          /** 人体关节角度反馈 */
+    float vel_ref_radps_ = 0.0f;    /** 人体关节角速度参考 */
+    float vel_radps_ = 0.0f;        /** 人体关节角速度反馈 */
+    float tor_interact_ref_Nm_ = 0.0f;  /** 人机交互力矩参考 */
+    float tor_interact_Nm_ = 0.0f;
+    float tor_ref_Nm_ = 0.0f;       /** 还没想好用于表示什么力矩 */
+    float tor_Nm_ = 0.0f;           /** 还没想好用于表示什么力矩 */
 
-    bool is_left_;
-    bool is_used_ = false;
-    bool is_calibrated_ = true;    /** no need to calibrate */
+    bool is_left_;              /** 表示该数据是左侧关节的还是右侧的 */
+    bool is_used_ = false;      /** 表示该关节是否使用 */
+    bool is_calibrated_ = true;    /** 上述关节数据暂不需要标定, 先标注为已标定 */
 };
 
 class AnkleData : public JointData
@@ -124,15 +129,20 @@ public:
     explicit KneeSeaJointData(bool is_left = true) : JointData(is_left) {}
     virtual ~KneeSeaJointData() = default;
 
-    float pos_slider_mm_ = 0.0f;
-    float pos_slider_offset_mm_ = 0.0f;
-    float pos_linear_encoder_mm_ = 0.0f;
-    float pos_linear_encoder_offset_mm_ = 0.0f;
-    float vel_slider_mmps_ = 0.0f;
-    float vel_linear_encoder_mmps_ = 0.0f;
-    float force_spring_N_ = 0.0f;
-    float screw_lead_mm_ = 5.0f;
-    float spring_stiffness_Npmm_ = 100.0f;
+    float pos_slider_mm_ = 0.0f;    /** 滑块位移 */
+    float pos_slider_offset_mm_ = 0.0f;  /** 滑块在最大膝伸展(暂且当作0度)时的位置 */
+    float vel_slider_mmps_ = 0.0f; /** 滑块线速度 */
+    float screw_lead_rad2mm_ = 2.0f/ _2PI;  /** 滑块从旋转到直线位移的系数 */
+
+    float pos_linear_encoder_mm_ = 0.0f; /** 外框位移 */
+    float pos_linear_encoder_offset_mm_ = 13587.649414f;  /** 外框在最大膝伸展(暂且当作0度)时的位置, 暂且当作0度 */
+    float max_pos_linear_encoder_mm_ = 13636.950195f;   /** 当前最大膝弯曲(暂且当作90度)时的位置 */
+    float vel_linear_encoder_mmps_ = 0.0f;   /** 外框线速度 */
+
+    float pos_bias_mm_ = 0.0f;      /** 滑块与外框位移之差 */
+    float force_spring_ref_N_ = 0.0f;  /** 弹簧参考力 */
+    float force_spring_N_ = 0.0f;      /** 弹簧反馈力(位移差xspring_stiffness_Npmm_) */
+    float spring_stiffness_Npmm_ = 2 * 15.637f;   /** 两根弹簧的"理论"刚度 */
 };
 
 struct FsrSensorData
@@ -416,7 +426,16 @@ public:
 class KneeSeaJoint
 {
 public:
-    explicit KneeSeaJoint(bool is_left,  ExoData &pe, DjiEscHub &dji_esc_hub, UART_HandleTypeDef &huart) : pe_(pe), ps_(is_left ? pe.left_side_ : pe.right_side_), pj_(is_left ? pe.left_side_.knee_sea_joint_ : pe.right_side_.knee_sea_joint_), motor_(dji_esc_hub, is_left ? DjiEsc::EscId::kId1 : DjiEsc::EscId::kId2), mag_encoder_(huart) {}
+    enum class CtrlMode : uint8_t
+    {
+        kJointPos,
+        kSpringForce,
+    };
+
+
+    explicit KneeSeaJoint(bool is_left,  ExoData &pe, DjiEscHub &dji_esc_hub, UART_HandleTypeDef &huart) : pe_(pe), ps_(is_left ? pe.left_side_ : pe.right_side_), pj_(is_left ? pe.left_side_.knee_sea_joint_ : pe.right_side_.knee_sea_joint_), motor_(dji_esc_hub, is_left ? DjiEsc::EscId::kId1 : DjiEsc::EscId::kId2), mag_encoder_(huart), 
+    joint_pos_pid_(5.0f, 1.0f, 0.0f, -100.0f, motor_.max_iqref_amp_),
+    spring_force_pid_(1.0f, 0.1, 0.0, -100.0f, motor_.max_iqref_amp_) {}
     virtual ~KneeSeaJoint() = default;
 
     void Calibrate();
@@ -426,11 +445,19 @@ public:
     void Standby();
     void Assist();
 
+    void JointPosControl();
+    void SpringForceControl();
+
     ExoData &pe_;
     SideData &ps_;
     KneeSeaJointData &pj_;
-    DjiEsc motor_;   /** 固定: 膝左id=1, 膝右id=2 */
+    KneeForceProfileGenerator force_profile_generator_;
+    DjiEsc motor_;   /** 电调ID固定: 左膝id=1, 右膝id=2 */
     MagEncoder mag_encoder_;
+    PIDController joint_pos_pid_; /** 必须放在motor_后面, 因为依赖其进行构造 */
+    PIDController spring_force_pid_;  /** 必须放在motor_后面, 因为依赖其进行构造 */
+private:
+    CtrlMode ctrl_mode_ = CtrlMode::kSpringForce;
 };
 
 class HipJoint

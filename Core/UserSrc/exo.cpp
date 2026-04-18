@@ -4,6 +4,7 @@
 extern "C" {
 #include "arm_math.h"
 }
+#include "dwt.h"
 
 extern uint32_t g_adc_data[3];  /**< definition in alt_main.cpp */
 
@@ -234,17 +235,19 @@ void KneeSeaJoint::Read()
     /** #TODO 将电机的数据和磁栅尺的数据进行处理 */
 
     /** 滑块位移 = 电机输出转动角度 * 螺母导程 - 偏置 */
-    pj_.pos_slider_mm_ = pj_.screw_lead_mm_ * motor_.shaft_pos_feedback_rad_ - pj_.pos_slider_offset_mm_;
-    pj_.vel_slider_mmps_ = pj_.screw_lead_mm_ * motor_.shaft_speed_feedback_radps_;
+    pj_.pos_slider_mm_ = pj_.screw_lead_rad2mm_ * motor_.shaft_pos_feedback_rad_ - pj_.pos_slider_offset_mm_;
+    pj_.vel_slider_mmps_ = pj_.screw_lead_rad2mm_ * motor_.shaft_speed_feedback_radps_;
 
     /** sea输出位移 = 磁栅尺反馈位置 - 偏置 */
-    pj_.pos_linear_encoder_mm_ = mag_encoder_.scaled_position_ - pj_.pos_linear_encoder_offset_mm_;
+    pj_.pos_linear_encoder_mm_ = mag_encoder_.absolute_position_mm_ - pj_.pos_linear_encoder_offset_mm_;
     pj_.vel_linear_encoder_mmps_ = 0.0f;  /** #HACK 暂时不需要  */
 
     /** 弹簧力 = 2 * 刚度 * 压缩长度 */
-    pj_.force_spring_N_ = 2.0f * pj_.spring_stiffness_Npmm_ * (pj_.pos_slider_mm_ - pj_.pos_linear_encoder_mm_);
+    pj_.pos_bias_mm_ = pj_.pos_slider_mm_ - pj_.pos_linear_encoder_mm_;
+    pj_.force_spring_N_ = pj_.spring_stiffness_Npmm_ * pj_.pos_bias_mm_;
 
-    /** 关节的pos_rad_, vel_radps, tor_Nm_ 需要进一步计算 */
+    /** 关节的pos_rad_, vel_radps, tor_Nm_ 需要进一步计算/测量(因为连杆和腿部对不准) */
+    pj_.pos_rad_ = (pj_.pos_linear_encoder_mm_) / (pj_.max_pos_linear_encoder_mm_ - pj_.pos_linear_encoder_offset_mm_) * _PI_2;
 
     mag_encoder_.SendRequest();
 }
@@ -272,6 +275,37 @@ void KneeSeaJoint::Assist()
 {
     /** #TODO 实现底层的反馈控制器 */
 }
+
+void KneeSeaJoint::JointPosControl()
+{
+    if (ctrl_mode_ != CtrlMode::kJointPos)
+    {
+        joint_pos_pid_.ResetError();
+        spring_force_pid_.ResetError();
+        ctrl_mode_ = CtrlMode::kJointPos;
+    }
+    
+    float pos_err_rad = pj_.pos_ref_rad_ - pj_.pos_rad_;
+    motor_.rotor_iq_reference_amp_ = joint_pos_pid_(pos_err_rad);
+
+    motor_.CurrentControl();
+}
+
+void KneeSeaJoint::SpringForceControl()
+{
+    if (ctrl_mode_ != CtrlMode::kSpringForce)
+    {
+        joint_pos_pid_.ResetError();
+        spring_force_pid_.ResetError();
+        ctrl_mode_ = CtrlMode::kSpringForce;
+    }
+
+    float force_err_N = pj_.force_spring_ref_N_ - pj_.force_spring_N_;
+    motor_.rotor_iq_reference_amp_ = spring_force_pid_(force_err_N);
+
+    motor_.CurrentControl();
+}
+
 
 void HipJoint::Calibrate()
 {
@@ -751,10 +785,7 @@ void Side::Calibrate()
 
 void Side::Read()
 {
-    if (!ps_.is_used_)
-    {
-        return;
-    }
+    if (!ps_.is_used_) return;
 
     hip_joint_.Read();
     knee_joint_.Read();
@@ -765,10 +796,7 @@ void Side::Read()
 
 bool Side::IsMotorConnect()
 {
-    if (!ps_.is_used_)
-    {
-        return true;
-    }
+    if (!ps_.is_used_) return true;
 
     bool hip_ok = hip_joint_.IsMotorConnect();
     bool knee_ok = knee_joint_.IsMotorConnect();
@@ -781,10 +809,7 @@ bool Side::IsMotorConnect()
 
 void Side::Standby()
 {
-    if (!ps_.is_used_)
-    {
-        return;
-    }
+    if (!ps_.is_used_) return;
 
     /** #TODO Standby的策略需要优化 */
     hip_joint_.Standby();
@@ -796,10 +821,7 @@ void Side::Standby()
 
 void Side::Assist()
 {
-    if (!ps_.is_used_)
-    {
-        return;
-    }
+    if (!ps_.is_used_) return;
 
     hip_joint_.Assist();
     knee_joint_.Assist();
@@ -1167,15 +1189,20 @@ ExoShell::ExoShell(UART_HandleTypeDef &huart, Exo &exo) : Shell(huart), exo_(exo
         else shell.SendString("Test: OFF\r\n");
     }, this);
 
+    /** 注册需要实时调节的参数 */
     RegisterRwParam("weight", &exo_.pe_.user_weight_kg_);
     RegisterRwParam("la_on",  &exo_.left_side_.ankle_joint_.assistance_start_phase_percent_);
     RegisterRwParam("la_off", &exo_.left_side_.ankle_joint_.assistance_end_phase_percent_);
     RegisterRwParam("la_pre", &exo_.left_side_.ankle_joint_.cable_pre_tensioned_position_);
     RegisterRwParam("la_ten", &exo_.left_side_.ankle_joint_.cable_tensioned_position_);
-    RegisterRwParam("poskp", &exo_.left_side_.knee_sea_joint_.motor_.position_pid_.kp_);
-    RegisterRwParam("poski", &exo_.left_side_.knee_sea_joint_.motor_.position_pid_.ki_);
-    RegisterRwParam("spdkp", &exo_.left_side_.knee_sea_joint_.motor_.speed_pid_.kp_);
-    RegisterRwParam("spdki", &exo_.left_side_.knee_sea_joint_.motor_.speed_pid_.ki_);
+    // RegisterRwParam("poskp", &exo_.left_side_.knee_sea_joint_.motor_.pos_pid_.kp_);
+    // RegisterRwParam("poski", &exo_.left_side_.knee_sea_joint_.motor_.pos_pid_.ki_);
+    // RegisterRwParam("spdkp", &exo_.left_side_.knee_sea_joint_.motor_.speed_pid_.kp_);
+    // RegisterRwParam("spdki", &exo_.left_side_.knee_sea_joint_.motor_.speed_pid_.ki_);
+    // RegisterRwParam("poskp", &exo_.left_side_.knee_sea_joint_.joint_pos_pid_.kp_);
+    // RegisterRwParam("poski", &exo_.left_side_.knee_sea_joint_.joint_pos_pid_.ki_);
+    RegisterRwParam("forkp", &exo_.left_side_.knee_sea_joint_.spring_force_pid_.kp_);
+    RegisterRwParam("forki", &exo_.left_side_.knee_sea_joint_.spring_force_pid_.ki_);
 }
 
 void ExoShell::OnCmdSetLed(int argc, char **argv)
@@ -1257,41 +1284,80 @@ void Exo::Initialize()
     right_side_.ankle_joint_.assistance_end_phase_percent_ = 65.0f;
 }
 
+float duration_us = 0;  /** 一般来说少定义全局变量, 但这仅用于测试 */
+
 void Exo::Run()
 {
-    Read();
-    float sys_ms = (float)GetSysTimeMs();
-    float radi = _2PI * sys_ms / 1000.0f;
-    left_side_.knee_sea_joint_.motor_.shaft_pos_reference_rad_ = 100.f * arm_sin_f32(radi);
-    if (pe_.do_test)
-    {
-        left_side_.knee_sea_joint_.motor_.PositionControl();
-    }
-    else
-    {
-        left_side_.knee_sea_joint_.motor_.DisableMotor();
-    }
-    
-    dji_esc_hub_.SendAllCanTxData(); /** important */
+    uint32_t start_ticks = DWT_CYCCNT; /** 仅仅用于实际测试运行一次run()函数需要多长时间 */
 
+    /** 读取/转换(有些传感器在中断回调中读取)传感器数据 */
+    Read();    
+    /** 在系统非睡眠状态下检查是否欠压 或 出现故障 */
     if (pe_.state_ != ExoData::State::kSleep)
     {
         CheckSystemHealth();   /** 重新计算error_code_ */
     }
 
-    /** 根据系统当前状态过滤无效事件 */
+    /** 在此之前先标定好让位置去到零点, 然后记录 pos_linear_encoder_offset_mm_ */
+    static bool is_zeroed = false;
+    static uint8_t low_err_count = 0;
+    static float force_ref_N = 0;
+    if (pe_.do_test)
+    {
+        if (!is_zeroed)
+        {
+            pe_.left_side_.knee_sea_joint_.pos_ref_rad_ = 0;
+            left_side_.knee_sea_joint_.JointPosControl();
+            if (pe_.left_side_.knee_sea_joint_.pos_rad_ > -0.01 && pe_.left_side_.knee_sea_joint_.pos_rad_ < 0.01)
+            {
+                low_err_count ++;
+                if (low_err_count > 200)
+                {
+                    low_err_count = 0;
+                    pe_.left_side_.knee_sea_joint_.pos_slider_offset_mm_ = pe_.left_side_.knee_sea_joint_.pos_slider_mm_;
+                    is_zeroed = true;
+                }
+            }
+            else
+            {
+                low_err_count = 0;
+                is_zeroed = false;
+            }
+        }
+        else
+        {
+            float sys_ms = (float)GetSysTimeMs();
+            float freq = 4.0f;
+            float amp = 150.0f;
+            float radi = _2PI * freq * sys_ms / 1000.0f;
+
+            force_ref_N = arm_sin_f32(radi) * amp;
+            pe_.left_side_.knee_sea_joint_.force_spring_ref_N_ = force_ref_N;
+            left_side_.knee_sea_joint_.SpringForceControl();
+        }
+    }
+    else
+    {
+        pe_.left_side_.knee_sea_joint_.force_spring_ref_N_ = force_ref_N;
+        left_side_.knee_sea_joint_.motor_.DisableMotor();
+    }
+    dji_esc_hub_.SendAllCanTxData(); /** important */
+
+
+    /** 根据系统当前状态过滤无效事件, 比如在kSleep状态下只接受wakeup命令 */
     pe_.pending_events_ &= AllowedEventsForState(pe_.state_);
 
-    /** 紧急关停事件判断 */
+    /** 用户发起了estop急停命令 */
     const bool is_estop_triggered = ((pe_.pending_events_ & ExoData::SysEvent::kEmergencyStop) != 0);
     if (is_estop_triggered)
     {
         ClearNonCriticalEvents(pe_);
         pe_.state_ = ExoData::State::kSleep;
         Shutdown();
-        return;      /** 不清除estop事件标志, 并永久锁死(因为无法再处理命令) */
+        return;      /** 不清除estop事件标志, 不再运行下面的代码 */
     }
 
+    /** 电池欠压则将状态机转入kFaultLowBattery */
     const bool battery_low = ((pe_.error_code_ & ExoData::Error::kBatteryLow) != 0);
     const bool has_any_fault = (pe_.error_code_ != ExoData::Error::kNone);
     if (battery_low)
@@ -1302,6 +1368,7 @@ void Exo::Run()
             pe_.state_ = ExoData::State::kFaultLowBattery;
         }
     }
+    /** 出现故障则将状态机转入kFaultSystem */
     else if (has_any_fault)
     {
         if (pe_.state_ != ExoData::State::kFaultSystem)
@@ -1310,6 +1377,7 @@ void Exo::Run()
             pe_.state_ = ExoData::State::kFaultSystem;
         }
     }
+    /** 用户的休眠命令可令状态机直接转入kSleep */
     else if ((pe_.pending_events_ & ExoData::SysEvent::kEnterSleep) != 0)
     {
         pe_.pending_events_ &= ~ExoData::SysEvent::kEnterSleep;
@@ -1321,6 +1389,7 @@ void Exo::Run()
     switch (pe_.state_)
     {
     case ExoData::State::kSleep:
+        /** 收到wakeup命令并且电压足够则转入kWaitMotorComm */
         if (((pe_.pending_events_ & ExoData::SysEvent::kWakeup) != 0) && pe_.battery_voltage_ >= 19.5f)
         {
             pe_.pending_events_ &= ~ExoData::SysEvent::kWakeup;
@@ -1329,21 +1398,19 @@ void Exo::Run()
         break;
 
     case ExoData::State::kWaitMotorComm:
-        if (IsMotorConnect())
+        /** 接收到calib命令并且电机通信检查完毕则转入kCalibrating */
+        if (((pe_.pending_events_ & ExoData::SysEvent::kStartCalibrate) != 0) && IsMotorConnect())
         {
-            /** 需要用户命令启动calib */
-            if ((pe_.pending_events_ & ExoData::SysEvent::kStartCalibrate) != 0)
-            {
-                pe_.pending_events_ &= ~ExoData::SysEvent::kStartCalibrate;
-                ResetCalibrationFlags();
-                pe_.state_ = ExoData::State::kCalibrating;
-            }
+            pe_.pending_events_ &= ~ExoData::SysEvent::kStartCalibrate;
+            ResetCalibrationFlags();
+            pe_.state_ = ExoData::State::kCalibrating;
         }
         break;
 
     case ExoData::State::kCalibrating:
         Calibrate();
         Standby();   /** 为了获取电机/关节状态, 保持通信 */
+        /** 标定完毕则转入kReady */
         if (IsCalibrateDone())
         {
             pe_.state_ = ExoData::State::kReady;
@@ -1353,12 +1420,14 @@ void Exo::Run()
     case ExoData::State::kReady:
         Estimate();
         Standby();   /** 为了获取电机/关节状态, 保持通信 */
+        /** 此时如果对标定结果不满意可发起calib命令重新标定 */
         if ((pe_.pending_events_ & ExoData::SysEvent::kStartCalibrate) != 0)
         {
             pe_.pending_events_ &= ~ExoData::SysEvent::kStartCalibrate;
             ResetCalibrationFlags();
             pe_.state_ = ExoData::State::kCalibrating;
         }
+        /** 如果用户发起了start命令则转入kAssisting */
         else if ((pe_.pending_events_ & ExoData::SysEvent::kStartAssist) != 0)
         {
             pe_.pending_events_ &= ~ExoData::SysEvent::kStartAssist;
@@ -1367,18 +1436,22 @@ void Exo::Run()
         break;
 
     case ExoData::State::kAssisting:
+        /** 估计运动模式及该模式下的参数, 如walking及步态相位 */
         Estimate();
-        if ((pe_.pending_events_ & ExoData::SysEvent::kStopAssist) != 0)  /** 用户停止辅助 */
+        /** 如果用户发起了stop命令则回到kReady */
+        if ((pe_.pending_events_ & ExoData::SysEvent::kStopAssist) != 0)
         {
             pe_.pending_events_ &= ~ExoData::SysEvent::kStopAssist;
             Standby();
             pe_.state_ = ExoData::State::kReady;
         }
-        // else if (IsStaticMotionIntent())     /** 自动检测停止辅助 */  
+        /** 自动检测停止辅助的条件, 暂未实现 */  
+        // else if (IsStaticMotionIntent())     
         // {
         //     Standby();
         //     pe_.state_ = ExoData::State::kReady;
         // }
+        /** 进行助力 */
         else
         {
             Assist();
@@ -1387,14 +1460,17 @@ void Exo::Run()
 
     case ExoData::State::kFaultLowBattery:
         Shutdown();
+        /** 不关机充电(?不知合理否)到大于19.5V则重转入kSleep */  
         if (pe_.battery_voltage_ >= 19.5f)
         {
             pe_.state_ = ExoData::State::kSleep;
         }
         break;
+
     case ExoData::State::kFaultSystem:
         Shutdown();
-        if (((pe_.pending_events_ & ExoData::SysEvent::kClearFaults) != 0)) /** 当前阶段最好不用ClearFaults命令 */  
+        /** 最好不用ClearFaults命令, 有问题就关机排查 */  
+        if (((pe_.pending_events_ & ExoData::SysEvent::kClearFaults) != 0))
         {
             pe_.pending_events_ &= ~ExoData::SysEvent::kClearFaults;
             pe_.error_code_ = ExoData::Error::kNone;
@@ -1406,17 +1482,24 @@ void Exo::Run()
         break;
     }
 
+    /** 处理上位机蓝牙发下来的命令, 所有命令见ExoShell的构造函数 */  
     if (shell_.ProcessPendingCommand())
     {
         pe_.telemetry_config_.pause_until_ms = GetSysTimeMs() + 3000U;
     }
 
+    /** 由于处理命令后需要反馈给上位机, 为了反馈不被数据掩盖, 延时一段时间再发数据 */  
     const uint32_t now_ms = GetSysTimeMs();
-    if (pe_.telemetry_config_.enable && (now_ms >= pe_.telemetry_config_.pause_until_ms))
-    {
+    // if (pe_.telemetry_config_.enable && (now_ms >= pe_.telemetry_config_.pause_until_ms))
+    // {
         VofaSendTelemetry();
-    }
+    // }
+
+    /** 指示系统状态机当前是什么状态 */
     state_led_.UpdateColorBDMA(static_cast<uint8_t>(pe_.state_));
+
+    /** 计算得到运行一次run()函数需要用到的时间 */
+    duration_us = DWTGetDeltaUs(start_ticks);
 }
 
 void Exo::Calibrate()
@@ -1451,7 +1534,7 @@ void Exo::ResetCalibrationFlags()
 void Exo::Read()
 {
     pe_.battery_voltage_ = (g_adc_data[0] * 3.3f / 65535) * 11;
-    // pe_.battery_voltage_ = 24; /** #HACK 强制令电压读数大于唤醒电压 */
+    pe_.battery_voltage_ = 24; /** #HACK 强制令电压读数大于唤醒电压 */
     left_side_.Read();
     right_side_.Read();
 }
@@ -1558,17 +1641,24 @@ void Exo::VofaSendTelemetry()
     buf.f_data[4] = pe_.right_side_.fsr_gait_data_.toe_.raw_reading;
     buf.f_data[5] = pe_.left_side_.fsr_gait_data_.percent_gait_ / 100.0f;
     buf.f_data[6] = pe_.right_side_.fsr_gait_data_.percent_gait_ / 100.0f;
-    buf.f_data[7] = left_side_.ankle_joint_.motor_.position_ref_;
-    buf.f_data[8] = right_side_.ankle_joint_.motor_.position_ref_;
-    buf.f_data[9] = left_side_.ankle_joint_.motor_.position_;
-    
-    buf.f_data[10] = pe_.left_side_.knee_sea_joint_.pos_linear_encoder_mm_;
+    // buf.f_data[7] = left_side_.ankle_joint_.motor_.position_ref_;
+    // buf.f_data[8] = right_side_.ankle_joint_.motor_.position_ref_;
+    // buf.f_data[9] = left_side_.ankle_joint_.motor_.position_;
+
+    // buf.f_data[5] = pe_.left_side_.knee_sea_joint_.pos_linear_encoder_mm_;
+    // buf.f_data[6] = left_side_.knee_sea_joint_.motor_.rotor_iq_reference_amp_;
+    buf.f_data[7] = pe_.left_side_.knee_sea_joint_.pos_ref_rad_;
+    buf.f_data[8] = pe_.left_side_.knee_sea_joint_.pos_rad_;
+    buf.f_data[9] = pe_.left_side_.knee_sea_joint_.force_spring_ref_N_;
+    buf.f_data[10] = pe_.left_side_.knee_sea_joint_.force_spring_N_;
+
     buf.f_data[11] = left_side_.knee_sea_joint_.motor_.shaft_pos_reference_rad_;
     buf.f_data[12] = left_side_.knee_sea_joint_.motor_.shaft_pos_feedback_rad_;
     buf.f_data[13] = left_side_.knee_sea_joint_.motor_.shaft_speed_reference_radps_;
     buf.f_data[14] = left_side_.knee_sea_joint_.motor_.shaft_speed_feedback_radps_;
+    buf.f_data[15] = duration_us;
 
-    uint16_t count = 4 * 15; /** 15为浮点数个数 */
+    uint16_t count = 4 * 16; /** 4 x 浮点数个数 */
     buf.u8_data[count++] = 0x00;
     buf.u8_data[count++] = 0x00;
     buf.u8_data[count++] = 0x80;

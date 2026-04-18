@@ -46,7 +46,7 @@ extern "C" {
 
 /* Exported macro ------------------------------------------------------------*/
 /* USER CODE BEGIN EM */
-extern uint8_t g_timer2_5ms_flag;
+extern uint8_t g_timer2_flag;
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/

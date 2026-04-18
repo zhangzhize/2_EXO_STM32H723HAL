@@ -68,13 +68,13 @@ public:
     virtual ~DjiEsc() = default;
 
     void UpdateFeedback(const uint8_t *rx_data);  /** 会被DjiEscHub自动调用 */
-    void PositionControl();   /** 输出轴位置控制 */
-    void SpeedControl();      /** 输出轴速度控制 */
+    void PositionControl();   /** 电机位置控制 */
+    void SpeedControl();      /** 电机速度控制 */
     void CurrentControl();    /** q轴电流控制 */
     void EnableMotor();       /** 就是令iqref=0 */
     void DisableMotor();      /** 就是令iqref=0 */
 
-    PIDController position_pid_;  /** pid参数需要调试 */
+    PIDController pos_pid_;  /** pid参数需要调试 */
     PIDController speed_pid_;
 
     float shaft_pos_feedback_rad_ = 0.0f;      /** 输出端位置反馈 */

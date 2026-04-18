@@ -1,0 +1,9 @@
+* text=auto eol=lf
+*.c text eol=lf
+*.cpp text eol=lf
+*.h text eol=lf
+*.hpp text eol=lf
+
+# 二进制不处理
+*.bin *.hex *.elf *.lib *.a binary
+*.png *.jpg binary

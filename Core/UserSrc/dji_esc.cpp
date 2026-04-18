@@ -64,8 +64,8 @@ void DjiEscHub::CanRxCallBack(uint32_t can_std_id, const uint8_t *rx_data)
 
 /** speed_pid_的输出是iqref, 那么其最后一个参数output_limit设置为参考电流的最大值 */
 DjiEsc::DjiEsc(DjiEscHub& hub, EscId esc_id, MotorType motor_type)
-    : position_pid_(40.0f, 25.0f, 0.0f, -500.0f, 10000.0f),
-    speed_pid_(0.05f, 0.02f, 0.0f, -100.0f, motor_type == MotorType::kM3508 ? 20.0f : 10.0f),
+    : pos_pid_(46.0f, 20.0f, 0.0f, -500.0f, 10000.0f),
+    speed_pid_(0.1f, 0.02f, 0.0f, -100.0f, motor_type == MotorType::kM3508 ? 20.0f : 10.0f),
     esc_id_(esc_id),
     motor_type_(motor_type),
     hub_(hub)
@@ -128,13 +128,13 @@ void DjiEsc::PositionControl()
 {
     if (mode_ != EscMode::kPosition)
     {
-        position_pid_.ResetError();
+        pos_pid_.ResetError();
         speed_pid_.ResetError();
         mode_ = EscMode::kPosition;
     }
 
     float shaft_pos_error_rad = shaft_pos_reference_rad_ - shaft_pos_feedback_rad_;
-    shaft_speed_reference_radps_ = position_pid_(shaft_pos_error_rad);
+    shaft_speed_reference_radps_ = pos_pid_(shaft_pos_error_rad);
 
     float shaft_speed_error_radps = shaft_speed_reference_radps_ - shaft_speed_feedback_radps_;
     rotor_iq_reference_amp_ = speed_pid_(shaft_speed_error_radps);
@@ -148,7 +148,7 @@ void DjiEsc::SpeedControl()
 {
     if (mode_ != EscMode::kSpeed)
     {
-        position_pid_.ResetError();
+        pos_pid_.ResetError();
         speed_pid_.ResetError();
         mode_ = EscMode::kSpeed;
     }
@@ -165,7 +165,7 @@ void DjiEsc::CurrentControl()
 {
     if (mode_ != EscMode::kCurrent)
     {
-        position_pid_.ResetError();
+        pos_pid_.ResetError();
         speed_pid_.ResetError();
         mode_ = EscMode::kCurrent;
     }
@@ -181,7 +181,7 @@ void DjiEsc::EnableMotor()
 {
     int16_t iq_tx_data = 0;
     hub_.SetTxIqRef(static_cast<uint8_t>(esc_id_), iq_tx_data);
-    position_pid_.ResetError();
+    pos_pid_.ResetError();
     speed_pid_.ResetError();
 }
 
@@ -191,6 +191,6 @@ void DjiEsc::DisableMotor()
     mode_ = EscMode::kStop;
     int16_t iq_tx_data = 0;
     hub_.SetTxIqRef(static_cast<uint8_t>(esc_id_), iq_tx_data);
-    position_pid_.ResetError();
+    pos_pid_.ResetError();
     speed_pid_.ResetError();
 }

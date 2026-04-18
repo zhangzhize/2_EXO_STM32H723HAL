@@ -1,5 +1,6 @@
 #include "mag_encoder.hpp"
 #include "gpio.h"
+#include "utils.h"
 
 __attribute__((section(".dma_buf"), aligned(32))) uint8_t g_mag_encoder_tx_dma_buf[2][32] = {
     {0x01, 0x03, 0x00, 0x00, 0x00, 0x02, 0xc4, 0x0B},
@@ -22,13 +23,25 @@ MagEncoder::MagEncoder(UART_HandleTypeDef &huart) : huart_(huart)
 
 void MagEncoder::SendRequest()
 {
+    if (state_ == State::kWaitingForData)
+    {
+        if (GetSysTimeMs() - request_start_ms_ > kTimeoutMs)
+        {
+            HAL_UART_AbortReceive(&huart_);
+            state_ = State::kIdle;
+        }
+        else
+        {
+            return;
+        }
+    }
+
     if (state_ != State::kIdle) return;
 
-    if (is_first_reading_)
-    {
-        is_first_reading_ = false;
-        HAL_UARTEx_ReceiveToIdle_DMA(&huart_, rx_buffer_, 32);
-    }
+    __HAL_UART_CLEAR_OREFLAG(&huart_);
+    __HAL_UART_CLEAR_IDLEFLAG(&huart_);
+    HAL_UARTEx_ReceiveToIdle_DMA(&huart_, rx_buffer_, 32);
+
     tx_buffer_[0] = 0x01;
     tx_buffer_[1] = 0x03;
     tx_buffer_[2] = 0x00;
@@ -38,6 +51,7 @@ void MagEncoder::SendRequest()
     tx_buffer_[6] = 0xc4;
     tx_buffer_[7] = 0x0B;
     HAL_UART_Transmit_DMA(&huart_, tx_buffer_, 8);
+    request_start_ms_ = GetSysTimeMs();
 
     state_ = State::kWaitingForData;
 }
@@ -50,9 +64,9 @@ void MagEncoder::UartRxCallback(UART_HandleTypeDef *huart, const uint8_t* data, 
     uint16_t crc_calculated = Crc16Modbus(data, 7);
     if (crc_received != crc_calculated) return;
 
-    raw_position_reading_ = HexArrayToDec(data, data_size);
-    scaled_position_ = (float)raw_position_reading_ / scale_factor_;
-    HAL_UARTEx_ReceiveToIdle_DMA(&huart_, rx_buffer_, 32);
+    raw_position_reading_um_ = HexArrayToDec(data, data_size);
+    absolute_position_mm_ = (float)raw_position_reading_um_ * kUm2Mm;
+    // HAL_UARTEx_ReceiveToIdle_DMA(&huart_, rx_buffer_, 32);
     state_ = State::kIdle;
 }
 

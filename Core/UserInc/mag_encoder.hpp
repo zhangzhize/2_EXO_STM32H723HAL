@@ -19,7 +19,7 @@ public:
     void SendRequest();
     void UartRxCallback(UART_HandleTypeDef *uart, const uint8_t *data, uint16_t data_size);
 
-    float scaled_position_ = 0.0f;
+    float absolute_position_mm_ = 0.0f;
     static uint16_t Crc16Modbus(const uint8_t *data, uint16_t data_size);
     static uint32_t HexArrayToDec(const uint8_t *hex_array, uint8_t length);
     State state_ = State::kIdle;
@@ -30,8 +30,10 @@ private:
     uint8_t *rx_buffer_ = nullptr;
     uint8_t *tx_buffer_ = nullptr;
 
-    float scale_factor_ = 10.0f;
-    uint32_t raw_position_reading_ = 0;
+    static constexpr float kUm2Mm = 0.001f; 
+    static constexpr uint32_t kTimeoutMs = 20;
+    uint32_t raw_position_reading_um_ = 0;
+    uint32_t request_start_ms_ = 0;
 
     // State state_ = State::kIdle;
 
