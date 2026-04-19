@@ -456,6 +456,7 @@ public:
     MagEncoder mag_encoder_;
     PIDController joint_pos_pid_; /** 必须放在motor_后面, 因为依赖其进行构造 */
     PIDController spring_force_pid_;  /** 必须放在motor_后面, 因为依赖其进行构造 */
+    float force_test_sin_freq = 0.1f;
 private:
     CtrlMode ctrl_mode_ = CtrlMode::kSpringForce;
 };

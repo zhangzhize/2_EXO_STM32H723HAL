@@ -8,6 +8,8 @@ extern "C" {
 
 extern uint32_t g_adc_data[3];  /**< definition in alt_main.cpp */
 
+volatile float force_ref_temp = 0.0f;
+
 void AnkleJoint::Calibrate()
 {
     if (!pj_.is_used_ || pj_.is_calibrated_) return;
@@ -289,7 +291,8 @@ void KneeSeaJoint::Standby()
     if (!pj_.is_used_ || !pj_.is_calibrated_) return;
 
     float force_profile = 0.0f;
-    force_profile = pj_.is_left_ ? force_profile : -force_profile;
+    /** SEA驱动左右同向 */
+    // force_profile = pj_.is_left_ ? force_profile : -force_profile;
 
     /** 弹簧零力控制 */
     pj_.force_spring_ref_N_ = force_profile * pe_.user_weight_kg_;
@@ -307,10 +310,12 @@ void KneeSeaJoint::Assist()
 
     /** #HACK 先走几步再助力? */
     force_profile = force_profile_generator_.GetForceProfile(phase_rad, pj_.pos_rad_, pj_.vel_radps_);
-    force_profile = pj_.is_left_ ? force_profile : -force_profile;
 
     pj_.force_spring_ref_N_ = force_profile * pe_.user_weight_kg_;
+
+    force_ref_temp = pj_.force_spring_ref_N_;
     SpringForceControl();
+    // Standby();
 }
 
 void KneeSeaJoint::JointPosControl()
@@ -1244,6 +1249,7 @@ ExoShell::ExoShell(UART_HandleTypeDef &huart, Exo &exo) : Shell(huart), exo_(exo
     // RegisterRwParam("poski", &exo_.left_side_.knee_sea_joint_.joint_pos_pid_.ki_);
     RegisterRwParam("forkp", &exo_.left_side_.knee_sea_joint_.spring_force_pid_.kp_);
     RegisterRwParam("forki", &exo_.left_side_.knee_sea_joint_.spring_force_pid_.ki_);
+    RegisterRwParam("freq", &exo_.left_side_.knee_sea_joint_.force_test_sin_freq);
 }
 
 void ExoShell::OnCmdSetLed(int argc, char **argv)
@@ -1348,6 +1354,7 @@ void Exo::Run()
     //     if (!is_zeroed)
     //     {
     //         pe_.left_side_.knee_sea_joint_.pos_ref_rad_ = 0;
+    //         left_side_.knee_sea_joint_.joint_pos_pid_.output_limit_ = left_side_.knee_sea_joint_.motor_.max_iqref_amp_ / 5.0f;
     //         left_side_.knee_sea_joint_.JointPosControl();
 
     //         if (pe_.left_side_.knee_sea_joint_.pos_rad_ > -0.01 && pe_.left_side_.knee_sea_joint_.pos_rad_ < 0.01)
@@ -1357,6 +1364,7 @@ void Exo::Run()
     //             {
     //                 low_err_count = 0;
     //                 pe_.left_side_.knee_sea_joint_.pos_slider_offset_mm_ = pe_.left_side_.knee_sea_joint_.pos_slider_mm_;
+    //                 left_side_.knee_sea_joint_.joint_pos_pid_.output_limit_ = left_side_.knee_sea_joint_.motor_.max_iqref_amp_;
     //                 is_zeroed = true;
     //             }
     //         }
@@ -1369,8 +1377,8 @@ void Exo::Run()
     //     else
     //     {
     //         float sys_ms = (float)GetSysTimeMs();
-    //         float freq = 4.0f;
-    //         float amp = 150.0f;
+    //         float freq = left_side_.knee_sea_joint_.force_test_sin_freq;
+    //         float amp = 200.0f;
     //         float radi = _2PI * freq * sys_ms / 1000.0f;
 
     //         force_ref_N = arm_sin_f32(radi) * amp;
@@ -1387,8 +1395,7 @@ void Exo::Run()
     //     }
     //     else
     //     {
-    //         pe_.left_side_.knee_sea_joint_.force_spring_ref_N_ = 0;
-    //         left_side_.knee_sea_joint_.SpringForceControl();
+    //         left_side_.knee_sea_joint_.Standby();
     //     }
     // }
 
@@ -1688,21 +1695,24 @@ void Exo::VofaSendTelemetry()
     DmaBuffer buf = {0};
     buf.f_data[0] = loop_cnt++;
     buf.f_data[1] = pe_.left_side_.fsr_gait_data_.heel_.raw_reading;
-    buf.f_data[2] = pe_.left_side_.fsr_gait_data_.toe_.raw_reading;
+    // buf.f_data[2] = pe_.left_side_.fsr_gait_data_.toe_.raw_reading;
+    buf.f_data[2] = pe_.left_side_.fsr_gait_data_.percent_gait_ / 100.0f;
     buf.f_data[3] = pe_.right_side_.fsr_gait_data_.heel_.raw_reading;
-    buf.f_data[4] = pe_.right_side_.fsr_gait_data_.toe_.raw_reading;
-    buf.f_data[5] = pe_.left_side_.fsr_gait_data_.percent_gait_ / 100.0f;
-    buf.f_data[6] = pe_.right_side_.fsr_gait_data_.percent_gait_ / 100.0f;
+    // buf.f_data[4] = pe_.right_side_.fsr_gait_data_.toe_.raw_reading;
+    buf.f_data[4] = pe_.right_side_.fsr_gait_data_.percent_gait_ / 100.0f;
+    // buf.f_data[5] = pe_.left_side_.fsr_gait_data_.percent_gait_ / 100.0f;
+    // buf.f_data[6] = pe_.right_side_.fsr_gait_data_.percent_gait_ / 100.0f;
     // buf.f_data[7] = left_side_.ankle_joint_.motor_.position_ref_;
     // buf.f_data[8] = right_side_.ankle_joint_.motor_.position_ref_;
     // buf.f_data[9] = left_side_.ankle_joint_.motor_.position_;
 
     // buf.f_data[5] = pe_.left_side_.knee_sea_joint_.pos_linear_encoder_mm_;
-    // buf.f_data[6] = left_side_.knee_sea_joint_.motor_.rotor_iq_reference_amp_;
-    buf.f_data[7] = pe_.left_side_.knee_sea_joint_.pos_ref_rad_;
-    buf.f_data[8] = pe_.left_side_.knee_sea_joint_.pos_rad_;
-    buf.f_data[9] = pe_.left_side_.knee_sea_joint_.force_spring_ref_N_;
-    buf.f_data[10] = pe_.left_side_.knee_sea_joint_.force_spring_N_;
+    buf.f_data[5] = force_ref_temp;
+    buf.f_data[6] = left_side_.knee_sea_joint_.motor_.rotor_iq_reference_amp_;
+    buf.f_data[7] = pe_.left_side_.knee_sea_joint_.force_spring_ref_N_;
+    buf.f_data[8] = pe_.left_side_.knee_sea_joint_.force_spring_N_;
+    buf.f_data[9] = pe_.left_side_.knee_sea_joint_.pos_ref_rad_;
+    buf.f_data[10] = pe_.left_side_.knee_sea_joint_.pos_rad_;
 
     buf.f_data[11] = left_side_.knee_sea_joint_.motor_.shaft_pos_reference_rad_;
     buf.f_data[12] = left_side_.knee_sea_joint_.motor_.shaft_pos_feedback_rad_;
