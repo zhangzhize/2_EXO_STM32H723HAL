@@ -395,9 +395,9 @@ public:
     Robstride motor_;
     PIDController pid_;
 
-    float cable_pre_tensioned_position_ = 0.0f;
-    float cable_tensioned_position_ = 6.0f;
-    float cable_released_position_ = 0.0f;
+    float cable_released_position_ = 0.2f;
+    float cable_pre_tensioned_position_ = 0.4f;
+    float cable_tensioned_position_ = 1.6f;
     float assistance_start_phase_percent_ = 35.0f;
     float assistance_end_phase_percent_ = 65.0f;
 };

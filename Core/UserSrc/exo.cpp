@@ -229,6 +229,13 @@ void KneeSeaJoint::Calibrate()
 {
     if (!pj_.is_used_ || pj_.is_calibrated_) return;
 
+    if (pj_.pos_linear_encoder_mm_ < 0) return;
+
+    /** 假设此时弹簧力为0, 滑块处于中间位置, 并且框处于静止状态, 那么可以由框的当前位置计算得到滑块的偏置 */
+    pj_.pos_slider_offset_mm_ = pj_.pos_slider_mm_ - pj_.pos_linear_encoder_mm_;
+
+    return;
+
     static uint8_t near_zero_cnt = 0;
     pj_.pos_ref_rad_ = 0;
     joint_pos_pid_.output_limit_ = motor_.max_iqref_amp_ / 5.0f;
@@ -1237,19 +1244,19 @@ ExoShell::ExoShell(UART_HandleTypeDef &huart, Exo &exo) : Shell(huart), exo_(exo
 
     /** 注册需要实时调节的参数 */
     RegisterRwParam("weight", &exo_.pe_.user_weight_kg_);
-    RegisterRwParam("la_on",  &exo_.left_side_.ankle_joint_.assistance_start_phase_percent_);
-    RegisterRwParam("la_off", &exo_.left_side_.ankle_joint_.assistance_end_phase_percent_);
-    RegisterRwParam("la_pre", &exo_.left_side_.ankle_joint_.cable_pre_tensioned_position_);
-    RegisterRwParam("la_ten", &exo_.left_side_.ankle_joint_.cable_tensioned_position_);
+    RegisterRwParam("assiston",  &exo_.left_side_.ankle_joint_.assistance_start_phase_percent_);
+    RegisterRwParam("assistoff", &exo_.left_side_.ankle_joint_.assistance_end_phase_percent_);
+    RegisterRwParam("cablepre", &exo_.left_side_.ankle_joint_.cable_pre_tensioned_position_);
+    RegisterRwParam("cableten", &exo_.left_side_.ankle_joint_.cable_tensioned_position_);
     // RegisterRwParam("poskp", &exo_.left_side_.knee_sea_joint_.motor_.pos_pid_.kp_);
     // RegisterRwParam("poski", &exo_.left_side_.knee_sea_joint_.motor_.pos_pid_.ki_);
     // RegisterRwParam("spdkp", &exo_.left_side_.knee_sea_joint_.motor_.speed_pid_.kp_);
     // RegisterRwParam("spdki", &exo_.left_side_.knee_sea_joint_.motor_.speed_pid_.ki_);
     // RegisterRwParam("poskp", &exo_.left_side_.knee_sea_joint_.joint_pos_pid_.kp_);
     // RegisterRwParam("poski", &exo_.left_side_.knee_sea_joint_.joint_pos_pid_.ki_);
-    RegisterRwParam("forkp", &exo_.left_side_.knee_sea_joint_.spring_force_pid_.kp_);
-    RegisterRwParam("forki", &exo_.left_side_.knee_sea_joint_.spring_force_pid_.ki_);
-    RegisterRwParam("freq", &exo_.left_side_.knee_sea_joint_.force_test_sin_freq);
+    // RegisterRwParam("forkp", &exo_.left_side_.knee_sea_joint_.spring_force_pid_.kp_);
+    // RegisterRwParam("forki", &exo_.left_side_.knee_sea_joint_.spring_force_pid_.ki_);
+    // RegisterRwParam("freq", &exo_.left_side_.knee_sea_joint_.force_test_sin_freq);
 }
 
 void ExoShell::OnCmdSetLed(int argc, char **argv)
@@ -1307,10 +1314,10 @@ void Exo::Initialize()
     pe_.right_side_.hip_joint_.is_used_ = false;
     pe_.left_side_.knee_joint_.is_used_ = false;
     pe_.right_side_.knee_joint_.is_used_ = false;
-    pe_.left_side_.ankle_joint_.is_used_ = false;
+    pe_.left_side_.ankle_joint_.is_used_ = true;
     pe_.right_side_.ankle_joint_.is_used_ = false;
 
-    pe_.left_side_.knee_sea_joint_.is_used_ = true;
+    pe_.left_side_.knee_sea_joint_.is_used_ = false;
     pe_.right_side_.knee_sea_joint_.is_used_ = false;
 
     /** 调试: 髋关节参数. */
@@ -1344,60 +1351,6 @@ void Exo::Run()
     {
         CheckSystemHealth();   /** 重新计算error_code_ */
     }
-
-    /** 力跟踪测试: 在此之前先标定好让位置去到零点, 然后记录 pos_linear_encoder_offset_mm_ */
-    // static bool is_zeroed = false;
-    // static uint8_t low_err_count = 0;
-    // static float force_ref_N = 0;
-    // if (pe_.do_test)
-    // {
-    //     if (!is_zeroed)
-    //     {
-    //         pe_.left_side_.knee_sea_joint_.pos_ref_rad_ = 0;
-    //         left_side_.knee_sea_joint_.joint_pos_pid_.output_limit_ = left_side_.knee_sea_joint_.motor_.max_iqref_amp_ / 5.0f;
-    //         left_side_.knee_sea_joint_.JointPosControl();
-
-    //         if (pe_.left_side_.knee_sea_joint_.pos_rad_ > -0.01 && pe_.left_side_.knee_sea_joint_.pos_rad_ < 0.01)
-    //         {
-    //             low_err_count ++;
-    //             if (low_err_count > 200)
-    //             {
-    //                 low_err_count = 0;
-    //                 pe_.left_side_.knee_sea_joint_.pos_slider_offset_mm_ = pe_.left_side_.knee_sea_joint_.pos_slider_mm_;
-    //                 left_side_.knee_sea_joint_.joint_pos_pid_.output_limit_ = left_side_.knee_sea_joint_.motor_.max_iqref_amp_;
-    //                 is_zeroed = true;
-    //             }
-    //         }
-    //         else
-    //         {
-    //             low_err_count = 0;
-    //             is_zeroed = false;
-    //         }
-    //     }
-    //     else
-    //     {
-    //         float sys_ms = (float)GetSysTimeMs();
-    //         float freq = left_side_.knee_sea_joint_.force_test_sin_freq;
-    //         float amp = 200.0f;
-    //         float radi = _2PI * freq * sys_ms / 1000.0f;
-
-    //         force_ref_N = arm_sin_f32(radi) * amp;
-    //         pe_.left_side_.knee_sea_joint_.force_spring_ref_N_ = force_ref_N;
-    //         left_side_.knee_sea_joint_.SpringForceControl();
-    //     }
-    // }
-    // else
-    // {
-    //     if (!is_zeroed)
-    //     {
-    //         pe_.left_side_.knee_sea_joint_.force_spring_ref_N_ = force_ref_N;
-    //         left_side_.knee_sea_joint_.motor_.DisableMotor();
-    //     }
-    //     else
-    //     {
-    //         left_side_.knee_sea_joint_.Standby();
-    //     }
-    // }
 
     /** 根据系统当前状态过滤无效事件, 比如在kSleep状态下只接受wakeup命令 */
     pe_.pending_events_ &= AllowedEventsForState(pe_.state_);
@@ -1547,10 +1500,10 @@ void Exo::Run()
 
     /** 由于处理命令后需要反馈给上位机, 为了反馈不被数据掩盖, 延时一段时间再发数据 */  
     const uint32_t now_ms = GetSysTimeMs();
-    // if (pe_.telemetry_config_.enable && (now_ms >= pe_.telemetry_config_.pause_until_ms))
-    // {
+    if (pe_.telemetry_config_.enable && (now_ms >= pe_.telemetry_config_.pause_until_ms))
+    {
         VofaSendTelemetry();
-    // }
+    }
 
     /** 指示系统状态机当前是什么状态 */
     state_led_.UpdateColorBDMA(static_cast<uint8_t>(pe_.state_));
@@ -1593,7 +1546,7 @@ void Exo::ResetCalibrationFlags()
 void Exo::Read()
 {
     pe_.battery_voltage_ = (g_adc_data[0] * 3.3f / 65535) * 11;
-    pe_.battery_voltage_ = 24; /** #HACK 强制令电压读数大于唤醒电压 */
+    // pe_.battery_voltage_ = 24; /** #HACK 强制令电压读数大于唤醒电压 */
     left_side_.Read();
     right_side_.Read();
 }
@@ -1672,25 +1625,27 @@ void Exo::CheckSystemHealth()
 #include "usbd_cdc_if.h"
 void Exo::VofaSendTelemetry()
 {
-    static uint32_t loop_cnt = 0;
-    // shell_.SetVofaJustFloatData(0, loop_cnt++);
-    // shell_.SetVofaJustFloatData(1, pe_.left_side_.fsr_gait_data_.heel_.raw_reading);
-    // shell_.SetVofaJustFloatData(2, pe_.left_side_.fsr_gait_data_.toe_.raw_reading);
-    // shell_.SetVofaJustFloatData(3, pe_.right_side_.fsr_gait_data_.heel_.raw_reading);
-    // shell_.SetVofaJustFloatData(4, pe_.right_side_.fsr_gait_data_.toe_.raw_reading);
-    // shell_.SetVofaJustFloatData(5, pe_.left_side_.fsr_gait_data_.percent_gait_ / 100.0f);
-    // shell_.SetVofaJustFloatData(6, pe_.right_side_.fsr_gait_data_.percent_gait_ / 100.0f);
-    // shell_.SetVofaJustFloatData(7, left_side_.ankle_joint_.motor_.position_ref_);
-    // shell_.SetVofaJustFloatData(8, right_side_.ankle_joint_.motor_.position_ref_);
-    // shell_.SetVofaJustFloatData(9, left_side_.ankle_joint_.motor_.position_);
-    // shell_.SetVofaJustFloatData(10, right_side_.ankle_joint_.motor_.position_);
-    // shell_.SetVofaJustFloatData(11, pe_.left_side_.ankle_joint_.plantarflexion_force_N_);
-    // shell_.SetVofaJustFloatData(12, pe_.right_side_.ankle_joint_.plantarflexion_force_N_);
+    static uint8_t downsample_cnt = 0;
+    if (downsample_cnt++ < 5) return;
+    
+    downsample_cnt = 0;
 
-    // shell_.SetVofaJustFloatData(10, pe_.left_side_.knee_sea_joint_.pos_linear_encoder_mm_);
-    // shell_.SetVofaJustFloatData(11, left_side_.knee_sea_joint_.motor_.shaft_pos_reference_rad_);
-    // shell_.SetVofaJustFloatData(12, left_side_.knee_sea_joint_.motor_.shaft_pos_feedback_rad_);
-    // shell_.SendVofaJustFloatFrame(13);
+    static uint32_t loop_cnt = 0;
+    shell_.SetVofaJustFloatData(0, loop_cnt++);
+    shell_.SetVofaJustFloatData(1, pe_.left_side_.fsr_gait_data_.heel_.raw_reading);
+    shell_.SetVofaJustFloatData(2, pe_.left_side_.fsr_gait_data_.toe_.raw_reading);
+    shell_.SetVofaJustFloatData(3, pe_.right_side_.fsr_gait_data_.heel_.raw_reading);
+    shell_.SetVofaJustFloatData(4, pe_.right_side_.fsr_gait_data_.toe_.raw_reading);
+    shell_.SetVofaJustFloatData(5, pe_.left_side_.fsr_gait_data_.percent_gait_ / 100.0f);
+    shell_.SetVofaJustFloatData(6, pe_.right_side_.fsr_gait_data_.percent_gait_ / 100.0f);
+    shell_.SetVofaJustFloatData(7, left_side_.ankle_joint_.motor_.position_ref_);
+    shell_.SetVofaJustFloatData(8, right_side_.ankle_joint_.motor_.position_ref_);
+    shell_.SetVofaJustFloatData(9, left_side_.ankle_joint_.motor_.position_);
+    shell_.SetVofaJustFloatData(10, right_side_.ankle_joint_.motor_.position_);
+    shell_.SetVofaJustFloatData(11, pe_.left_side_.ankle_joint_.plantarflexion_force_N_);
+    shell_.SetVofaJustFloatData(12, pe_.right_side_.ankle_joint_.plantarflexion_force_N_);
+    shell_.SendVofaJustFloatFrame(13);
+    return;
 
     DmaBuffer buf = {0};
     buf.f_data[0] = loop_cnt++;

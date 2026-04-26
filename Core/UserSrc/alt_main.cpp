@@ -104,7 +104,7 @@ void AltMainTask(void *argument)
 	HAL_TIM_Base_Start_IT(&htim2);  
 	while (1)
 	{   
-        if (g_timer2_flag == 1)   /* 现在控制周期是2ms */
+        if (g_timer2_flag == 1)   /* 现在控制周期是1ms */
         {
             g_timer2_flag = 0;
             /* 外骨骼 */
