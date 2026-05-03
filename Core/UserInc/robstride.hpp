@@ -117,7 +117,7 @@ public:
     float limit_speed_;          //位置模式(CSP)速度限制, RS01:0~44rad/s, RS00:0~33rad/s
     float limit_current_;        //位置速度模式电流限制, RS01:0~23A, RS00:0~16A
     /* 其他 */
-    uint8_t feedback_flag_;      //反馈标志位, 0:未接收, 1:已接收
+    uint8_t feedback_cnt_;       //反馈计数器
 
     /* 说明书中的通信类型 */
     void ObtainDeviceIDRequest(void);

@@ -368,12 +368,12 @@ struct ExoHardware
 
 enum ExoJointCanID : uint8_t
 {
-    kLeftHip = 0x01,
-    kRightHip = 0x02,
-    kLeftKnee = 0x2A,
-    kRightKnee = 0x55,
-    kLeftAnkle = 0x2A,
-    kRightAnkle = 0x55,
+    kLeftHip = 0x01,    // DM4340
+    kRightHip = 0x02,   // DM4340
+    kLeftKnee = 0x2B,   // RS01
+    kRightKnee = 0x55,  // RS01
+    kLeftAnkle = 0x2A,  // RS02
+    kRightAnkle = 0x55, // RS02
 };
 
 class AnkleJoint

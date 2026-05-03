@@ -118,7 +118,7 @@ Robstride::Robstride(uint8_t can_id) :
     limit_torque_(10.0f),
     limit_speed_(10.0f),
     limit_current_(8.0f),
-    feedback_flag_(0)
+    feedback_cnt_(0)
 {
 
 }
@@ -635,7 +635,7 @@ void Robstride::CanRxCallBack(uint32_t can_ext_id, const uint8_t* can_rxdata)
     {
         return;
     }
-    feedback_flag_ = 1;
+    feedback_cnt_ ++;
     switch (com_type)
     {
     case kComTypeObtainDeviceID:

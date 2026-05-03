@@ -19,7 +19,7 @@ bool AnkleJoint::IsMotorConnect()
 {
     if (!pj_.is_used_) return true;
 
-    if (motor_.feedback_flag_ > 0)
+    if (motor_.feedback_cnt_ > 10)
     {
         return true;
     }
@@ -104,13 +104,14 @@ void AnkleJoint::Assist()
 void KneeJoint::Calibrate()
 {
     if (!pj_.is_used_ || pj_.is_calibrated_) return;
+
 }
 
 bool KneeJoint::IsMotorConnect()
 {
     if (!pj_.is_used_) return true;
 
-    if (motor_.feedback_flag_ > 0)
+    if (motor_.feedback_cnt_ > 10)
     {
         return true;
     }
@@ -129,13 +130,13 @@ void KneeJoint::Standby()
 {
     if (!pj_.is_used_) return;
 
-    // motor_.torque_forward_ = 0.0f;
-    // motor_.position_ref_ = 0.0f;
-    // motor_.speed_ref_ = 0.0f;
-    // motor_.motion_mode_kp_ = 0.0f;
-    // motor_.motion_mode_kd_ = 0.0f;
-    // motor_.MotionControl();
-    motor_.EnableMotor();
+    motor_.torque_forward_ = 0.0f;
+    motor_.position_ref_ = 0.0f;
+    motor_.speed_ref_ = 0.0f;
+    motor_.motion_mode_kp_ = 0.0f;
+    motor_.motion_mode_kd_ = 0.0f;
+    motor_.MotionControl();
+    // motor_.EnableMotor();
 }
 
 void KneeJoint::Read()
@@ -1312,9 +1313,9 @@ void Exo::Initialize()
     /** 调试: 选择助力的关节 */
     pe_.left_side_.hip_joint_.is_used_ = false;
     pe_.right_side_.hip_joint_.is_used_ = false;
-    pe_.left_side_.knee_joint_.is_used_ = false;
+    pe_.left_side_.knee_joint_.is_used_ = true;
     pe_.right_side_.knee_joint_.is_used_ = false;
-    pe_.left_side_.ankle_joint_.is_used_ = true;
+    pe_.left_side_.ankle_joint_.is_used_ = false;
     pe_.right_side_.ankle_joint_.is_used_ = false;
 
     pe_.left_side_.knee_sea_joint_.is_used_ = false;
@@ -1627,25 +1628,24 @@ void Exo::VofaSendTelemetry()
 {
     static uint8_t downsample_cnt = 0;
     if (downsample_cnt++ < 5) return;
-    
     downsample_cnt = 0;
 
     static uint32_t loop_cnt = 0;
-    shell_.SetVofaJustFloatData(0, loop_cnt++);
-    shell_.SetVofaJustFloatData(1, pe_.left_side_.fsr_gait_data_.heel_.raw_reading);
-    shell_.SetVofaJustFloatData(2, pe_.left_side_.fsr_gait_data_.toe_.raw_reading);
-    shell_.SetVofaJustFloatData(3, pe_.right_side_.fsr_gait_data_.heel_.raw_reading);
-    shell_.SetVofaJustFloatData(4, pe_.right_side_.fsr_gait_data_.toe_.raw_reading);
-    shell_.SetVofaJustFloatData(5, pe_.left_side_.fsr_gait_data_.percent_gait_ / 100.0f);
-    shell_.SetVofaJustFloatData(6, pe_.right_side_.fsr_gait_data_.percent_gait_ / 100.0f);
-    shell_.SetVofaJustFloatData(7, left_side_.ankle_joint_.motor_.position_ref_);
-    shell_.SetVofaJustFloatData(8, right_side_.ankle_joint_.motor_.position_ref_);
-    shell_.SetVofaJustFloatData(9, left_side_.ankle_joint_.motor_.position_);
-    shell_.SetVofaJustFloatData(10, right_side_.ankle_joint_.motor_.position_);
-    shell_.SetVofaJustFloatData(11, pe_.left_side_.ankle_joint_.plantarflexion_force_N_);
-    shell_.SetVofaJustFloatData(12, pe_.right_side_.ankle_joint_.plantarflexion_force_N_);
-    shell_.SendVofaJustFloatFrame(13);
-    return;
+    // shell_.SetVofaJustFloatData(0, loop_cnt++);
+    // shell_.SetVofaJustFloatData(1, pe_.left_side_.fsr_gait_data_.heel_.raw_reading);
+    // shell_.SetVofaJustFloatData(2, pe_.left_side_.fsr_gait_data_.toe_.raw_reading);
+    // shell_.SetVofaJustFloatData(3, pe_.right_side_.fsr_gait_data_.heel_.raw_reading);
+    // shell_.SetVofaJustFloatData(4, pe_.right_side_.fsr_gait_data_.toe_.raw_reading);
+    // shell_.SetVofaJustFloatData(5, pe_.left_side_.fsr_gait_data_.percent_gait_ / 100.0f);
+    // shell_.SetVofaJustFloatData(6, pe_.right_side_.fsr_gait_data_.percent_gait_ / 100.0f);
+    // shell_.SetVofaJustFloatData(7, left_side_.ankle_joint_.motor_.position_ref_);
+    // shell_.SetVofaJustFloatData(8, right_side_.ankle_joint_.motor_.position_ref_);
+    // shell_.SetVofaJustFloatData(9, left_side_.ankle_joint_.motor_.position_);
+    // shell_.SetVofaJustFloatData(10, right_side_.ankle_joint_.motor_.position_);
+    // shell_.SetVofaJustFloatData(11, pe_.left_side_.ankle_joint_.plantarflexion_force_N_);
+    // shell_.SetVofaJustFloatData(12, pe_.right_side_.ankle_joint_.plantarflexion_force_N_);
+    // shell_.SendVofaJustFloatFrame(13);
+    // return;
 
     DmaBuffer buf = {0};
     buf.f_data[0] = loop_cnt++;
@@ -1674,8 +1674,10 @@ void Exo::VofaSendTelemetry()
     buf.f_data[13] = left_side_.knee_sea_joint_.motor_.shaft_speed_reference_radps_;
     buf.f_data[14] = left_side_.knee_sea_joint_.motor_.shaft_speed_feedback_radps_;
     buf.f_data[15] = duration_us;
+    buf.f_data[16] = pe_.left_side_.knee_joint_.pos_rad_;
+    buf.f_data[17] = pe_.battery_voltage_;
 
-    uint16_t count = 4 * 16; /** 4 x 浮点数个数 */
+    uint16_t count = 4 * 18; /** 4 x 浮点数个数 */
     buf.u8_data[count++] = 0x00;
     buf.u8_data[count++] = 0x00;
     buf.u8_data[count++] = 0x80;
