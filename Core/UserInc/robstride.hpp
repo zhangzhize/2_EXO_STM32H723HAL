@@ -75,49 +75,49 @@ enum RobstridePattern : uint8_t
 class Robstride
 {
 public:
-    Robstride(uint8_t can_id);
+    Robstride(uint8_t can_id) : can_id_(can_id) {};
     ~Robstride () = default;
 
-    uint8_t can_id_;             //CAN ID
-    uint8_t mcu_id_;             //MCU唯一标识符[后8位，共64位]
-    uint8_t run_mode_;           //电机运行模式
-	uint8_t error_code_;         //错误代码, 通信类型2
-    uint8_t fault_code_;         //故障代码, 通信类型21
-    uint8_t pattern_;            //电机工作模式, 通信类型2 24
-    uint16_t EPScan_time_;       //上报时间设置, 1代表10ms, 加1递增5ms, 默认1
-    uint32_t can_timeout_;        //can超时阀值, 20000代表1s, 默认0
-    RobstrideZeroFlag zero_sta_; //零点标志位，0代表0-2π,1代表-π-π, only for RS00
+    uint8_t can_id_;                 //CAN ID
+    uint8_t mcu_id_ = 0;             //MCU唯一标识符[后8位，共64位]
+    uint8_t run_mode_ = kMotionMode; //电机运行模式
+	uint8_t error_code_ = 0;         //错误代码, 通信类型2
+    uint8_t fault_code_ = 0;         //故障代码, 通信类型21
+    uint8_t pattern_ = kPatternReset;     //电机工作模式, 通信类型2 24
+    uint16_t EPScan_time_ = 1;       //上报时间设置, 1代表10ms, 加1递增5ms, 默认1
+    uint32_t can_timeout_ = 0;       //can超时阀值, 20000代表1s, 默认0
+    RobstrideZeroFlag zero_sta_ = kMinusPI_PI; //零点标志位，0代表0-2π,1代表-π-π, only for RS00
     /* 反馈 */
-    float temperature_;          //当前温度, 单位摄氏度
-    float vbus_;                 //母线电压, 单位V
-    float position_;             //当前位置, 单位rad
-    float speed_;                //当前速度, 单位rad/s
-    float iq_;                   //当前电流, 单位A
-    float iq_filt_;              //当前电流滤波值, 单位A
-    float torque_;               //当前扭矩, 单位Nm
+    float temperature_ = 0.0f;          //当前温度, 单位摄氏度
+    float vbus_ = 0.0f;                 //母线电压, 单位V
+    float position_ = 0.0f;             //当前位置, 单位rad
+    float speed_ = 0.0f;                //当前速度, 单位rad/s
+    float iq_ = 0.0f;                   //当前电流, 单位A
+    float iq_filt_ = 0.0f;              //当前电流滤波值, 单位A
+    float torque_ = 0.0f;               //当前扭矩, 单位Nm
     /* 设定参数 */
-    float position_ref_ ;        //参考位置, 单位rad, RS01/00:-4*pi~4*pi rad
-    float speed_ref_;            //参考速度, 单位rad/s, RS01:-44~44rad/s, RS00:-33~33rad/s
-    float iq_ref_;               //参考电流, 单位A, RS01:-23~23A, RS00:-16~16A
-    float torque_forward_;           //参考扭矩, 单位Nm, RS01:-17~17Nm, RS00:-14~14Nm
-    float acc_rad_;              //速度模式加速度, 单位rad/s^2, RS01/00:默认值20rad/s^2
-    float vel_max_;              //位置模式(PP)速度, 单位rad/s, RS01/00:默认值10rad/s
-    float acc_set_;              //位置模式(PP)加速度, 单位rad/s^2, RS01/00:默认值10rad/s^2
+    float position_ref_ = 0.0f;          //参考位置, 单位rad, RS01/00:-4*pi~4*pi rad
+    float speed_ref_ = 0.0f;             //参考速度, 单位rad/s, RS01:-44~44rad/s, RS00:-33~33rad/s
+    float iq_ref_ = 0.0f;                //参考电流, 单位A, RS01:-23~23A, RS00:-16~16A
+    float torque_forward_ = 0.0f;        //参考扭矩, 单位Nm, RS01:-17~17Nm, RS00:-14~14Nm
+    float acc_rad_ = 20.0f;              //速度模式加速度, 单位rad/s^2, RS01/00:默认值20rad/s^2
+    float vel_max_ = 10.0f;              //位置模式(PP)速度, 单位rad/s, RS01/00:默认值10rad/s
+    float acc_set_ = 10.0f;              //位置模式(PP)加速度, 单位rad/s^2, RS01/00:默认值10rad/s^2
     /* 控制参数 */
-    float position_kp_;          //位置环kp, RS01/00:默认值40
-    float speed_kp_;             //速度环kp, RS01/00:默认值6
-    float speed_ki_;             //速度环ki, RS01/00:默认值0.02
-    float speed_filt_gain_;      //速度滤波系数, RS01/00:默认值0.1
-    float current_kp_;           //电流环kp, RS01/00:默认值0.17
-    float current_ki_;           //电流环ki, RS01/00:默认值0.012
-    float current_filt_gain_;    //电流滤波系数, 0~1.0, RS01/00:默认值0.1
-    float motion_mode_kp_;       //运控模式kp, RS01/00:0.0~500.0
-    float motion_mode_kd_;       //运控模式kd, RS01/00:0.0~5.0
-    float limit_torque_;         //转矩限制, RS01:0~17Nm, RS00:0~14Nm
-    float limit_speed_;          //位置模式(CSP)速度限制, RS01:0~44rad/s, RS00:0~33rad/s
-    float limit_current_;        //位置速度模式电流限制, RS01:0~23A, RS00:0~16A
+    float position_kp_ = 30.0f;          //位置环kp, RS01/00:默认值40
+    float speed_kp_ = 1.0f;             //速度环kp, RS01/00:默认值6
+    float speed_ki_ = 0.002f;             //速度环ki, RS01/00:默认值0.02
+    float speed_filt_gain_ = 0.1f;      //速度滤波系数, 0~1.0, RS01/00:默认值0.1
+    float current_kp_ = 1.5f;           //电流环kp, RS01/00:默认值0.17
+    float current_ki_ = 0.05f;           //电流环ki, RS01/00:默认值0.012
+    float current_filt_gain_ = 0.01f;    //电流滤波系数, 0~1.0, RS01/00:默认值0.1
+    float motion_mode_kp_ = 0.0f;       //运控模式kp, RS01/00:0.0~500.0
+    float motion_mode_kd_ = 0.0f;       //运控模式kd, RS01/00:0.0~5.0
+    float limit_torque_ = 17.0f;         //转矩限制, RS01:0~17Nm, RS00:0~14Nm
+    float limit_speed_ = 44.0f;          //位置模式(CSP)速度限制, RS01:0~44rad/s, RS00:0~33rad/s
+    float limit_current_ = 23.0f;        //位置速度模式电流限制, RS01:0~23A, RS00:0~16A
     /* 其他 */
-    uint8_t feedback_cnt_;       //反馈计数器
+    uint8_t status_feedback_cnt_ = 0;       //反馈计数器
 
     /* 说明书中的通信类型 */
     void ObtainDeviceIDRequest(void);

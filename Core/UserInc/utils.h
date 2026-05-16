@@ -23,6 +23,9 @@ void DelayMs(uint32_t ms);
 uint64_t GetSysTimeUs(void);
 uint32_t GetSysTimeMs(void);
 
+void QuaternionToEularAngle(float *q, float *Yaw, float *Pitch, float *Roll);
+void EularAngleToQuaternion(float Yaw, float Pitch, float Roll, float *q);
+
 #ifdef __cplusplus
 }
 #endif

@@ -22,6 +22,7 @@
 #include "utils.h"
 #include "mag_encoder.hpp"
 #include "dji_esc.hpp"
+#include "chirp_generator.hpp"
 
 /** Forward declarations */
 class IMUData;
@@ -102,6 +103,7 @@ public:
 
     float pos_ref_rad_ = 0.0;       /** 人体关节角度参考 */
     float pos_rad_ = 0.0f;          /** 人体关节角度反馈 */
+    float pos_offset_rad_ = 0.0f;   /** 人体关节角度偏移, 用于标定 */
     float vel_ref_radps_ = 0.0f;    /** 人体关节角速度参考 */
     float vel_radps_ = 0.0f;        /** 人体关节角速度反馈 */
     float tor_interact_ref_Nm_ = 0.0f;  /** 人机交互力矩参考 */
@@ -346,7 +348,7 @@ public:
     Error error_code_ = Error::kNone;
     SysEvent pending_events_ = SysEvent::kNone;
     LocoMode loco_mode_ = LocoMode::kWalking;
-    ArbiterOverride override_usr_ = {.forced_locomode = LocoMode::kWalking, .enable_locomode_override = false};
+    ArbiterOverride override_usr_ = {.forced_locomode = LocoMode::kSitToStand, .enable_locomode_override = false};
     TelemetryConfig telemetry_config_ = {.enable = false, .pause_until_ms = 0};
 
     float user_weight_kg_ = 60.0f;
@@ -371,7 +373,7 @@ enum ExoJointCanID : uint8_t
     kLeftHip = 0x01,    // DM4340
     kRightHip = 0x02,   // DM4340
     kLeftKnee = 0x2B,   // RS01
-    kRightKnee = 0x55,  // RS01
+    kRightKnee = 0x56,  // RS01
     kLeftAnkle = 0x2A,  // RS02
     kRightAnkle = 0x55, // RS02
 };
@@ -379,7 +381,7 @@ enum ExoJointCanID : uint8_t
 class AnkleJoint
 {
 public:
-    explicit AnkleJoint(bool is_left, ExoData &pe)  : pe_(pe), ps_(is_left ? pe_.left_side_ : pe_.right_side_), pj_(is_left ? pe_.left_side_.ankle_joint_ : pe_.right_side_.ankle_joint_), force_profile_generator_(), motor_(is_left ? ExoJointCanID::kLeftAnkle : ExoJointCanID::kRightAnkle), pid_(0.2f, 0.4f, 0.0f, -1.0f, 10.0f) {}
+    explicit AnkleJoint(bool is_left, ExoData &pe)  : pe_(pe), ps_(is_left ? pe_.left_side_ : pe_.right_side_), pj_(is_left ? pe_.left_side_.ankle_joint_ : pe_.right_side_.ankle_joint_), motor_(is_left ? ExoJointCanID::kLeftAnkle : ExoJointCanID::kRightAnkle) {}
     virtual ~AnkleJoint() = default;
     void Calibrate();
     void Read();
@@ -391,9 +393,8 @@ public:
     ExoData &pe_;
     SideData &ps_;
     JointData &pj_;
-    AnkleForceProfileGenerator force_profile_generator_;
     Robstride motor_;
-    PIDController pid_;
+    AnkleForceProfileGenerator force_profile_generator_;
 
     float cable_released_position_ = 0.2f;
     float cable_pre_tensioned_position_ = 0.4f;
@@ -405,7 +406,13 @@ public:
 class KneeJoint
 {
 public:
-    explicit KneeJoint(bool is_left, ExoData &pe) : pe_(pe), ps_(is_left ? pe.left_side_ : pe.right_side_), pj_(is_left ? pe.left_side_.knee_joint_ : pe.right_side_.knee_joint_), force_profile_generator_(), motor_(is_left ? ExoJointCanID::kLeftKnee : ExoJointCanID::kRightKnee), disturbance_observer_(5.0f) {}
+    enum class CtrlMode : uint8_t
+    {
+        kJointPosition,
+        kJointTorque,
+    };
+
+    explicit KneeJoint(bool is_left, ExoData &pe) : pe_(pe), ps_(is_left ? pe.left_side_ : pe.right_side_), pj_(is_left ? pe.left_side_.knee_joint_ : pe.right_side_.knee_joint_), motor_(is_left ? ExoJointCanID::kLeftKnee : ExoJointCanID::kRightKnee), joint_tor_pid_(2.5f, 0.0f, 0.0f, -1.0f, motor_.limit_current_) {}
     virtual ~KneeJoint() = default;
     void Calibrate();
     void Read();
@@ -417,10 +424,15 @@ public:
     ExoData &pe_;
     SideData &ps_;
     JointData &pj_;
-    KneeForceProfileGenerator force_profile_generator_;
     Robstride motor_;
-    DisturbanceObserver disturbance_observer_;
+    PIDController joint_tor_pid_;
+    KneeForceProfileGenerator force_profile_generator_;
+    DisturbanceObserver disturbance_observer_{5.0f};
+
+    CtrlMode ctrl_mode_ = CtrlMode::kJointTorque;
+
     void ImpedanceControl();
+    void JointTorqueControl();
 };
 
 class KneeSeaJoint
@@ -428,10 +440,9 @@ class KneeSeaJoint
 public:
     enum class CtrlMode : uint8_t
     {
-        kJointPos,
+        kJointPosition,
         kSpringForce,
     };
-
 
     explicit KneeSeaJoint(bool is_left,  ExoData &pe, DjiEscHub &dji_esc_hub, UART_HandleTypeDef &huart) : pe_(pe), ps_(is_left ? pe.left_side_ : pe.right_side_), pj_(is_left ? pe.left_side_.knee_sea_joint_ : pe.right_side_.knee_sea_joint_), motor_(dji_esc_hub, is_left ? DjiEsc::EscId::kId1 : DjiEsc::EscId::kId2), mag_encoder_(huart), 
     joint_pos_pid_(5.0f, 1.0f, 0.0f, -100.0f, motor_.max_iqref_amp_),
@@ -451,11 +462,12 @@ public:
     ExoData &pe_;
     SideData &ps_;
     KneeSeaJointData &pj_;
-    KneeForceProfileGenerator force_profile_generator_;
     DjiEsc motor_;   /** 电调ID固定: 左膝id=1, 右膝id=2 */
     MagEncoder mag_encoder_;
     PIDController joint_pos_pid_; /** 必须放在motor_后面, 因为依赖其进行构造 */
     PIDController spring_force_pid_;  /** 必须放在motor_后面, 因为依赖其进行构造 */
+    KneeForceProfileGenerator force_profile_generator_;
+
     float force_test_sin_freq = 0.1f;
 private:
     CtrlMode ctrl_mode_ = CtrlMode::kSpringForce;
@@ -618,6 +630,7 @@ public:
     Side right_side_;
     ExoShell shell_;
     StateLed state_led_;
+    ChirpGenerator chirp_generator_{1.0f, 8.0f, 60.0f};
 
 private:
     void SensorUartRxCallback(const uint8_t *data, uint16_t data_size);

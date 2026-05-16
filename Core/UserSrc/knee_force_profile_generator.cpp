@@ -14,7 +14,7 @@ KneeForceProfileGenerator::KneeForceProfileGenerator()
     stiffness_ = 0.1f;
 
     peak_time_phase_rad_ = 0.56 * _2PI;
-    peak_torque_Nmkg_ = 0.15f;
+    peak_torque_Nmkg_ = 0.05f;
     rise_time_phase_rad_ = 0.14 * _2PI;
     fall_time_phase_rad_ = 0.13 * _2PI;
 
@@ -86,8 +86,8 @@ float KneeForceProfileGenerator::GetForceProfile(float gait_phase_rad, float kne
     }
     else if (gait_phase_rad >= damping_onset_phase_rad_ && gait_phase_rad < damping_offset_phase_rad_)
     {
-        // torque_profile =  - damping_ * knee_velocity;
-        torque_profile = 0;
+        torque_profile =  - damping_ * knee_velocity;
+        // torque_profile = 0;
     }
     else
     {
