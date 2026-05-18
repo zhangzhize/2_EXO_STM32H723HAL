@@ -1,5 +1,5 @@
-#ifndef DWT_H
-#define DWT_H
+#ifndef BSP_DWT_H
+#define BSP_DWT_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,4 +23,4 @@ uint32_t DWTGetDeltaUs(uint32_t start_ticks);
 }
 #endif
 
-#endif  // DWT_H
+#endif  // BSP_DWT_H

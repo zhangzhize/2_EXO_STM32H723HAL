@@ -13,7 +13,7 @@
 #include "usb_device.h"
 #include "gpio.h"
 
-#include "dwt.h"
+#include "bsp_dwt.h"
 #include "bsp_can.h"
 #include "bsp_usart.h"
 #include "utils.h"
@@ -46,6 +46,9 @@ Exo *g_exo = new Exo(g_exo_data, g_exo_hw);
 
 /* 用于将六/九轴IMU数据解算出姿态, 暂不需要 */
 Mahony *gptr_mahony = new Mahony();
+float gyro[3], accel[3], temperature;
+float roll_deg, pitch_deg, yaw_deg;
+float run_time_us = 0.0f;
 
 /* 属于用户真正的main函数 */
 void AltMainTask(void *argument)
@@ -83,15 +86,15 @@ void AltMainTask(void *argument)
     /* 板载IMU, 暂不启用 */
     // float gyro[3], accel[3], temperature;
     // float roll_deg, pitch_deg, yaw_deg;
-    // while(BMI088_init());
-    // gptr_mahony->Begin(200.0f);
+    while(BMI088_init());
+    gptr_mahony->Begin(1000.0f);
     // while (1)
     // {
-        // uint32_t start_us = GetSysTimeMs();
-        // BMI088_read(gyro, accel, &temperature);
-        // gptr_mahony->UpdateIMU(gyro[0], gyro[1], gyro[2], accel[0], accel[1], accel[2]);
-        // gptr_mahony->GetEulerAnglesDeg(roll_deg, pitch_deg, yaw_deg);
-        // HAL_Delay(5);
+    //     uint32_t start_us = GetSysTimeMs();
+    //     BMI088_read(gyro, accel, &temperature);
+    //     gptr_mahony->UpdateIMU(gyro[0], gyro[1], gyro[2], accel[0], accel[1], accel[2]);
+    //     gptr_mahony->GetEulerAnglesDeg(roll_deg, pitch_deg, yaw_deg);
+    //     HAL_Delay(5);
     // }
 
     /* 给电机上电 */
@@ -102,13 +105,22 @@ void AltMainTask(void *argument)
 
 	/* 启动定时器 */
 	HAL_TIM_Base_Start_IT(&htim2);  
+
+    DmaBuffer buf = {0};
 	while (1)
 	{   
         if (g_timer2_flag == 1)   /* 现在控制周期是1ms */
         {
             g_timer2_flag = 0;
             /* 外骨骼 */
+            uint32_t start_cycle = DWT_CYCCNT;
+            BMI088_read(gyro, accel, &temperature);
+            run_time_us = DWTGetDeltaUs(start_cycle);
+            
+            gptr_mahony->UpdateIMU(gyro[0], gyro[1], gyro[2], accel[0], accel[1], accel[2]);
+            gptr_mahony->GetEulerAnglesDeg(roll_deg, pitch_deg, yaw_deg);
             g_exo->Run();
+
         }
 	}
 }

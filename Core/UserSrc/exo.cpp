@@ -4,7 +4,7 @@
 extern "C" {
 #include "arm_math.h"
 }
-#include "dwt.h"
+#include "bsp_dwt.h"
 
 extern uint32_t g_adc_data[3];  /**< definition in alt_main.cpp */
 
@@ -1677,6 +1677,9 @@ void Exo::CheckSystemHealth()
 }
 
 #include "usbd_cdc_if.h"
+extern float gyro[3], accel[3], temperature;
+extern float roll_deg, pitch_deg, yaw_deg;
+extern float run_time_us;
 void Exo::VofaSendTelemetry()
 {
     static uint8_t downsample_cnt = 1;
@@ -1719,9 +1722,12 @@ void Exo::VofaSendTelemetry()
     buf.f_data[15] = static_cast<float>(right_side_.knee_joint_.motor_.error_code_);
     buf.f_data[16] = static_cast<float>(right_side_.knee_joint_.motor_.fault_code_);
 
-    buf.f_data[17] = pe_.battery_voltage_;
+    buf.f_data[17] = run_time_us;
+    buf.f_data[18] = roll_deg;
+    buf.f_data[19] = pitch_deg;
+    buf.f_data[20] = yaw_deg;
 
-    uint16_t count = 4 * 18; /** 4 x 浮点数个数 */
+    uint16_t count = 4 * 21; /** 4 x 浮点数个数 */
     buf.u8_data[count++] = 0x00;
     buf.u8_data[count++] = 0x00;
     buf.u8_data[count++] = 0x80;
