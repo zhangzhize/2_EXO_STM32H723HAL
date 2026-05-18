@@ -12,13 +12,11 @@ public:
     void SetParams(float start_freq_Hz, float end_freq_Hz, float duration_s);
 
 private:
-    float start_freq_Hz_ = 0.1f;        // 起始频率 (Hz)
-    float end_freq_Hz_ = 30.0f;         // 终止频率 (Hz)
-    float duration_s_ = 30.0f;          // 扫频总时间 (s)
-    float k_Hzps_ = 0.0f;               // 频率变化率 (Hz/s)
+    float start_freq_Hz_;        // 起始频率 (Hz)
+    float end_freq_Hz_;         // 终止频率 (Hz)
+    float duration_s_;          // 扫频总时间 (s)
+    float k_Hzps_;               // 频率变化率 (Hz/s)
     uint64_t tstart_us_ = 0;             // 当前运行时间 (us)
-    float tlast_update_s_ = 0.0f;       // 上次更新的时间 (s)
-    float phase_rad_ = 0.0f;            // 当前累加相位 (rad)
     bool is_first_update_ = true;
     bool is_finished_ = false;          // 标记是否已完成一次扫频，防止自动重启
 };

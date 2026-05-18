@@ -20,6 +20,10 @@ extern void BMI088_GYRO_NS_H(void);
 
 extern uint8_t BMI088_read_write_byte(uint8_t reg);
 
+// added by zzz
+extern void BMI088_accel_burst_read(uint8_t reg, uint8_t *buf, uint8_t len);
+extern void BMI088_gyro_burst_read(uint8_t reg, uint8_t *buf, uint8_t len);
+
 #elif defined(BMI088_USE_IIC)
 
 #endif

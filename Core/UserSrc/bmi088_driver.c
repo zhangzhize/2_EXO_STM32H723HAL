@@ -286,38 +286,51 @@ uint8_t bmi088_gyro_init(void)
 **/
 void BMI088_read(float gyro[3], float accel[3], float *temperate)
 {
-    uint8_t buf[8] = {0, 0, 0, 0, 0, 0};
+    // uint8_t buf[8] = {0, 0, 0, 0, 0, 0};
+    uint8_t buf[18] = {0};
     int16_t bmi088_raw_temp;
 
-    BMI088_accel_read_muli_reg(BMI088_ACCEL_XOUT_L, buf, 6);
-
+    // zzz
+    // BMI088_accel_read_muli_reg(BMI088_ACCEL_XOUT_L, buf, 6);
+    BMI088_accel_burst_read(BMI088_ACCEL_XOUT_L, buf, 18);
     bmi088_raw_temp = (int16_t)((buf[1]) << 8) | buf[0];
     accel[0] = bmi088_raw_temp * BMI088_ACCEL_SEN;
     bmi088_raw_temp = (int16_t)((buf[3]) << 8) | buf[2];
     accel[1] = bmi088_raw_temp * BMI088_ACCEL_SEN;
     bmi088_raw_temp = (int16_t)((buf[5]) << 8) | buf[4];
     accel[2] = bmi088_raw_temp * BMI088_ACCEL_SEN;
-
-    BMI088_gyro_read_muli_reg(BMI088_GYRO_CHIP_ID, buf, 8);
-    if(buf[0] == BMI088_GYRO_CHIP_ID_VALUE)
-    {
-        bmi088_raw_temp = (int16_t)((buf[3]) << 8) | buf[2];
-        gyro[0] = bmi088_raw_temp * BMI088_GYRO_SEN;
-        bmi088_raw_temp = (int16_t)((buf[5]) << 8) | buf[4];
-        gyro[1] = bmi088_raw_temp * BMI088_GYRO_SEN;
-        bmi088_raw_temp = (int16_t)((buf[7]) << 8) | buf[6];
-        gyro[2] = bmi088_raw_temp * BMI088_GYRO_SEN;
-    }
-    BMI088_accel_read_muli_reg(BMI088_TEMP_M, buf, 2);
-
-    bmi088_raw_temp = (int16_t)((buf[0] << 3) | (buf[1] >> 5));
-
-    if (bmi088_raw_temp > 1023)
-    {
+    bmi088_raw_temp = (int16_t)((buf[16] << 3) | (buf[17] >> 5));
+    if (bmi088_raw_temp > 1023) {
         bmi088_raw_temp -= 2048;
     }
-
     *temperate = bmi088_raw_temp * BMI088_TEMP_FACTOR + BMI088_TEMP_OFFSET;
+
+    // zzz: 更改底层读取函数
+    // BMI088_gyro_read_muli_reg(BMI088_GYRO_CHIP_ID, buf, 8);
+    // if(buf[0] == BMI088_GYRO_CHIP_ID_VALUE)
+    // {
+    //     bmi088_raw_temp = (int16_t)((buf[3]) << 8) | buf[2];
+    //     gyro[0] = bmi088_raw_temp * BMI088_GYRO_SEN;
+    //     bmi088_raw_temp = (int16_t)((buf[5]) << 8) | buf[4];
+    //     gyro[1] = bmi088_raw_temp * BMI088_GYRO_SEN;
+    //     bmi088_raw_temp = (int16_t)((buf[7]) << 8) | buf[6];
+    //     gyro[2] = bmi088_raw_temp * BMI088_GYRO_SEN;
+    // }
+    BMI088_gyro_burst_read(BMI088_GYRO_X_L, buf, 6);
+    bmi088_raw_temp = (int16_t)((buf[1]) << 8) | buf[0];
+    gyro[0] = bmi088_raw_temp * BMI088_GYRO_SEN;
+    bmi088_raw_temp = (int16_t)((buf[3]) << 8) | buf[2];
+    gyro[1] = bmi088_raw_temp * BMI088_GYRO_SEN;
+    bmi088_raw_temp = (int16_t)((buf[5]) << 8) | buf[4];
+    gyro[2] = bmi088_raw_temp * BMI088_GYRO_SEN;
+
+    // BMI088_accel_read_muli_reg(BMI088_TEMP_M, buf, 2);
+    // bmi088_raw_temp = (int16_t)((buf[0] << 3) | (buf[1] >> 5));
+    // if (bmi088_raw_temp > 1023)
+    // {
+    //     bmi088_raw_temp -= 2048;
+    // }
+    // *temperate = bmi088_raw_temp * BMI088_TEMP_FACTOR + BMI088_TEMP_OFFSET;
 }
 
 #if defined(BMI088_USE_SPI)

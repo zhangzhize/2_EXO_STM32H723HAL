@@ -16,13 +16,12 @@
 class Mahony
 {
 public:
-    Mahony();
+    Mahony(float sample_freq) : inv_sample_freq_(1.0f / sample_freq) {};
     ~Mahony() = default;
 
-    void Begin(float sample_freq) { inv_sample_freq_ = 1.0f / sample_freq; }
-    void FirstUpdate(float ax, float ay, float az, float mx, float my, float mz);
-	void Update(float gx, float gy, float gz, float ax, float ay, float az, float mx, float my, float mz);
-    void UpdateIMU(float gx, float gy, float gz, float ax, float ay, float az);
+	void Update9Axis(float gyro_degps_[3], float accel_mps2_[3], float magnet_uT_[3]);
+    void Update6Axis(float gyro_degps_[3], float accel_mps2_[3]);
+    
     void GetEulerAnglesDeg(float& roll_deg, float& pitch_deg, float& yaw_deg)
     {
         if (!is_angle_computed_) ComputeAngles();
@@ -37,21 +36,28 @@ public:
         pitch_rad = pitch_rad_;
         yaw_rad = yaw_rad_;
     }
+    void GetQuaternion(float q[4]) const
+    {
+        q[0] = q_[0];
+        q[1] = q_[1];
+        q[2] = q_[2];
+        q[3] = q_[3];
+    }
 private:
-    float two_Kp_;  // 2 * proportional gain (Kp)
-    float two_Ki_;  // 2 * integral gain (Ki)
-    float q0_, q1_, q2_, q3_; // quaternion of sensor frame relative to auxiliary frame
-    float integral_FBx_, integral_FBy_, integral_FBz_;  // integral error terms scaled by Ki
     float inv_sample_freq_;
-    float roll_rad_, pitch_rad_, yaw_rad_;
-    bool is_angle_computed_;
+    float two_Kp_ = (2.0f * 6.0f);  // 2 * proportional gain (Kp)
+    float two_Ki_ = (2.0f * 0.1f);  // 2 * integral gain (Ki)
+    float q_[4] = {1.0f, 0.0f, 0.0f, 0.0f};           // quaternion of sensor frame relative to auxiliary frame
+    float integral_FBx_ = 0.0f;
+    float integral_FBy_ = 0.0f;
+    float integral_FBz_ = 0.0f;  // integral error terms scaled by Ki
+    float roll_rad_ = 0.0f;
+    float pitch_rad_ = 0.0f;
+    float yaw_rad_ = 0.0f;
+    bool is_angle_computed_ = false;
 
 	static float InvSqrt(float x);
 	void ComputeAngles();
-
-    static constexpr float kDefaultSampleFreq = 512.0f;	// sample frequency in Hz
-    static constexpr float kTwoKpDef = (2.0f * 6.0f);	// 2 * proportional gain
-    static constexpr float kTwoKiDef = (2.0f * 0.1f);	// 2 * integral gain
 };
 
 

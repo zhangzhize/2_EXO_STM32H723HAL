@@ -12,34 +12,37 @@
 #define EXO_HPP
 
 #include <cstdint>
+#include "utils.h"
 #include "status_led.hpp"
 #include "robstride.hpp"
 #include "dm_motor.hpp"
+#include "dji_esc.hpp"
+#include "mag_encoder.hpp"
 #include "force_profile_generator.hpp"
 #include "pid.hpp"
 #include "disturbance_observer.hpp"
 #include "shell.hpp"
-#include "utils.h"
-#include "mag_encoder.hpp"
-#include "dji_esc.hpp"
 #include "chirp_generator.hpp"
+#include "mahony.hpp"
 
-/** Forward declarations */
-class IMUData;
-class JointData;
-class AnkleData;
-class KneeSeaJointData;
-class FsrGaitData;
-class SideData;
-class ExoData;
-class AnkleJoint;
-class KneeJoint;
-class KneeSeaJoint;
-class FsrGaitEstimator;
-class AdaptiveOscillator;
-class Side;
-class ExoShell;
-class Exo;
+/** 应该与NRF54代码中的一致 */
+typedef struct foot_sensor_packet_t
+{
+    int32_t mV_heel;
+    int32_t mV_toe;
+    float mV_pull;
+    float quatI;
+    float quatJ;
+    float quatK;
+    float quatReal;
+} foot_sensor_packet_t;
+
+typedef struct exo_sensor_packet_t
+{
+    foot_sensor_packet_t left_foot;
+    foot_sensor_packet_t right_foot;
+} exo_sensor_packet_t;
+
 
 /** for bitwise operations */
 #include <type_traits>
@@ -61,23 +64,24 @@ class Exo;
         return a; \
     }
 
-/** 应该与NRF54代码中的一致 */
-typedef struct foot_sensor_packet_t
-{
-    int32_t mV_heel;
-    int32_t mV_toe;
-    float mV_pull;
-    float quatI;
-    float quatJ;
-    float quatK;
-    float quatReal;
-} foot_sensor_packet_t;
+/** Forward declarations */
+class IMUData;
+class JointData;
+class AnkleData;
+class KneeSeaJointData;
+class FsrGaitData;
+class SideData;
+class ExoData;
 
-typedef struct exo_sensor_packet_t
-{
-    foot_sensor_packet_t left_foot;
-    foot_sensor_packet_t right_foot;
-} exo_sensor_packet_t;
+class AnkleJoint;
+class KneeJoint;
+class KneeSeaJoint;
+class FsrGaitEstimator;
+class AdaptiveOscillator;
+class Side;
+class ExoShell;
+class BodyImu;
+class Exo;
 
 class ImuData
 {
@@ -85,13 +89,21 @@ public:
     explicit ImuData(bool is_left = true) : is_left_(is_left) {}
     virtual ~ImuData() = default;
 
-    float quat_i_ = 0.0f;
-    float quat_j_ = 0.0f;
-    float quat_k_ = 0.0f;
-    float quat_real_ = 1.0f;
+    float q_[4] = {1.0f, 0.0f, 0.0f, 0.0f}; // real, i, j, k
+    float roll_rad_ = 0.0f;
+    float pitch_rad_ = 0.0f;
+    float yaw_rad_ = 0.0f;
+    float roll_deg_ = 0.0f;
+    float pitch_deg_ = 0.0f;
+    float yaw_deg_ = 0.0f;
+
+    float accel_mps2_[3] = {0.0f, 0.0f, 0.0f};
+    float gyro_degps_[3] = {0.0f, 0.0f, 0.0f};
+    float magnet_uT_[3] = {0.0f, 0.0f, 0.0f};
+    float chip_temp_c_ = 0.0f;
 
     bool is_left_ = true;
-    bool is_used_ = false;
+    bool is_used_ = true;
     bool is_calibrated_ = true;
 };
 
@@ -343,6 +355,7 @@ public:
     SideData left_side_;
     SideData right_side_;
     AoData ao_data_;
+    ImuData body_imu_;
 
     State state_ = State::kSleep;
     Error error_code_ = Error::kNone;
@@ -596,10 +609,23 @@ private:
     Exo &exo_;
 };
 
+class BodyImu
+{
+public:
+    explicit BodyImu(ExoData &pe) : pe_(pe), body_imu_(pe.body_imu_) {}
+    virtual ~BodyImu() = default;
+
+    void Read();
+
+    ExoData &pe_;
+    ImuData &body_imu_;
+    Mahony mahony_filter_{1000.0f}; // HACK: 注意这里的采样频率要根据实际修改
+};
+
 class Exo
 {
 public:
-    explicit Exo(ExoData &pe, ExoHardware &hw) : pe_(pe), hw_(hw), dji_esc_hub_(hw.motor_can), ao_(pe), left_side_(true, pe, dji_esc_hub_, hw.left_mag_encoder_uart), right_side_(false, pe, dji_esc_hub_, hw.right_mag_encoder_uart), shell_(hw.shell_uart, *this) {}
+    explicit Exo(ExoData &pe, ExoHardware &hw) : pe_(pe), hw_(hw), dji_esc_hub_(hw.motor_can), ao_(pe), body_imu_(pe), left_side_(true, pe, dji_esc_hub_, hw.left_mag_encoder_uart), right_side_(false, pe, dji_esc_hub_, hw.right_mag_encoder_uart), shell_(hw.shell_uart, *this) {}
     ~Exo() = default;
 
     void Initialize();
@@ -626,6 +652,7 @@ public:
 
     DjiEscHub dji_esc_hub_;
     AdaptiveOscillator ao_;
+    BodyImu body_imu_;
     Side left_side_;
     Side right_side_;
     ExoShell shell_;

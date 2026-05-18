@@ -3,82 +3,7 @@
 // #include "dsp/fast_math_functions.h"    //ZZZ: Need ARMCLANG
 // #include "arm_math.h"       //ZZZ: Not Used
 
-Mahony::Mahony()
-{
-	two_Kp_ = kTwoKpDef;	// 2 * proportional gain (Kp)
-	two_Ki_ = kTwoKiDef;	// 2 * integral gain (Ki)
-	q0_ = 1.0f;
-	q1_ = 0.0f;
-	q2_ = 0.0f;
-	q3_ = 0.0f;
-	integral_FBx_ = 0.0f;
-	integral_FBy_ = 0.0f;
-	integral_FBz_ = 0.0f;
-	is_angle_computed_ = false;
-	inv_sample_freq_ = 1.0f / kDefaultSampleFreq;
-}
-
-void Mahony::FirstUpdate(float ax, float ay, float az, float mx, float my, float mz)
-{
-    float recipNorm;
-    float init_yaw, init_pitch, init_roll;
-    float cr2, cp2, cy2, sr2, sp2, sy2;
-    float sin_roll, cos_roll, sin_pitch, cos_pitch;
-    float magX, magY;
-
-    recipNorm = InvSqrt(ax * ax + ay * ay + az * az);
-    ax *= recipNorm;
-    ay *= recipNorm;
-    az *= recipNorm;
-
-    if((mx != 0.0f) && (my != 0.0f) && (mz != 0.0f)) 
-    {
-	    recipNorm = InvSqrt(mx * mx + my * my + mz * mz);
-	    mx *= recipNorm;
-	    my *= recipNorm;
-	    mz *= recipNorm;
-	}
-
-    init_pitch = atan2f(-ax, az);
-    init_roll = atan2f(ay, az);
-
-    sin_roll  = sinf(init_roll);
-    cos_roll  = cosf(init_roll);
-    cos_pitch = cosf(init_pitch);
-    sin_pitch = sinf(init_pitch);
-
-    if((mx != 0.0f) && (my != 0.0f) && (mz != 0.0f))
-    {
-    	magX = mx * cos_pitch + my * sin_pitch * sin_roll + mz * sin_pitch * cos_roll;
-    	magY = my * cos_roll - mz * sin_roll;
-        init_yaw  = atan2f(-magY, magX);
-    }
-    else
-    {
-        init_yaw = 0.0f;
-    }
-
-    cr2 = cosf(init_roll * 0.5f);
-    cp2 = cosf(init_pitch * 0.5f);
-    cy2 = cosf(init_yaw * 0.5f);
-    sr2 = sinf(init_roll * 0.5f);
-    sp2 = sinf(init_pitch * 0.5f);
-    sy2 = sinf(init_yaw * 0.5f);
-
-    q0_ = cr2 * cp2 * cy2 + sr2 * sp2 * sy2;
-    q1_ = sr2 * cp2 * cy2 - cr2 * sp2 * sy2;
-    q2_ = cr2 * sp2 * cy2 + sr2 * cp2 * sy2;
-    q3_ = cr2 * cp2 * sy2 - sr2 * sp2 * cy2;
-
-    // Normalise quaternion
-    recipNorm = InvSqrt(q0_ * q0_ + q1_ * q1_ + q2_ * q2_ + q3_ * q3_);
-    q0_ *= recipNorm;
-    q1_ *= recipNorm;
-    q2_ *= recipNorm;
-    q3_ *= recipNorm;
-}
-
-void Mahony::Update(float gx, float gy, float gz, float ax, float ay, float az, float mx, float my, float mz)
+void Mahony::Update9Axis(float gyro_degps_[3], float accel_mps2_[3], float magnet_uT_[3])
 {
 	float recipNorm;
 	float q0q0, q0q1, q0q2, q0q3, q1q1, q1q2, q1q3, q2q2, q2q3, q3q3;
@@ -87,17 +12,25 @@ void Mahony::Update(float gx, float gy, float gz, float ax, float ay, float az, 
 	float halfex, halfey, halfez;
 	float qa, qb, qc;
 
+    float mx = magnet_uT_[0];
+    float my = magnet_uT_[1];
+    float mz = magnet_uT_[2];
+
 	// Use IMU algorithm if magnetometer measurement invalid
 	// (avoids NaN in magnetometer normalisation)
 	if((mx == 0.0f) && (my == 0.0f) && (mz == 0.0f)) {
-		UpdateIMU(gx, gy, gz, ax, ay, az);
+		Update6Axis(gyro_degps_, accel_mps2_);
 		return;
 	}
 
 	// Convert gyroscope degrees/sec to radians/sec
-	gx *= 0.0174533f;
-	gy *= 0.0174533f;
-	gz *= 0.0174533f;
+	float gx = 0.0174533f * gyro_degps_[0];
+	float gy = 0.0174533f * gyro_degps_[1];
+	float gz = 0.0174533f * gyro_degps_[2];
+
+    float ax = accel_mps2_[0];
+    float ay = accel_mps2_[1];
+    float az = accel_mps2_[2];
 
 	// Compute feedback only if accelerometer measurement valid
 	// (avoids NaN in accelerometer normalisation)
@@ -116,16 +49,16 @@ void Mahony::Update(float gx, float gy, float gz, float ax, float ay, float az, 
 		mz *= recipNorm;
 
 		// Auxiliary variables to avoid repeated arithmetic
-		q0q0 = q0_ * q0_;
-		q0q1 = q0_ * q1_;
-		q0q2 = q0_ * q2_;
-		q0q3 = q0_ * q3_;
-		q1q1 = q1_ * q1_;
-		q1q2 = q1_ * q2_;
-		q1q3 = q1_ * q3_;
-		q2q2 = q2_ * q2_;
-		q2q3 = q2_ * q3_;
-		q3q3 = q3_ * q3_;
+		q0q0 = q_[0] * q_[0];
+		q0q1 = q_[0] * q_[1];
+		q0q2 = q_[0] * q_[2];
+		q0q3 = q_[0] * q_[3];
+		q1q1 = q_[1] * q_[1];
+		q1q2 = q_[1] * q_[2];
+		q1q3 = q_[1] * q_[3];
+		q2q2 = q_[2] * q_[2];
+		q2q3 = q_[2] * q_[3];
+		q3q3 = q_[3] * q_[3];
 
 		// Reference direction of Earth's magnetic field
 		hx = 2.0f * (mx * (0.5f - q2q2 - q3q3) + my * (q1q2 - q0q3) + mz * (q1q3 + q0q2));
@@ -172,24 +105,24 @@ void Mahony::Update(float gx, float gy, float gz, float ax, float ay, float az, 
 	gx *= (0.5f * inv_sample_freq_);		// pre-multiply common factors
 	gy *= (0.5f * inv_sample_freq_);
 	gz *= (0.5f * inv_sample_freq_);
-	qa = q0_;
-	qb = q1_;
-	qc = q2_;
-	q0_ += (-qb * gx - qc * gy - q3_ * gz);
-	q1_ += (qa * gx + qc * gz - q3_ * gy);
-	q2_ += (qa * gy - qb * gz + q3_ * gx);
-	q3_ += (qa * gz + qb * gy - qc * gx);
+	qa = q_[0];
+	qb = q_[1];
+	qc = q_[2];
+	q_[0] += (-qb * gx - qc * gy - q_[3] * gz);
+	q_[1] += (qa * gx + qc * gz - q_[3] * gy);
+	q_[2] += (qa * gy - qb * gz + q_[3] * gx);
+	q_[3] += (qa * gz + qb * gy - qc * gx);
 
 	// Normalise quaternion
-	recipNorm = InvSqrt(q0_ * q0_ + q1_ * q1_ + q2_ * q2_ + q3_ * q3_);
-	q0_ *= recipNorm;
-	q1_ *= recipNorm;
-	q2_ *= recipNorm;
-	q3_ *= recipNorm;
+	recipNorm = InvSqrt(q_[0] * q_[0] + q_[1] * q_[1] + q_[2] * q_[2] + q_[3] * q_[3]);
+	q_[0] *= recipNorm;
+	q_[1] *= recipNorm;
+	q_[2] *= recipNorm;
+	q_[3] *= recipNorm;
 	is_angle_computed_ = false;
 }
 
-void Mahony::UpdateIMU(float gx, float gy, float gz, float ax, float ay, float az)
+void Mahony::Update6Axis(float gyro_degps_[3], float accel_mps2_[3])
 {
 	float recipNorm;
 	float halfvx, halfvy, halfvz;
@@ -197,10 +130,14 @@ void Mahony::UpdateIMU(float gx, float gy, float gz, float ax, float ay, float a
 	float qa, qb, qc;
 
 	// Convert gyroscope degrees/sec to radians/sec
-	gx *= 0.0174533f;
-	gy *= 0.0174533f;
-	gz *= 0.0174533f;
+	float gx = 0.0174533f * gyro_degps_[0];
+	float gy = 0.0174533f * gyro_degps_[1];
+	float gz = 0.0174533f * gyro_degps_[2];
 
+    float ax = accel_mps2_[0];
+    float ay = accel_mps2_[1];
+    float az = accel_mps2_[2];
+    
 	// Compute feedback only if accelerometer measurement valid
 	// (avoids NaN in accelerometer normalisation)
 	if(!((ax == 0.0f) && (ay == 0.0f) && (az == 0.0f))) {
@@ -212,9 +149,9 @@ void Mahony::UpdateIMU(float gx, float gy, float gz, float ax, float ay, float a
 		az *= recipNorm;
 
 		// Estimated direction of gravity
-		halfvx = q1_ * q3_ - q0_ * q2_;
-		halfvy = q0_ * q1_ + q2_ * q3_;
-		halfvz = q0_ * q0_ - 0.5f + q3_ * q3_;
+		halfvx = q_[1] * q_[3] - q_[0] * q_[2];
+		halfvy = q_[0] * q_[1] + q_[2] * q_[3];
+		halfvz = q_[0] * q_[0] - 0.5f + q_[3] * q_[3];
 
 		// Error is sum of cross product between estimated
 		// and measured direction of gravity
@@ -247,20 +184,20 @@ void Mahony::UpdateIMU(float gx, float gy, float gz, float ax, float ay, float a
 	gx *= (0.5f * inv_sample_freq_);		// pre-multiply common factors
 	gy *= (0.5f * inv_sample_freq_);
 	gz *= (0.5f * inv_sample_freq_);
-	qa = q0_;
-	qb = q1_;
-	qc = q2_;
-	q0_ += (-qb * gx - qc * gy - q3_ * gz);
-	q1_ += (qa * gx + qc * gz - q3_ * gy);
-	q2_ += (qa * gy - qb * gz + q3_ * gx);
-	q3_ += (qa * gz + qb * gy - qc * gx);
+	qa = q_[0];
+	qb = q_[1];
+	qc = q_[2];
+	q_[0] += (-qb * gx - qc * gy - q_[3] * gz);
+	q_[1] += (qa * gx + qc * gz - q_[3] * gy);
+	q_[2] += (qa * gy - qb * gz + q_[3] * gx);
+	q_[3] += (qa * gz + qb * gy - qc * gx);
 
 	// Normalise quaternion
-	recipNorm = InvSqrt(q0_ * q0_ + q1_ * q1_ + q2_ * q2_ + q3_ * q3_);
-	q0_ *= recipNorm;
-	q1_ *= recipNorm;
-	q2_ *= recipNorm;
-	q3_ *= recipNorm;
+	recipNorm = InvSqrt(q_[0] * q_[0] + q_[1] * q_[1] + q_[2] * q_[2] + q_[3] * q_[3]);
+	q_[0] *= recipNorm;
+	q_[1] *= recipNorm;
+	q_[2] *= recipNorm;
+	q_[3] *= recipNorm;
 	is_angle_computed_ = false;
 }
 
@@ -282,13 +219,13 @@ float Mahony::InvSqrt(float x)
 
 void Mahony::ComputeAngles()
 {
-	roll_rad_ = atan2f(q0_ * q1_ + q2_ * q3_, 0.5f - q1_ * q1_ - q2_ * q2_);
-	pitch_rad_ = asinf(-2.0f * (q1_ * q3_ - q0_ * q2_));
-	yaw_rad_ = atan2f(q1_ * q2_ + q0_ * q3_, 0.5f - q2_ * q2_ - q3_ * q3_);
+	roll_rad_ = atan2f(q_[0] * q_[1] + q_[2] * q_[3], 0.5f - q_[1] * q_[1] - q_[2] * q_[2]);
+	pitch_rad_ = asinf(-2.0f * (q_[1] * q_[3] - q_[0] * q_[2]));
+	yaw_rad_ = atan2f(q_[1] * q_[2] + q_[0] * q_[3], 0.5f - q_[2] * q_[2] - q_[3] * q_[3]);
 	is_angle_computed_ = true;
 
-    // arm_atan2_f32(q0_ * q1_ + q2_ * q3_, 0.5f - q1_ * q1_ - q2_ * q2_, &roll_rad_);  //zzz: arm_atan2_f32 Need CMSIS-DSP
-	// pitch_rad_ = asinf(-2.0f * (q1_ * q3_ - q0_ * q2_));
-	// arm_atan2_f32(q1_ * q2_ + q0_ * q3_, 0.5f - q2_ * q2_ - q3_ * q3_, &yaw_rad_); 
+    // arm_atan2_f32(q_[0] * q_[1] + q_[2] * q_[3], 0.5f - q_[1] * q_[1] - q_[2] * q_[2], &roll_rad_);  //zzz: arm_atan2_f32 Need CMSIS-DSP
+	// pitch_rad_ = asinf(-2.0f * (q_[1] * q_[3] - q_[0] * q_[2]));
+	// arm_atan2_f32(q_[1] * q_[2] + q_[0] * q_[3], 0.5f - q_[2] * q_[2] - q_[3] * q_[3], &yaw_rad_); 
 	// is_angle_computed_ = true;
 }

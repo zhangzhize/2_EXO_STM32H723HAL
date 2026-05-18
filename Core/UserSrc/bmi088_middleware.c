@@ -127,3 +127,54 @@ uint8_t BMI088_read_write_byte(uint8_t txdata)
     return rx_data;
 }
 
+/**
+ * @brief added by zzz
+ * 
+ * @param reg 
+ * @param buf 
+ * @param len 
+ */
+void BMI088_accel_burst_read(uint8_t reg, uint8_t *buf, uint8_t len)
+{
+    if (len > 30) return;
+
+    // 加速度计需要：1字节地址 + 1字节Dummy + 真实数据
+    uint8_t tx_buf[32] = {0};
+    uint8_t rx_buf[32] = {0};
+    tx_buf[0] = reg | 0x80;
+
+    BMI088_ACCEL_NS_L();
+    HAL_SPI_TransmitReceive(&BMI088_USING_SPI_UNIT, tx_buf, rx_buf, len + 2, 100);
+    BMI088_ACCEL_NS_H();
+
+    for (uint8_t i = 0; i < len; i++)
+    {
+        buf[i] = rx_buf[i + 2];
+    }
+}
+
+/**
+ * @brief added by zzz
+ * 
+ * @param reg 
+ * @param buf 
+ * @param len 
+ */
+void BMI088_gyro_burst_read(uint8_t reg, uint8_t *buf, uint8_t len)
+{
+    if (len > 31) return;
+
+    // 陀螺仪需要：1字节地址 + 真实数据
+    uint8_t tx_buf[32] = {0};
+    uint8_t rx_buf[32] = {0};
+    tx_buf[0] = reg | 0x80;
+    
+    BMI088_GYRO_NS_L();
+    HAL_SPI_TransmitReceive(&BMI088_USING_SPI_UNIT, tx_buf, rx_buf, len + 1, 100);
+    BMI088_GYRO_NS_H();
+
+    for(uint8_t i = 0; i < len; i++) {
+        buf[i] = rx_buf[i + 1];
+    }
+}
+

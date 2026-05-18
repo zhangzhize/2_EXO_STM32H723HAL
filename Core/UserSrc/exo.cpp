@@ -1348,6 +1348,18 @@ void ExoShell::OnCmdSetLocoMode(int argc, char **argv)
     }
 }
 
+#include "bmi088_driver.h"
+void BodyImu::Read()
+{
+    if (!body_imu_.is_used_) return;
+
+    BMI088_read(body_imu_.gyro_degps_, body_imu_.accel_mps2_, &body_imu_.chip_temp_c_);
+    mahony_filter_.Update6Axis(body_imu_.gyro_degps_, body_imu_.accel_mps2_);
+    mahony_filter_.GetQuaternion(body_imu_.q_);
+    mahony_filter_.GetEulerAnglesRad(body_imu_.roll_rad_, body_imu_.pitch_rad_, body_imu_.yaw_rad_);
+    mahony_filter_.GetEulerAnglesDeg(body_imu_.roll_deg_, body_imu_.pitch_deg_, body_imu_.yaw_deg_);
+}
+
 void Exo::Initialize()
 {
     /** 调试: 重置标定标志. */
@@ -1601,6 +1613,7 @@ void Exo::Read()
 {
     pe_.battery_voltage_ = (g_adc_data[0] * 3.3f / 65535) * 11;
     // pe_.battery_voltage_ = 24; /** #HACK 强制令电压读数大于唤醒电压 */
+    body_imu_.Read();
     left_side_.Read();
     right_side_.Read();
 }
@@ -1677,9 +1690,8 @@ void Exo::CheckSystemHealth()
 }
 
 #include "usbd_cdc_if.h"
-extern float gyro[3], accel[3], temperature;
-extern float roll_deg, pitch_deg, yaw_deg;
 extern float run_time_us;
+extern float chirp_output;
 void Exo::VofaSendTelemetry()
 {
     static uint8_t downsample_cnt = 1;
@@ -1722,12 +1734,13 @@ void Exo::VofaSendTelemetry()
     buf.f_data[15] = static_cast<float>(right_side_.knee_joint_.motor_.error_code_);
     buf.f_data[16] = static_cast<float>(right_side_.knee_joint_.motor_.fault_code_);
 
-    buf.f_data[17] = run_time_us;
-    buf.f_data[18] = roll_deg;
-    buf.f_data[19] = pitch_deg;
-    buf.f_data[20] = yaw_deg;
+    buf.f_data[17] = pe_.right_side_.foot_imu_.roll_deg_;
+    buf.f_data[18] = pe_.right_side_.foot_imu_.pitch_deg_;
+    buf.f_data[19] = pe_.right_side_.foot_imu_.yaw_deg_;
+    buf.f_data[20] = run_time_us;
+    buf.f_data[21] = pe_.battery_voltage_;
 
-    uint16_t count = 4 * 21; /** 4 x 浮点数个数 */
+    uint16_t count = 4 * 22; /** 4 x 浮点数个数 */
     buf.u8_data[count++] = 0x00;
     buf.u8_data[count++] = 0x00;
     buf.u8_data[count++] = 0x80;
@@ -1797,25 +1810,33 @@ void Exo::SensorUartRxCallback(const uint8_t *data, uint16_t data_size)
     if (data_size == sizeof(exo_sensor_packet_t))
     {
         exo_sensor_packet_t *packet = (exo_sensor_packet_t *)data;
-        left_side_.ps_.fsr_gait_data_.heel_.raw_reading = 3.4f - packet->left_foot.mV_heel / 1000.0f;
-        left_side_.ps_.fsr_gait_data_.toe_.raw_reading = 3.4f - packet->left_foot.mV_toe / 1000.0f;
+        pe_.left_side_.fsr_gait_data_.heel_.raw_reading = 3.4f - packet->left_foot.mV_heel / 1000.0f;
+        pe_.left_side_.fsr_gait_data_.toe_.raw_reading = 3.4f - packet->left_foot.mV_toe / 1000.0f;
         float k_left = - 65.04673f;
         float b_left = - 0.58726f;
-        left_side_.ps_.ankle_joint_.plantarflexion_force_N_ = k_left * packet->left_foot.mV_pull + b_left;
-        left_side_.ps_.foot_imu_.quat_i_ = packet->left_foot.quatI;
-        left_side_.ps_.foot_imu_.quat_j_ = packet->left_foot.quatJ;
-        left_side_.ps_.foot_imu_.quat_k_ = packet->left_foot.quatK;
-        left_side_.ps_.foot_imu_.quat_real_ = packet->left_foot.quatReal;
-        
-        right_side_.ps_.fsr_gait_data_.heel_.raw_reading = 3.4f - packet->right_foot.mV_heel / 1000.0f;
-        right_side_.ps_.fsr_gait_data_.toe_.raw_reading = 3.4f - packet->right_foot.mV_toe / 1000.0f;
+        pe_.left_side_.ankle_joint_.plantarflexion_force_N_ = k_left * packet->left_foot.mV_pull + b_left;
+        pe_.left_side_.foot_imu_.q_[1] = packet->left_foot.quatI;
+        pe_.left_side_.foot_imu_.q_[2] = packet->left_foot.quatJ;
+        pe_.left_side_.foot_imu_.q_[3] = packet->left_foot.quatK;
+        pe_.left_side_.foot_imu_.q_[0] = packet->left_foot.quatReal;
+        Quaternion2EulerRad(pe_.left_side_.foot_imu_.q_, &pe_.left_side_.foot_imu_.roll_rad_, &pe_.left_side_.foot_imu_.pitch_rad_, &pe_.left_side_.foot_imu_.yaw_rad_);
+        pe_.left_side_.foot_imu_.roll_deg_ = pe_.left_side_.foot_imu_.roll_rad_ * RAD_TO_DEG;
+        pe_.left_side_.foot_imu_.pitch_deg_ = pe_.left_side_.foot_imu_.pitch_rad_ * RAD_TO_DEG;
+        pe_.left_side_.foot_imu_.yaw_deg_ = pe_.left_side_.foot_imu_.yaw_rad_ * RAD_TO_DEG;
+
+        pe_.right_side_.fsr_gait_data_.heel_.raw_reading = 3.4f - packet->right_foot.mV_heel / 1000.0f;
+        pe_.right_side_.fsr_gait_data_.toe_.raw_reading = 3.4f - packet->right_foot.mV_toe / 1000.0f;
         float k_right = 68.64289f;
         float b_right = -2.3153f;
-        right_side_.ps_.ankle_joint_.plantarflexion_force_N_ = k_right * packet->right_foot.mV_pull + b_right;
-        right_side_.ps_.foot_imu_.quat_i_ = packet->right_foot.quatI;
-        right_side_.ps_.foot_imu_.quat_j_ = packet->right_foot.quatJ;
-        right_side_.ps_.foot_imu_.quat_k_ = packet->right_foot.quatK;
-        right_side_.ps_.foot_imu_.quat_real_ = packet->right_foot.quatReal;
+        pe_.right_side_.ankle_joint_.plantarflexion_force_N_ = k_right * packet->right_foot.mV_pull + b_right;
+        pe_.right_side_.foot_imu_.q_[1] = packet->right_foot.quatI;
+        pe_.right_side_.foot_imu_.q_[2] = packet->right_foot.quatJ;
+        pe_.right_side_.foot_imu_.q_[3] = packet->right_foot.quatK;
+        pe_.right_side_.foot_imu_.q_[0] = packet->right_foot.quatReal;
+        Quaternion2EulerRad(pe_.right_side_.foot_imu_.q_, &pe_.right_side_.foot_imu_.roll_rad_, &pe_.right_side_.foot_imu_.pitch_rad_, &pe_.right_side_.foot_imu_.yaw_rad_);
+        pe_.right_side_.foot_imu_.roll_deg_ = pe_.right_side_.foot_imu_.roll_rad_ * RAD_TO_DEG;
+        pe_.right_side_.foot_imu_.pitch_deg_ = pe_.right_side_.foot_imu_.pitch_rad_ * RAD_TO_DEG;
+        pe_.right_side_.foot_imu_.yaw_deg_ = pe_.right_side_.foot_imu_.yaw_rad_ * RAD_TO_DEG;
     }
 }
 

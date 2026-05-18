@@ -42,34 +42,39 @@ uint32_t GetSysTimeMs(void)
     return HAL_GetTick();
 }
 
-/**
- * @brief        Convert quaternion to eular angle
- */
-void QuaternionToEularAngle(float *q, float *Yaw, float *Pitch, float *Roll)
+
+void EulerRad2Quaternion(float roll_rad, float pitch_rad, float yaw_rad, float *q)
 {
-    *Yaw = atan2f(2.0f * (q[0] * q[3] + q[1] * q[2]), 2.0f * (q[0] * q[0] + q[1] * q[1]) - 1.0f) * 57.295779513f;
-    *Pitch = atan2f(2.0f * (q[0] * q[1] + q[2] * q[3]), 2.0f * (q[0] * q[0] + q[3] * q[3]) - 1.0f) * 57.295779513f;
-    *Roll = asinf(2.0f * (q[0] * q[2] - q[1] * q[3])) * 57.295779513f;
+    float cr = arm_cos_f32(roll_rad * 0.5f);
+    float sr = arm_sin_f32(roll_rad * 0.5f);
+    float cp = arm_cos_f32(pitch_rad * 0.5f);
+    float sp = arm_sin_f32(pitch_rad * 0.5f);
+    float cy = arm_cos_f32(yaw_rad * 0.5f);
+    float sy = arm_sin_f32(yaw_rad * 0.5f);
+
+    q[0] = cr * cp * cy + sr * sp * sy; // w (Real)
+    q[1] = sr * cp * cy - cr * sp * sy; // x (i)
+    q[2] = cr * sp * cy + sr * cp * sy; // y (j)
+    q[3] = cr * cp * sy - sr * sp * cy; // z (k)
 }
 
-/**
- * @brief        Convert eular angle to quaternion
- */
-void EularAngleToQuaternion(float Yaw, float Pitch, float Roll, float *q)
+void EulerDeg2Quaternion(float roll_deg, float pitch_deg, float yaw_deg, float *q)
 {
-    float cosPitch, cosYaw, cosRoll, sinPitch, sinYaw, sinRoll;
-    Yaw /= 57.295779513f;
-    Pitch /= 57.295779513f;
-    Roll /= 57.295779513f;
-    cosPitch = arm_cos_f32(Pitch / 2);
-    cosYaw = arm_cos_f32(Yaw / 2);
-    cosRoll = arm_cos_f32(Roll / 2);
-    sinPitch = arm_sin_f32(Pitch / 2);
-    sinYaw = arm_sin_f32(Yaw / 2);
-    sinRoll = arm_sin_f32(Roll / 2);
-    q[0] = cosPitch * cosRoll * cosYaw + sinPitch * sinRoll * sinYaw;
-    q[1] = sinPitch * cosRoll * cosYaw - cosPitch * sinRoll * sinYaw;
-    q[2] = sinPitch * cosRoll * sinYaw + cosPitch * sinRoll * cosYaw;
-    q[3] = cosPitch * cosRoll * sinYaw - sinPitch * sinRoll * cosYaw;
+    EulerRad2Quaternion(roll_deg * DEG_TO_RAD, pitch_deg * DEG_TO_RAD, yaw_deg * DEG_TO_RAD, q);
 }
 
+void Quaternion2EulerRad(float *q, float *roll_rad, float *pitch_rad, float *yaw_rad)
+{
+    *roll_rad  = atan2f(q[0] * q[1] + q[2] * q[3], 0.5f - q[1] * q[1] - q[2] * q[2]);
+    *pitch_rad = asinf(-2.0f * (q[1] * q[3] - q[0] * q[2]));
+    *yaw_rad   = atan2f(q[1] * q[2] + q[0] * q[3], 0.5f - q[2] * q[2] - q[3] * q[3]);
+}
+
+void Quaternion2EulerDeg(float *q, float *roll_deg, float *pitch_deg, float *yaw_deg)
+{
+    float roll_rad, pitch_rad, yaw_rad;
+    Quaternion2EulerRad(q, &roll_rad, &pitch_rad, &yaw_rad);
+    *roll_deg = roll_rad * RAD_TO_DEG;
+    *pitch_deg = pitch_rad * RAD_TO_DEG;
+    *yaw_deg = yaw_rad * RAD_TO_DEG;
+}

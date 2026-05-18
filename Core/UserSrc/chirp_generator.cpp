@@ -22,40 +22,23 @@ float ChirpGenerator::Update(uint64_t sys_us)
     {
         tstart_us_ = sys_us;
         is_first_update_ = false;
-        tlast_update_s_ = 0.0f;
     }
 
-    float telasp_s = (sys_us - tstart_us_) * 1e-6f;
+    double telasp_s = (sys_us - tstart_us_) * 1e-6;
     if (telasp_s >= duration_s_)
     {
         is_finished_ = true;
     }
 
-    float freq_Hz = start_freq_Hz_ + k_Hzps_ * telasp_s;
+    double revs = (double)start_freq_Hz_ * telasp_s + 0.5 * (double)k_Hzps_ * telasp_s * telasp_s;
+    float frac_revs = (float)(revs - (int32_t)revs);
 
-    float delta_s = telasp_s - tlast_update_s_;
-    if (delta_s < 0.0f)
-    {
-        delta_s = 0.0f;
-    }
-
-    phase_rad_ += 2.0f * _PI * freq_Hz * delta_s;
-    phase_rad_ = fmodf(phase_rad_, 2.0f * _PI);
-    if (phase_rad_ < 0.0f)
-    {
-        phase_rad_ += 2.0f * _PI;
-    }
-        
-    tlast_update_s_ = telasp_s;
-
-    return arm_sin_f32(phase_rad_);
+    return arm_sin_f32(_2PI * frac_revs);
 }
 
 void ChirpGenerator::Reset()
 {
     tstart_us_ = 0;
-    tlast_update_s_ = 0.0f;
-    phase_rad_ = 0.0f;
     is_first_update_ = true;
     is_finished_ = false;
 }
