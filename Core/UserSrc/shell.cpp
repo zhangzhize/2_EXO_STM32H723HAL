@@ -6,7 +6,7 @@
 #include <cstring>
 #include <cstdarg>
 
-__attribute__((section(".dma_buf"), aligned(32))) DmaBuffer g_uart_tx_dma_buf;
+__attribute__((section(".dma_buf"), aligned(32))) DmaUnionBuffer g_uart_tx_dma_buf;
 
 Shell::Shell(UART_HandleTypeDef &huart): txbuffer_(g_uart_tx_dma_buf), huart_(huart)
 {
@@ -25,12 +25,12 @@ void Shell::Printf(const char *format, ...)
 
     va_list args;
     va_start(args, format);
-    int len = vsnprintf(txbuffer_.c_data, SHELL_TX_BUF_SIZE_BYTES, format, args);
+    int len = vsnprintf(txbuffer_.c_data, DMA_UNION_BUF_SIZE_BYTES, format, args);
     va_end(args);
 
     if (len > 0)
     {
-        uint16_t send_len = ((uint32_t)len < SHELL_TX_BUF_SIZE_BYTES) ? static_cast<uint16_t>(len) : static_cast<uint16_t>(SHELL_TX_BUF_SIZE_BYTES - 1);
+        uint16_t send_len = ((uint32_t)len < DMA_UNION_BUF_SIZE_BYTES) ? static_cast<uint16_t>(len) : static_cast<uint16_t>(DMA_UNION_BUF_SIZE_BYTES - 1);
         SendData(send_len);
     }
 }
@@ -63,7 +63,7 @@ void Shell::SendString(const char *str)
     if (str == nullptr) return;
     if (huart_.gState != HAL_UART_STATE_READY) return;
 
-    const uint16_t max_len = SHELL_TX_BUF_SIZE_BYTES - 1;
+    const uint16_t max_len = DMA_UNION_BUF_SIZE_BYTES - 1;
     const size_t len = strnlen(str, max_len);
     memcpy(txbuffer_.u8_data, str, len);
     txbuffer_.u8_data[len] = '\0';
@@ -73,9 +73,9 @@ void Shell::SendString(const char *str)
 
 void Shell::SendData(uint16_t data_size)
 {
-    if (data_size == 0 || data_size > SHELL_TX_BUF_SIZE_BYTES) return;
+    if (data_size == 0 || data_size > DMA_UNION_BUF_SIZE_BYTES) return;
 
-    if (huart_.gState == HAL_UART_STATE_READY && data_size < SHELL_TX_BUF_SIZE_BYTES)
+    if (huart_.gState == HAL_UART_STATE_READY && data_size < DMA_UNION_BUF_SIZE_BYTES)
     {
         HAL_UART_Transmit_DMA(&huart_, txbuffer_.u8_data, data_size);
 	    // CDC_Transmit_HS(txbuffer_.u8_data, data_size);   //zzz: just for debug
@@ -169,7 +169,7 @@ void Shell::OnCmdHelp(int argc, char **argv)
     if (huart_.gState != HAL_UART_STATE_READY) return;
 
     char *buf = txbuffer_.c_data;
-    const size_t max_len = SHELL_TX_BUF_SIZE_BYTES;
+    const size_t max_len = DMA_UNION_BUF_SIZE_BYTES;
     size_t offset = 0;
 
     offset += snprintf(buf + offset, max_len - offset, "\r\nAvailable Commands\r\n");
@@ -227,7 +227,7 @@ void Shell::OnCmdReadParam(int argc, char **argv)
 {
     if (argc < 2)
     {
-        char out[SHELL_TX_BUF_SIZE_BYTES];
+        char out[DMA_UNION_BUF_SIZE_BYTES];
         size_t used = 0;
 
         int n = snprintf(out + used, sizeof(out) - used, "Params(%u):\r\n", static_cast<unsigned>(param_count_));

@@ -50,7 +50,7 @@ static float uint_to_float(int x_int, float x_min, float x_max, int bits)
   */
 static void DMSendData(uint32_t can_std_id, uint8_t *data, uint32_t data_size)
 {
-    FDCanSendData(can_std_id, FDCAN_STANDARD_ID, data, data_size);
+    FDCanSendData(&hfdcan1, can_std_id, FDCAN_STANDARD_ID, data, data_size);
 }
 
 DMMotor::DMMotor(uint16_t can_id)

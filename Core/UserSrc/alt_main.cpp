@@ -32,17 +32,8 @@ uint8_t cdc_rx_flag = 0;
 
 __attribute__((section(".dma_buf"), aligned(32))) uint32_t g_adc_data[3] = {0};
 
-/* 外骨骼需要用到的外设句柄 */
-ExoHardware g_exo_hw = {
-    .motor_can = hfdcan1,
-    .sensor_uart = huart8,
-    .shell_uart = huart9,
-    .left_mag_encoder_uart = huart2,
-    .right_mag_encoder_uart = huart3,
-};
-/* 实例化外骨骼数据对象, 及控制外骨骼和处理外骨骼的对象 */
-ExoData g_exo_data;
-Exo *g_exo = new Exo(g_exo_data, g_exo_hw);
+/* 外骨骼需要用到的外设句柄, 并实例化外骨骼数据对象, 及控制外骨骼和处理外骨骼的对象 */
+Exo *g_exo = nullptr;
 
 float run_time_us = 0.0f;
 
@@ -58,19 +49,13 @@ void AltMainTask(void *argument)
     HAL_GPIO_WritePin(NRF54_RST_GPIO_Port, NRF54_RST_Pin, GPIO_PIN_SET);
     HAL_Delay(100);
 
-    /** 启动ADC+DMA: PC4(电源电压) + PA2 + PA0 */
+    /** 启动ADC+DMA: PC4(电源电压) + PA2 + PA0. 由TIM2触发 */
     HAL_ADCEx_Calibration_Start(&hadc1, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED);
     HAL_ADC_Start_DMA(&hadc1, (uint32_t *)g_adc_data, 3);
 
-    /* DMA接收双足无线传感数据, 波特率1000000 Bits/s */
-    HAL_UARTEx_ReceiveToIdle_DMA(&huart8, uart8_rx_buffer, UART8_RX_BUF_SIZE);
-    __HAL_DMA_DISABLE_IT(huart8.hdmarx, DMA_IT_HT);
-    /* DMA接收无线上位机控制命令, 波特率1000000 Bits/s */
-    HAL_UARTEx_ReceiveToIdle_DMA(&huart9, uart9_rx_buffer, UART9_RX_BUF_SIZE);
-    __HAL_DMA_DISABLE_IT(huart9.hdmarx, DMA_IT_HT);
-
     /* 初始化fdcan1 */
-    BspCanInit();
+    BspCanInit(&hfdcan1);
+    BspCanInit(&hfdcan3);
 
     // 外骨骼躯干节点依赖这个函数;
     while(BMI088_init());
@@ -83,11 +68,24 @@ void AltMainTask(void *argument)
     // HAL_Delay(500);
     // TIM12->CCR2 = 0;
 
+    static ExoHardware exo_hw = {
+        .motor_can = hfdcan1,
+        .dm_imu_can = hfdcan3,
+        .sensor_spi = hspi3,
+        .sensor_uart = huart8,
+        .shell_uart = huart9,
+        .left_mag_encoder_uart = huart2,
+        .right_mag_encoder_uart = huart3,
+    };
+    static ExoData exo_data;
+    static Exo exo(exo_data, exo_hw);
+    g_exo = &exo;
+
     /* 给电机上电 */
     HAL_GPIO_WritePin(POWER_24V_1_GPIO_Port, POWER_24V_1_Pin|POWER_24V_2_Pin, GPIO_PIN_SET);
-    HAL_Delay(1000); /* 稍微延迟一下等电机上电启动完毕 */
+    HAL_Delay(1000);     /* 稍微延迟一下等电机上电启动完毕 */
     g_exo->Initialize();
-    HAL_Delay(1000); /* 稍微延迟一下 */
+    HAL_Delay(1000);     /* 稍微延迟一下 */
 
 	/* 启动定时器 */
 	HAL_TIM_Base_Start_IT(&htim2);  
@@ -96,8 +94,9 @@ void AltMainTask(void *argument)
         if (g_timer2_flag == 1)   /* 现在控制周期是1ms */
         {
             g_timer2_flag = 0;
-            uint32_t start_tick = DWT_CYCCNT;
+            
             /* 外骨骼 */
+            uint32_t start_tick = DWT_CYCCNT;
             g_exo->Run();
             run_time_us = DWTGetDeltaUs(start_tick);
         }

@@ -3,17 +3,9 @@
 
 #include <cstdint>
 #include "usart.h"
+#include "utils.h"
 
-#define SHELL_TX_BUF_SIZE_BYTES         (512U)
-#define SHELL_TX_BUF_SIZE_FLOATS        (SHELL_TX_BUF_SIZE_BYTES/4)
-#define SHELL_VOFA_MAX_FLOAT_SIZE       (SHELL_TX_BUF_SIZE_FLOATS - 1)
-
-union DmaBuffer {
-    float f_data[SHELL_TX_BUF_SIZE_FLOATS];
-    uint32_t u32_data[SHELL_TX_BUF_SIZE_FLOATS];
-    char c_data[SHELL_TX_BUF_SIZE_BYTES];
-    uint8_t u8_data[SHELL_TX_BUF_SIZE_BYTES];
-};
+#define SHELL_VOFA_MAX_FLOAT_SIZE       (DMA_UNION_BUF_SIZE_FLOATS - 1)
 
 typedef void (*ShellCmdHandler)(void *context, int argc, char **argv);
 
@@ -77,7 +69,7 @@ public:
     }
 
 protected:
-    DmaBuffer &txbuffer_;
+    DmaUnionBuffer &txbuffer_;
     UART_HandleTypeDef &huart_;
 
     static constexpr uint16_t kMaxPendingCmdLen = 256U;     /** 待处理命令的最大长度 */

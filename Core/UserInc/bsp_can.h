@@ -7,8 +7,8 @@ extern "C" {
 
 #include "fdcan.h"
 
-void BspCanInit(void);
-void FDCanSendData(uint32_t id, uint32_t id_type, uint8_t *data, uint32_t len);
+void BspCanInit(FDCAN_HandleTypeDef *hfdcan);
+void FDCanSendData(FDCAN_HandleTypeDef *hfdcan, uint32_t id, uint32_t id_type, uint8_t *data, uint32_t len);
 
 #ifdef __cplusplus
 }

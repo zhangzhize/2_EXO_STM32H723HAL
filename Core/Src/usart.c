@@ -248,7 +248,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
 
     /* UART8 DMA Init */
     /* UART8_RX Init */
-    hdma_uart8_rx.Instance = DMA1_Stream3;
+    hdma_uart8_rx.Instance = DMA1_Stream1;
     hdma_uart8_rx.Init.Request = DMA_REQUEST_UART8_RX;
     hdma_uart8_rx.Init.Direction = DMA_PERIPH_TO_MEMORY;
     hdma_uart8_rx.Init.PeriphInc = DMA_PINC_DISABLE;
@@ -304,7 +304,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
 
     /* UART9 DMA Init */
     /* UART9_RX Init */
-    hdma_uart9_rx.Instance = DMA1_Stream1;
+    hdma_uart9_rx.Instance = DMA2_Stream0;
     hdma_uart9_rx.Init.Request = DMA_REQUEST_UART9_RX;
     hdma_uart9_rx.Init.Direction = DMA_PERIPH_TO_MEMORY;
     hdma_uart9_rx.Init.PeriphInc = DMA_PINC_DISABLE;
@@ -312,7 +312,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     hdma_uart9_rx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
     hdma_uart9_rx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
     hdma_uart9_rx.Init.Mode = DMA_NORMAL;
-    hdma_uart9_rx.Init.Priority = DMA_PRIORITY_HIGH;
+    hdma_uart9_rx.Init.Priority = DMA_PRIORITY_LOW;
     hdma_uart9_rx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
     if (HAL_DMA_Init(&hdma_uart9_rx) != HAL_OK)
     {
@@ -322,7 +322,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     __HAL_LINKDMA(uartHandle,hdmarx,hdma_uart9_rx);
 
     /* UART9_TX Init */
-    hdma_uart9_tx.Instance = DMA1_Stream2;
+    hdma_uart9_tx.Instance = DMA2_Stream1;
     hdma_uart9_tx.Init.Request = DMA_REQUEST_UART9_TX;
     hdma_uart9_tx.Init.Direction = DMA_MEMORY_TO_PERIPH;
     hdma_uart9_tx.Init.PeriphInc = DMA_PINC_DISABLE;
@@ -330,7 +330,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     hdma_uart9_tx.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
     hdma_uart9_tx.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
     hdma_uart9_tx.Init.Mode = DMA_NORMAL;
-    hdma_uart9_tx.Init.Priority = DMA_PRIORITY_HIGH;
+    hdma_uart9_tx.Init.Priority = DMA_PRIORITY_LOW;
     hdma_uart9_tx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
     if (HAL_DMA_Init(&hdma_uart9_tx) != HAL_OK)
     {
@@ -340,7 +340,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     __HAL_LINKDMA(uartHandle,hdmatx,hdma_uart9_tx);
 
     /* UART9 interrupt Init */
-    HAL_NVIC_SetPriority(UART9_IRQn, 4, 0);
+    HAL_NVIC_SetPriority(UART9_IRQn, 12, 0);
     HAL_NVIC_EnableIRQ(UART9_IRQn);
   /* USER CODE BEGIN UART9_MspInit 1 */
 
@@ -397,7 +397,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     __HAL_LINKDMA(uartHandle,hdmarx,hdma_usart2_rx);
 
     /* USART2_TX Init */
-    hdma_usart2_tx.Instance = DMA1_Stream7;
+    hdma_usart2_tx.Instance = DMA1_Stream5;
     hdma_usart2_tx.Init.Request = DMA_REQUEST_USART2_TX;
     hdma_usart2_tx.Init.Direction = DMA_MEMORY_TO_PERIPH;
     hdma_usart2_tx.Init.PeriphInc = DMA_PINC_DISABLE;
@@ -462,7 +462,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
 
     /* USART3 DMA Init */
     /* USART3_RX Init */
-    hdma_usart3_rx.Instance = DMA2_Stream0;
+    hdma_usart3_rx.Instance = DMA1_Stream6;
     hdma_usart3_rx.Init.Request = DMA_REQUEST_USART3_RX;
     hdma_usart3_rx.Init.Direction = DMA_PERIPH_TO_MEMORY;
     hdma_usart3_rx.Init.PeriphInc = DMA_PINC_DISABLE;
@@ -480,7 +480,7 @@ void HAL_UART_MspInit(UART_HandleTypeDef* uartHandle)
     __HAL_LINKDMA(uartHandle,hdmarx,hdma_usart3_rx);
 
     /* USART3_TX Init */
-    hdma_usart3_tx.Instance = DMA2_Stream1;
+    hdma_usart3_tx.Instance = DMA1_Stream7;
     hdma_usart3_tx.Init.Request = DMA_REQUEST_USART3_TX;
     hdma_usart3_tx.Init.Direction = DMA_MEMORY_TO_PERIPH;
     hdma_usart3_tx.Init.PeriphInc = DMA_PINC_DISABLE;

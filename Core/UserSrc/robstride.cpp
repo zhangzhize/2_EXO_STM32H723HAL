@@ -42,7 +42,7 @@ enum ComTypeCode
  */
 static void RobstrideSendData(uint32_t can_ext_id, uint8_t *data, uint32_t data_size)
 {
-    FDCanSendData(can_ext_id, FDCAN_EXTENDED_ID, data, data_size);
+    FDCanSendData(&hfdcan1, can_ext_id, FDCAN_EXTENDED_ID, data, data_size);
 }
 
 /**

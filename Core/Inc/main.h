@@ -46,7 +46,7 @@ extern "C" {
 
 /* Exported macro ------------------------------------------------------------*/
 /* USER CODE BEGIN EM */
-extern uint8_t g_timer2_flag;
+extern volatile uint8_t g_timer2_flag;
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/
@@ -67,10 +67,10 @@ void Error_Handler(void);
 #define BMI088_ACC_CS_GPIO_Port GPIOC
 #define BMI088_GYRO_CS_Pin GPIO_PIN_3
 #define BMI088_GYRO_CS_GPIO_Port GPIOC
-#define RIGHT_PULLFORCE_Pin GPIO_PIN_0
-#define RIGHT_PULLFORCE_GPIO_Port GPIOA
-#define LEFT_PULLFORCE_Pin GPIO_PIN_2
-#define LEFT_PULLFORCE_GPIO_Port GPIOA
+#define ADC1_IN16_Pin GPIO_PIN_0
+#define ADC1_IN16_GPIO_Port GPIOA
+#define ADC1_INP14_Pin GPIO_PIN_2
+#define ADC1_INP14_GPIO_Port GPIOA
 #define VBUS_ADC_Pin GPIO_PIN_4
 #define VBUS_ADC_GPIO_Port GPIOC
 #define BMI088_ACC_INT_Pin GPIO_PIN_10
@@ -81,6 +81,9 @@ void Error_Handler(void);
 #define NRF54_RST_GPIO_Port GPIOE
 #define BUZZER_Pin GPIO_PIN_15
 #define BUZZER_GPIO_Port GPIOB
+#define NRF54_CS_INT_Pin GPIO_PIN_8
+#define NRF54_CS_INT_GPIO_Port GPIOB
+#define NRF54_CS_INT_EXTI_IRQn EXTI9_5_IRQn
 
 /* USER CODE BEGIN Private defines */
 void AltMainTask(void *argument);

@@ -51,17 +51,25 @@ typedef struct exo_sensor_packet_t
         return static_cast<EnumType>(static_cast<std::underlying_type_t<EnumType>>(a) | static_cast<std::underlying_type_t<EnumType>>(b)); \
     } \
     inline constexpr EnumType& operator|=(EnumType& a, EnumType b) { \
-        a = a | b; return a; \
+        a = a | b; \
+        return a; \
     } \
-    inline constexpr bool operator&(EnumType a, EnumType b) { \
-        return (static_cast<std::underlying_type_t<EnumType>>(a) & static_cast<std::underlying_type_t<EnumType>>(b)) != 0; \
+    inline constexpr EnumType operator&(EnumType a, EnumType b) { \
+        return static_cast<EnumType>(static_cast<std::underlying_type_t<EnumType>>(a) & static_cast<std::underlying_type_t<EnumType>>(b)); \
+    } \
+    inline constexpr EnumType& operator&=(EnumType& a, EnumType b) { \
+        a = a & b; \
+        return a; \
+    } \
+    inline constexpr EnumType operator^(EnumType a, EnumType b) { \
+        return static_cast<EnumType>(static_cast<std::underlying_type_t<EnumType>>(a) ^ static_cast<std::underlying_type_t<EnumType>>(b)); \
+    } \
+    inline constexpr EnumType& operator^=(EnumType& a, EnumType b) { \
+        a = a ^ b; \
+        return a; \
     } \
     inline constexpr EnumType operator~(EnumType a) { \
         return static_cast<EnumType>(~static_cast<std::underlying_type_t<EnumType>>(a)); \
-    } \
-    inline constexpr EnumType& operator&=(EnumType& a, EnumType b) { \
-        a = static_cast<EnumType>(static_cast<std::underlying_type_t<EnumType>>(a) & static_cast<std::underlying_type_t<EnumType>>(b)); \
-        return a; \
     }
 
 /** Forward declarations */
@@ -266,6 +274,8 @@ public:
     AnkleData ankle_joint_;
     FsrGaitData fsr_gait_data_;
     ImuData foot_imu_;
+    ImuData shank_imu_;
+    ImuData thigh_imu_;
 
     bool is_left_;
     bool is_used_ = true;
@@ -375,6 +385,8 @@ DEFINE_ENUM_CLASS_BITWISE_OPS(ExoData::SysEvent)
 struct ExoHardware
 {
     FDCAN_HandleTypeDef &motor_can;           // 用于大疆/Robstride电机通信
+    FDCAN_HandleTypeDef &dm_imu_can;          // 用于IMU数据通信
+    SPI_HandleTypeDef &sensor_spi;           // 用于传感器 SPI 通信
     UART_HandleTypeDef &sensor_uart;          // 用于接收无线传感器数据
     UART_HandleTypeDef &shell_uart;           // 用于命令行 Shell / VOFA 调试
     UART_HandleTypeDef &left_mag_encoder_uart;    // 用于磁栅尺编码器1
@@ -421,7 +433,9 @@ class KneeJoint
 public:
     enum class CtrlMode : uint8_t
     {
+        kImpedance,
         kJointPosition,
+        kOpenLoopTorque,
         kJointTorque,
     };
 
@@ -442,10 +456,11 @@ public:
     KneeForceProfileGenerator force_profile_generator_;
     DisturbanceObserver disturbance_observer_{5.0f};
 
-    CtrlMode ctrl_mode_ = CtrlMode::kJointTorque;
-
     void ImpedanceControl();
-    void JointTorqueControl();
+    void TorqueControl();
+    void OpenLoopTorqueControl();
+private:
+    CtrlMode ctrl_mode_ = CtrlMode::kImpedance;
 };
 
 class KneeSeaJoint
@@ -481,7 +496,6 @@ public:
     PIDController spring_force_pid_;  /** 必须放在motor_后面, 因为依赖其进行构造 */
     KneeForceProfileGenerator force_profile_generator_;
 
-    float force_test_sin_freq = 0.1f;
 private:
     CtrlMode ctrl_mode_ = CtrlMode::kSpringForce;
 };
@@ -622,10 +636,60 @@ public:
     Mahony mahony_filter_{1000.0f}; // HACK: 注意这里的采样频率要根据实际修改
 };
 
+class DaMiaoImuHub
+{
+public:
+    enum CanID : uint8_t
+    {
+        kLeftShank = 0x01,
+        kRightShank = 0x02,
+        kLeftThigh = 0x03,
+        kRightThigh = 0x04
+    };
+    enum MstID : uint8_t
+    {
+        kLeftShankMst = 0x11,
+        kRightShankMst = 0x12,
+        kLeftThighMst = 0x13,
+        kRightThighMst = 0x14
+    };
+
+    explicit DaMiaoImuHub(ExoData &pe, FDCAN_HandleTypeDef &hfdcan) : pe_(pe), hfdcan_(hfdcan) {}
+    virtual ~DaMiaoImuHub() = default;
+
+    void CanRxCallback(uint32_t can_id, const uint8_t *data);
+
+    ExoData &pe_;
+    FDCAN_HandleTypeDef &hfdcan_;
+private:
+    void UpdateImuData(ImuData &imu_data, const uint8_t *data);
+    static float UintToFloat(uint32_t x, float x_min, float x_max, int num_bits)
+    {
+        uint32_t span = (1 << num_bits) - 1;
+        float offset = x_max - x_min;
+        return offset * x / span + x_min;
+    }
+
+    static constexpr float kAccelCanMax = 235.2f;
+    static constexpr float kAccelCanMin = -235.2f;
+    static constexpr float kGyroCanMax = 34.88f;
+    static constexpr float kGyroCanMin = -34.88f;
+    static constexpr float kPitchCanMax = 90.0f;
+    static constexpr float kPitchCanMin = -90.0f;
+    static constexpr float kRollCanMax = 180.0f;
+    static constexpr float kRollCanMin = -180.0f;
+    static constexpr float kYawCanMax = 180.0f;
+    static constexpr float kYawCanMin = -180.0f;
+    static constexpr float kTempMin = 0.0f;
+    static constexpr float kTempMax = 60.0f;
+    static constexpr float kQuaternionMin = -1.0f;
+    static constexpr float kQuaternionMax = 1.0f;
+};
+
 class Exo
 {
 public:
-    explicit Exo(ExoData &pe, ExoHardware &hw) : pe_(pe), hw_(hw), dji_esc_hub_(hw.motor_can), ao_(pe), body_imu_(pe), left_side_(true, pe, dji_esc_hub_, hw.left_mag_encoder_uart), right_side_(false, pe, dji_esc_hub_, hw.right_mag_encoder_uart), shell_(hw.shell_uart, *this) {}
+    explicit Exo(ExoData &pe, ExoHardware &hw) : pe_(pe), hw_(hw), dji_esc_hub_(hw.motor_can), dm_imu_hub_(pe, hw.dm_imu_can), ao_(pe), body_imu_(pe), shell_(hw.shell_uart, *this), left_side_(true, pe, dji_esc_hub_, hw.left_mag_encoder_uart), right_side_(false, pe, dji_esc_hub_, hw.right_mag_encoder_uart) {}
     ~Exo() = default;
 
     void Initialize();
@@ -645,23 +709,36 @@ public:
     bool IsStopWalking();
 
     void CanRxCallback(FDCAN_HandleTypeDef *hfdcan, uint32_t can_id, const uint8_t *data);
+    void SensorUartReceiveDma(void);
+    void ShellUartReceiveDma(void);
     void UartRxCallback(UART_HandleTypeDef *huart, uint16_t data_size);
+    void UartErrorCallback(UART_HandleTypeDef *huart);
+
+    void SpiRxStart(void);
+    void SpiRxCallback(void);
+    void SpiErrorCallback(SPI_HandleTypeDef *hspi);
+    void ProcessSensorSpiData(void);
 
     ExoData &pe_;
     ExoHardware &hw_;
 
     DjiEscHub dji_esc_hub_;
+    DaMiaoImuHub dm_imu_hub_;
     AdaptiveOscillator ao_;
     BodyImu body_imu_;
-    Side left_side_;
-    Side right_side_;
     ExoShell shell_;
     StateLed state_led_;
     ChirpGenerator chirp_generator_{1.0f, 8.0f, 60.0f};
+    Side left_side_;
+    Side right_side_;
 
 private:
+    volatile bool spi_data_ready_ = false;
+    volatile uint8_t spi_dma_readed_size_ = 0;
+    volatile uint8_t spi_dma_reading_idx_ = 0;
+    volatile uint8_t spi_dma_handling_idx_ = 1;
+
     void SensorUartRxCallback(const uint8_t *data, uint16_t data_size);
-    void UsrShellUartRxCallback(const uint8_t *data, uint16_t data_size);
     static ExoData::SysEvent AllowedEventsForState(ExoData::State s);
     static inline void ClearNonCriticalEvents(ExoData &pe)
     {
@@ -676,6 +753,10 @@ private:
 extern "C" {
 void CallExoCanRxCallBack(Exo *exo, FDCAN_HandleTypeDef *hfdcan, uint32_t can_ext_id, const uint8_t *rx_data);
 void CallExoUartRxCallback(Exo *exo, UART_HandleTypeDef *huart, uint16_t data_size);
+void CallExoUartErrorCallback(Exo *exo, UART_HandleTypeDef *huart);
+void CallExoSpiRxStart(Exo *exo);
+void CallExoSpiRxCallback(Exo *exo);
+void CallExoSpiErrorCallback(Exo *exo, SPI_HandleTypeDef *hspi);
 }
 
 

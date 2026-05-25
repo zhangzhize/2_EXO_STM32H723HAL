@@ -2,9 +2,6 @@
 #include <string.h>
 #include "bsp_usart.h"
 
-__attribute__((section(".dma_buf"), aligned(32))) uint8_t uart8_rx_buffer[UART8_RX_BUF_SIZE];
-__attribute__((section(".dma_buf"), aligned(32))) uint8_t uart9_rx_buffer[UART9_RX_BUF_SIZE];
-
 #include "usbd_cdc_if.h"
 #define UART_PRINTF_HANDLE   huart9
 #define UART_PRINTF_TIMEOUT  100
@@ -45,61 +42,17 @@ int fputc(int ch, FILE *f)
 }
 #endif
 
-#include "usbd_cdc_if.h"
 extern struct Exo *g_exo;
-extern void CallExoUartRxCallback(struct Exo *ptr_exo, UART_HandleTypeDef *huart, uint16_t data_size);
+extern void CallExoUartRxCallback(struct Exo *exo, UART_HandleTypeDef *huart, uint16_t data_size);
+extern void CallExoUartErrorCallback(struct Exo *exo, UART_HandleTypeDef *huart);
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
 {
-    if (huart->Instance == UART8)
-    {
-        /** uncomment to debug */
-        // uint8_t buf[128];
-        // memcpy(buf, uart8_rx_buffer, size);
-        // CDC_Transmit_HS(buf, size);
-        if (size <= UART8_RX_BUF_SIZE)
-        {
-            CallExoUartRxCallback(g_exo, huart, size);
-        }
-        HAL_UARTEx_ReceiveToIdle_DMA(&huart8, uart8_rx_buffer, UART8_RX_BUF_SIZE);
-        __HAL_DMA_DISABLE_IT(huart8.hdmarx, DMA_IT_HT);
-    }
-    else if (huart->Instance == UART9)
-    {
-        /** uncomment to debug */
-        // uint8_t buf[128];
-        // memcpy(buf, uart9_rx_buffer, size);
-        // CDC_Transmit_HS(buf, size);
-        if (size <= UART9_RX_BUF_SIZE)
-        {
-            CallExoUartRxCallback(g_exo, huart, size);
-        }
-        HAL_UARTEx_ReceiveToIdle_DMA(&huart9, uart9_rx_buffer, UART9_RX_BUF_SIZE);
-        __HAL_DMA_DISABLE_IT(huart9.hdmarx, DMA_IT_HT);
-    }
-    else
-    {
-        /** MagEncoder内部会调用HAL_UARTEx_ReceiveToIdle_DMA */
-        CallExoUartRxCallback(g_exo, huart, size);
-    }
+    CallExoUartRxCallback(g_exo, huart, size);
 }
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
-    if (huart->Instance == UART8)
-    {
-        // uint32_t err_code = huart->ErrorCode;
-        // printf("UART8 Error: %08x\r\n", err_code);
-        // memset(uart8_rx_buffer, 0, UART8_RX_BUF_SIZE);
-        HAL_UARTEx_ReceiveToIdle_DMA(&huart8, uart8_rx_buffer, UART8_RX_BUF_SIZE);
-        __HAL_DMA_DISABLE_IT(huart8.hdmarx, DMA_IT_HT);
-    }
-    else if (huart->Instance == UART9)
-    {
-        // memset(uart9_rx_buffer, 0, UART9_RX_BUF_SIZE);
-        HAL_UARTEx_ReceiveToIdle_DMA(&huart9, uart9_rx_buffer, UART9_RX_BUF_SIZE);
-        __HAL_DMA_DISABLE_IT(huart9.hdmarx, DMA_IT_HT);
-    }
-    /** #TODO 暂时认为MagEncoder的串口不会出错 */
+    CallExoUartErrorCallback(g_exo, huart);
 }
 

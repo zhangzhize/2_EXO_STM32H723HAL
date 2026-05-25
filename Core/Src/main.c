@@ -51,7 +51,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint8_t g_timer2_flag = 0;
+volatile uint8_t g_timer2_flag = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -119,6 +119,8 @@ int main(void)
   MX_SPI2_Init();
   MX_USART2_UART_Init();
   MX_USART3_UART_Init();
+  MX_FDCAN3_Init();
+  MX_SPI3_Init();
   /* USER CODE BEGIN 2 */
     AltMainTask(NULL);
   /* USER CODE END 2 */

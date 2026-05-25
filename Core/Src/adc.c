@@ -151,7 +151,7 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* adcHandle)
     PA2     ------> ADC1_INP14
     PC4     ------> ADC1_INP4
     */
-    GPIO_InitStruct.Pin = RIGHT_PULLFORCE_Pin|LEFT_PULLFORCE_Pin;
+    GPIO_InitStruct.Pin = ADC1_IN16_Pin|ADC1_INP14_Pin;
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
@@ -171,7 +171,7 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* adcHandle)
     hdma_adc1.Init.PeriphDataAlignment = DMA_PDATAALIGN_WORD;
     hdma_adc1.Init.MemDataAlignment = DMA_MDATAALIGN_WORD;
     hdma_adc1.Init.Mode = DMA_CIRCULAR;
-    hdma_adc1.Init.Priority = DMA_PRIORITY_LOW;
+    hdma_adc1.Init.Priority = DMA_PRIORITY_HIGH;
     hdma_adc1.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
     if (HAL_DMA_Init(&hdma_adc1) != HAL_OK)
     {
@@ -202,7 +202,7 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef* adcHandle)
     PA2     ------> ADC1_INP14
     PC4     ------> ADC1_INP4
     */
-    HAL_GPIO_DeInit(GPIOA, RIGHT_PULLFORCE_Pin|LEFT_PULLFORCE_Pin);
+    HAL_GPIO_DeInit(GPIOA, ADC1_IN16_Pin|ADC1_INP14_Pin);
 
     HAL_GPIO_DeInit(VBUS_ADC_GPIO_Port, VBUS_ADC_Pin);
 

@@ -18,6 +18,15 @@ extern "C" {
 #define _max(a,b)           ((a) > (b) ? (a) : (b))
 #define _min(a,b)           ((a) < (b) ? (a) : (b))
 
+#define DMA_UNION_BUF_SIZE_BYTES         (512U)
+#define DMA_UNION_BUF_SIZE_FLOATS        (DMA_UNION_BUF_SIZE_BYTES/4)
+union DmaUnionBuffer {
+    float f_data[DMA_UNION_BUF_SIZE_FLOATS];
+    uint32_t u32_data[DMA_UNION_BUF_SIZE_FLOATS];
+    char c_data[DMA_UNION_BUF_SIZE_BYTES];
+    uint8_t u8_data[DMA_UNION_BUF_SIZE_BYTES];
+};
+
 void DelayUs(uint32_t us);
 void DelayMs(uint32_t ms);
 uint64_t GetSysTimeUs(void);
