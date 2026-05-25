@@ -6,7 +6,10 @@
 #include <cstring>
 #include <cstdarg>
 
+#define SHELL_UART_RX_BUF_SIZE              256
+
 __attribute__((section(".dma_buf"), aligned(32))) DmaUnionBuffer g_uart_tx_dma_buf;
+__attribute__((section(".dma_buf"), aligned(32))) uint8_t shell_uart_rx_buffer[SHELL_UART_RX_BUF_SIZE];
 
 Shell::Shell(UART_HandleTypeDef &huart): txbuffer_(g_uart_tx_dma_buf), huart_(huart)
 {
@@ -16,6 +19,13 @@ Shell::Shell(UART_HandleTypeDef &huart): txbuffer_(g_uart_tx_dma_buf), huart_(hu
     RegisterCommand("help", CmdWrapper<Shell, &Shell::OnCmdHelp>, this);
     RegisterCommand("write", CmdWrapper<Shell, &Shell::OnCmdWriteParam>, this);
     RegisterCommand("read", CmdWrapper<Shell, &Shell::OnCmdReadParam>, this);
+}
+
+void Shell::UartReceiveDma(void)
+{
+    /* DMA接收无线上位机控制命令, 波特率1000000 Bits/s */
+    HAL_UARTEx_ReceiveToIdle_DMA(&huart_, shell_uart_rx_buffer, SHELL_UART_RX_BUF_SIZE);
+    __HAL_DMA_DISABLE_IT(huart_.hdmarx, DMA_IT_HT);
 }
 
 void Shell::Printf(const char *format, ...)
@@ -103,6 +113,8 @@ void Shell::PushPendingCommand(const uint8_t *rx_data, uint16_t len)
     memcpy(pending_cmd_buf_, rx_data, copy_len);
     pending_cmd_buf_[copy_len] = '\0';
     is_cmd_pending_ = true;
+    
+    UartReceiveDma();
 }
 
 bool Shell::ProcessPendingCommand()

@@ -35,6 +35,10 @@ public:
     explicit Shell(UART_HandleTypeDef &huart);
     virtual ~Shell() = default;
 
+    
+    void UartReceiveDma(void);
+
+
     void Printf(const char *format, ...);
     void SetVofaJustFloatData(uint16_t index, float value);
     void SendVofaJustFloatFrame(uint16_t float_size);

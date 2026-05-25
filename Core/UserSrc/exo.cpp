@@ -4,14 +4,57 @@ extern "C" {
 #include "arm_math.h"
 }
 #include "bsp_dwt.h"
-extern uint32_t g_adc_data[3];  /**< definition in alt_main.cpp */
+#include "bsp_can.h"
+#include "bsp_usart.h"
+#include "bsp_spi.h"
+#include "bsp_gpio.h"
+#include "gpio.h"
+
+extern uint32_t g_adc_data[3];  /* definition in alt_main.cpp */
+
+extern "C" {
+static void ExoCanRxBridge(void *ctx, FDCAN_HandleTypeDef *hfdcan, uint32_t can_ext_id, const uint8_t *rx_data)
+{
+    static_cast<Exo *>(ctx)->CanRxCallback(hfdcan, can_ext_id, rx_data);
+}
+
+static void ExoUartRxBridge(void *ctx, UART_HandleTypeDef *huart, uint16_t data_size)
+{
+    static_cast<Exo *>(ctx)->UartRxCallback(huart, data_size);
+}
+
+static void ExoUartErrorBridge(void *ctx, UART_HandleTypeDef *huart)
+{
+    static_cast<Exo *>(ctx)->UartErrorCallback(huart);
+}
+
+static void ExoSpiErrorBridge(void *ctx, SPI_HandleTypeDef *hspi)
+{
+    static_cast<Exo *>(ctx)->SpiErrorCallback(hspi);
+}
+
+static void ExoGpioExtiBridge(void *ctx, uint16_t GPIO_Pin)
+{
+    Exo *exo = static_cast<Exo *>(ctx);
+    if (GPIO_Pin == NRF54_CS_INT_Pin)
+    {
+        if (HAL_GPIO_ReadPin(NRF54_CS_INT_GPIO_Port, NRF54_CS_INT_Pin) == GPIO_PIN_RESET)
+        {
+            exo->SpiRxStart();
+        }
+        else if (HAL_GPIO_ReadPin(NRF54_CS_INT_GPIO_Port, NRF54_CS_INT_Pin) == GPIO_PIN_SET)
+        {
+            exo->SpiRxCallback();
+        }
+    }
+}
+}
 
 #define SENSOR_SPI_RX_BUF_SIZE              128
 #define SENSOR_UART_RX_BUF_SIZE             256
-#define SHELL_UART_RX_BUF_SIZE              256
 __attribute__((section(".dma_buf"), aligned(32))) uint8_t spi_rx_dma_buf[2][SENSOR_SPI_RX_BUF_SIZE];
 __attribute__((section(".dma_buf"), aligned(32))) uint8_t sensor_uart_rx_buffer[SENSOR_UART_RX_BUF_SIZE];
-__attribute__((section(".dma_buf"), aligned(32))) uint8_t shell_uart_rx_buffer[SHELL_UART_RX_BUF_SIZE];
+
 
 void AnkleJoint::Calibrate()
 {
@@ -22,13 +65,13 @@ bool AnkleJoint::IsMotorConnect()
 {
     if (!pj_.is_used_) return true;
 
+    // motor_.run_mode_ = RobstrideMotorMode::kMotionMode;
+    // motor_.SetMotorMode();
+    motor_.EnableMotor();
     if (motor_.status_feedback_cnt_ > 10)
     {
         return true;
     }
-    motor_.run_mode_ = RobstrideMotorMode::kMotionMode;
-    motor_.SetMotorMode();
-    // motor_.EnableMotor();
     return false;
 }
 
@@ -115,8 +158,9 @@ bool KneeJoint::IsMotorConnect()
 {
     if (!pj_.is_used_) return true;
 
-    motor_.run_mode_ = RobstrideMotorMode::kMotionMode;
-    motor_.SetMotorMode();
+    // motor_.run_mode_ = RobstrideMotorMode::kMotionMode;
+    // motor_.SetMotorMode();
+    motor_.EnableMotor();
     if (motor_.status_feedback_cnt_ > 10)
     {
         return true;
@@ -150,15 +194,15 @@ void KneeJoint::Read()
     {
         pj_.pos_rad_ = motor_.position_ - pj_.pos_offset_rad_;
         pj_.vel_radps_ = motor_.speed_;
-        // pj_.tor_Nm_ = motor_.torque_;
-        pj_.tor_Nm_ = pe_.left_side_.ankle_joint_.plantarflexion_force_N_ * 0.035 - pe_.right_side_.ankle_joint_.plantarflexion_force_N_ * 0.035; // zzz: 现在两个踝关节的拉力传感用于测膝力矩了
+        pj_.tor_Nm_ = motor_.torque_;
+        // pj_.tor_Nm_ = pe_.left_side_.ankle_joint_.plantarflexion_force_N_ * 0.035 - pe_.right_side_.ankle_joint_.plantarflexion_force_N_ * 0.035; // zzz: 现在两个踝关节的拉力传感用于测膝力矩了
     }
     else
     {
         pj_.pos_rad_ = -(motor_.position_ - pj_.pos_offset_rad_);
         pj_.vel_radps_ = -motor_.speed_;
-        // pj_.tor_Nm_ = -motor_.torque_;
-        pj_.tor_Nm_ = pe_.left_side_.ankle_joint_.plantarflexion_force_N_ * 0.035 - pe_.right_side_.ankle_joint_.plantarflexion_force_N_ * 0.035; // zzz: 现在两个踝关节的拉力传感用于测膝力矩了
+        pj_.tor_Nm_ = -motor_.torque_;
+        // pj_.tor_Nm_ = pe_.left_side_.ankle_joint_.plantarflexion_force_N_ * 0.035 - pe_.right_side_.ankle_joint_.plantarflexion_force_N_ * 0.035; // zzz: 现在两个踝关节的拉力传感用于测膝力矩了
     }
 }
 
@@ -176,25 +220,21 @@ void KneeJoint::Assist()
         motor_.MotionControl();
         return;
     }
-
-
+    
     float force_profile = 0.0f;
 
-    // float phase_rad = pj_.is_left_ ? pe_.ao_left_phase_rad_ : pe_.ao_right_phase_rad_;
-    float phase_rad = pj_.is_left_ ? pe_.left_side_.fsr_gait_data_.percent_gait_ : pe_.right_side_.fsr_gait_data_.percent_gait_;
-    phase_rad = phase_rad * _2PI / 100.0f;
-    // uint32_t gait_event_cnt = pj_.is_left_ ? pe_.left_event_cnt_ : pe_.right_event_cnt_;
-
-    // float phase_rad = pj_.is_left_ ? pe_.ao_left_phase_rad_ : pe_.ao_right_phase_rad_;
-    // float phase_percent = pj_.is_left_ ? pe_.left_side_.percent_gait_ : pe_.right_side_.percent_gait_;
-
-    // uint32_t gait_event_cnt = pj_.is_left_ ? pe_.left_event_cnt_ : pe_.right_event_cnt_;
+    float phase_percent = pj_.is_left_ ? pe_.left_side_.fsr_gait_data_.percent_gait_ : pe_.right_side_.fsr_gait_data_.percent_gait_;
+    float phase_rad = phase_percent * _2PI / 100.0f;
 
     force_profile = force_profile_generator_.GetForceProfile(phase_rad, pj_.pos_rad_, pj_.vel_radps_);
-    if (pj_.is_left_) //zzz
+    
+    /* 左侧正转为弯曲 */
+    if (!pj_.is_left_)
     {
         force_profile = -force_profile;
     }
+
+    /* 暂时限幅为3Nm */
     motor_.torque_forward_ = _constrain(force_profile * pe_.user_weight_kg_, -3.0f, 3.0f);
     motor_.position_ref_ = 0.0f;
     motor_.speed_ref_ = 0.0f;
@@ -442,13 +482,14 @@ bool HipJoint::IsMotorConnect()
 {
     if (!pj_.is_used_) return true;
 
+    // motor_.ctrl_param_.mode_id_ = DMMotorModeID::kMIT;
+    // motor_.SetMotorMode();
+    motor_.EnableMotor();
     if (motor_.feedback_.flag_ > 0)
     {
         return true;
     }
-    // motor_.ctrl_param_.mode_id_ = DMMotorModeID::kMIT;
-    // motor_.SetMotorMode();
-    motor_.EnableMotor();
+
     return false;
 }
 
@@ -1449,9 +1490,16 @@ void DaMiaoImuHub::UpdateImuData(ImuData &imu_data, const uint8_t *data)
 
 void Exo::Initialize()
 {
+    /** 注册回调，以便 BSP 回调能转发到当前 Exo 实例 */
+    BspCanRegisterRxCallback(this, ExoCanRxBridge);
+    BspUsartRegisterRxCallback(this, ExoUartRxBridge);
+    BspUsartRegisterErrorCallback(this, ExoUartErrorBridge);
+    BspSpiRegisterErrorCallback(this, ExoSpiErrorBridge);
+    BspGpioRegisterExtiCallback(this, ExoGpioExtiBridge);
+
     /** 启动串口接收 */
     SensorUartReceiveDma();
-    ShellUartReceiveDma();
+    shell_.UartReceiveDma();
 
     /** 调试: 重置标定标志. */
     ResetCalibrationFlags();
@@ -1569,25 +1617,26 @@ void Exo::Run()
     case ExoData::State::kCalibrating:
         Calibrate();
 
-        /** 下面这段测试代码暂时代替Standby() */
-        if (pe_.do_test)
-        {
-            pe_.right_side_.knee_joint_.tor_ref_Nm_ = chirp_generator_.Update(tnow_sys_us);
-            right_side_.knee_joint_.TorqueControl();
-        }
-        else
-        {
-            chirp_generator_.Reset();
-            pe_.right_side_.knee_joint_.tor_ref_Nm_ = 0.0f;
-            right_side_.knee_joint_.TorqueControl();
-        }
-
-        // Standby();   /** 为了获取电机/关节状态, 保持通信; 膝sea零力控制 */
-        /** 标定完毕则转入kReady */
-        // if (IsCalibrateDone())
+        /* 闭环力控测试的时候, 下面的代码代替后续的状态机 */
+        // if (pe_.do_test)
         // {
-        //     pe_.state_ = ExoData::State::kReady;
+        //     pe_.right_side_.knee_joint_.tor_ref_Nm_ = chirp_generator_.Update(tnow_sys_us);
+        //     right_side_.knee_joint_.TorqueControl();
         // }
+        // else
+        // {
+        //     chirp_generator_.Reset();
+        //     pe_.right_side_.knee_joint_.tor_ref_Nm_ = 0.0f;
+        //     right_side_.knee_joint_.TorqueControl();
+        // }
+
+        /* 为了获取电机/关节状态, 保持通信; 膝sea零力控制 */
+        Standby();   
+        /* 标定完毕则转入kReady */
+        if (IsCalibrateDone())
+        {
+            pe_.state_ = ExoData::State::kReady;
+        }
         break;
 
     case ExoData::State::kReady:
@@ -1664,12 +1713,12 @@ void Exo::Run()
     }
 
     /** 由于处理命令后需要反馈给上位机, 为了反馈不被数据掩盖, 延时一段时间再发数据 */  
-    // const uint32_t now_ms = GetSysTimeMs();
-    // if (pe_.telemetry_config_.enable && (now_ms >= pe_.telemetry_config_.pause_until_ms))
-    // {
-    //     VofaSendTelemetry();
-    // }
-    VofaSendTelemetry();
+    const uint32_t now_ms = GetSysTimeMs();
+    if (pe_.telemetry_config_.enable && (now_ms >= pe_.telemetry_config_.pause_until_ms))
+    {
+        VofaSendTelemetry();
+    }
+    // VofaSendTelemetry();
     
     /** 指示系统状态机当前是什么状态 */
     state_led_.UpdateColorBDMA(static_cast<uint8_t>(pe_.state_));
@@ -1707,12 +1756,12 @@ void Exo::ResetCalibrationFlags()
     pe_.right_side_.fsr_gait_data_.do_calibration_refinement_heel_fsr_ = true;
     pe_.right_side_.fsr_gait_data_.do_calibration_refinement_toe_fsr_ = true;
 
-    /* IMU读数标定 */
-    pe_.body_imu_.is_calibrated_ = false;
-    pe_.left_side_.shank_imu_.is_calibrated_ = false;
-    pe_.left_side_.thigh_imu_.is_calibrated_ = false;
-    pe_.right_side_.shank_imu_.is_calibrated_ = false;
-    pe_.right_side_.thigh_imu_.is_calibrated_ = false;
+    /* IMU读数暂不需要标定 */
+    pe_.body_imu_.is_calibrated_ = true;
+    pe_.left_side_.shank_imu_.is_calibrated_ = true;
+    pe_.left_side_.thigh_imu_.is_calibrated_ = true;
+    pe_.right_side_.shank_imu_.is_calibrated_ = true;
+    pe_.right_side_.thigh_imu_.is_calibrated_ = true;
 }
 
 float semg_adc1 = 0.0f;
@@ -1825,17 +1874,6 @@ void Exo::VofaSendTelemetry()
     buf.f_data[5] = pe_.right_side_.fsr_gait_data_.heel_.raw_reading;
     buf.f_data[6] = pe_.right_side_.fsr_gait_data_.percent_gait_ / 100.0f;
     buf.f_data[7] = pe_.right_side_.knee_joint_.pos_rad_;
-    // buf.f_data[8] = right_side_.knee_joint_.motor_.torque_forward_;
-    // buf.f_data[9] = pe_.left_side_.ankle_joint_.plantarflexion_force_N_;
-    // buf.f_data[10] = pe_.right_side_.ankle_joint_.plantarflexion_force_N_;
-    // buf.f_data[11] = pe_.right_side_.knee_joint_.tor_ref_Nm_;
-    // buf.f_data[12] = pe_.right_side_.knee_joint_.tor_Nm_;
-    // buf.f_data[13] = right_side_.knee_joint_.motor_.torque_;
-    // buf.f_data[14] = static_cast<float>(pe_.error_code_);
-    // buf.f_data[15] = static_cast<float>(right_side_.knee_joint_.motor_.error_code_);
-    // buf.f_data[16] = static_cast<float>(right_side_.knee_joint_.motor_.fault_code_);
-
-
     buf.f_data[8] = pe_.right_side_.thigh_imu_.roll_deg_;
     buf.f_data[9] = pe_.right_side_.thigh_imu_.pitch_deg_;
     buf.f_data[10] = pe_.right_side_.thigh_imu_.yaw_deg_;
@@ -1999,14 +2037,6 @@ void Exo::SensorUartReceiveDma(void)
     __HAL_DMA_DISABLE_IT(hw_.sensor_uart.hdmarx, DMA_IT_HT);
 }
 
-void Exo::ShellUartReceiveDma(void)
-{
-    /* DMA接收无线上位机控制命令, 波特率1000000 Bits/s */
-    HAL_UARTEx_ReceiveToIdle_DMA(&hw_.shell_uart, shell_uart_rx_buffer, SHELL_UART_RX_BUF_SIZE);
-    __HAL_DMA_DISABLE_IT(hw_.shell_uart.hdmarx, DMA_IT_HT);
-}
-
-
 void Exo::UartRxCallback(UART_HandleTypeDef *huart, uint16_t data_size)
 {
     const uint8_t *data = huart->pRxBuffPtr;
@@ -2019,8 +2049,6 @@ void Exo::UartRxCallback(UART_HandleTypeDef *huart, uint16_t data_size)
     else if (huart == &hw_.shell_uart)
     {
         shell_.PushPendingCommand(data, data_size);
-        HAL_UARTEx_ReceiveToIdle_DMA(&hw_.shell_uart, shell_uart_rx_buffer, SHELL_UART_RX_BUF_SIZE);
-        __HAL_DMA_DISABLE_IT(hw_.shell_uart.hdmarx, DMA_IT_HT);
     }
     else
     {
@@ -2039,7 +2067,7 @@ void Exo::UartErrorCallback(UART_HandleTypeDef *huart)
     else if (huart == &hw_.shell_uart)
     {
         HAL_UART_AbortReceive(&hw_.shell_uart);
-        ShellUartReceiveDma();
+        shell_.UartReceiveDma();
     }
 }
 
@@ -2102,47 +2130,4 @@ void Exo::ProcessSpiData()
         pe_.right_side_.foot_imu_.pitch_deg_ = pe_.right_side_.foot_imu_.pitch_rad_ * RAD_TO_DEG;
         pe_.right_side_.foot_imu_.yaw_deg_ = pe_.right_side_.foot_imu_.yaw_rad_ * RAD_TO_DEG;
     }
-}
-
-/* ------------------ C wrapper ------------------- */
-void CallExoCanRxCallBack(Exo *exo, FDCAN_HandleTypeDef *hfdcan, uint32_t can_ext_id, const uint8_t *rx_data)
-{
-    if (exo == nullptr || rx_data == nullptr) return;
-
-    exo->CanRxCallback(hfdcan, can_ext_id, rx_data);
-}
-
-void CallExoUartRxCallback(Exo *exo, UART_HandleTypeDef *huart, uint16_t data_size)
-{
-    if (exo == nullptr || huart == nullptr) return;
-
-    exo->UartRxCallback(huart, data_size);
-}
-
-void CallExoUartErrorCallback(Exo *exo, UART_HandleTypeDef *huart)
-{
-    if (exo == nullptr || huart == nullptr) return;
-
-    exo->UartErrorCallback(huart);
-}
-
-void CallExoSpiRxStart(Exo *exo)
-{
-    if (exo == nullptr) return;
-
-    exo->SpiRxStart();
-}
-
-void CallExoSpiRxCallback(Exo *exo)
-{
-    if (exo == nullptr) return;
-
-    exo->SpiRxCallback();
-}
-
-void CallExoSpiErrorCallback(Exo *exo, SPI_HandleTypeDef *hspi)
-{
-    if (exo == nullptr || hspi == nullptr) return;
-
-    exo->SpiErrorCallback(hspi);
 }

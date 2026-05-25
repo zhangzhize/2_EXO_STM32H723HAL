@@ -121,18 +121,18 @@ public:
     explicit JointData(bool is_left = true) : is_left_(is_left) {}
     virtual ~JointData() = default;
 
-    float pos_ref_rad_ = 0.0;       /** 人体关节角度参考 */
-    float pos_rad_ = 0.0f;          /** 人体关节角度反馈 */
-    float pos_offset_rad_ = 0.0f;   /** 人体关节角度偏移, 用于标定 */
-    float vel_ref_radps_ = 0.0f;    /** 人体关节角速度参考 */
-    float vel_radps_ = 0.0f;        /** 人体关节角速度反馈 */
-    float tor_interact_ref_Nm_ = 0.0f;  /** 人机交互力矩参考 */
+    float pos_ref_rad_ = 0.0;       /* 人体关节角度参考 */
+    float pos_rad_ = 0.0f;          /* 人体关节角度反馈 */
+    float pos_offset_rad_ = 0.0f;   /* 人体关节角度偏移, 用于标定 */
+    float vel_ref_radps_ = 0.0f;    /* 人体关节角速度参考 */
+    float vel_radps_ = 0.0f;        /* 人体关节角速度反馈 */
+    float tor_interact_ref_Nm_ = 0.0f;  /* 人机交互力矩参考 */
     float tor_interact_Nm_ = 0.0f;
-    float tor_ref_Nm_ = 0.0f;       /** 还没想好用于表示什么力矩 */
-    float tor_Nm_ = 0.0f;           /** 还没想好用于表示什么力矩 */
+    float tor_ref_Nm_ = 0.0f;       /* 还没想好用于表示什么力矩 */
+    float tor_Nm_ = 0.0f;           /* 还没想好用于表示什么力矩 */
 
-    bool is_left_;              /** 表示该数据是左侧关节的还是右侧的 */
-    bool is_used_ = false;      /** 表示该关节是否使用 */
+    bool is_left_;                  /* 表示该数据是左侧关节的还是右侧的 */
+    bool is_used_ = false;          /* 表示该关节是否使用 */
     bool is_calibrated_ = false;
 };
 
@@ -238,10 +238,10 @@ public:
     bool prev_heel_contact_state_ = true;
     bool prev_toe_contact_state_ = true;
 
-    bool do_calibration_toe_fsr_ = false;
-    bool do_calibration_refinement_toe_fsr_ = false;
-    bool do_calibration_heel_fsr_ = false;
-    bool do_calibration_refinement_heel_fsr_ = false;
+    bool do_calibration_toe_fsr_ = true;
+    bool do_calibration_refinement_toe_fsr_ = true;
+    bool do_calibration_heel_fsr_ = true;
+    bool do_calibration_refinement_heel_fsr_ = true;
 
     bool is_left_;
     bool is_used_ = true;
@@ -371,7 +371,7 @@ public:
     Error error_code_ = Error::kNone;
     SysEvent pending_events_ = SysEvent::kNone;
     LocoMode loco_mode_ = LocoMode::kWalking;
-    ArbiterOverride override_usr_ = {.forced_locomode = LocoMode::kSitToStand, .enable_locomode_override = false};
+    ArbiterOverride override_usr_ = {.forced_locomode = LocoMode::kWalking, .enable_locomode_override = false};
     TelemetryConfig telemetry_config_ = {.enable = false, .pause_until_ms = 0};
 
     float user_weight_kg_ = 60.0f;
@@ -711,7 +711,6 @@ public:
 
     void CanRxCallback(FDCAN_HandleTypeDef *hfdcan, uint32_t can_id, const uint8_t *data);
     void SensorUartReceiveDma(void);
-    void ShellUartReceiveDma(void);
     void UartRxCallback(UART_HandleTypeDef *huart, uint16_t data_size);
     void UartErrorCallback(UART_HandleTypeDef *huart);
 
@@ -750,15 +749,6 @@ private:
         pe.pending_events_ &= ~ExoData::SysEvent::kEnterSleep;
     }
 };
-
-extern "C" {
-void CallExoCanRxCallBack(Exo *exo, FDCAN_HandleTypeDef *hfdcan, uint32_t can_ext_id, const uint8_t *rx_data);
-void CallExoUartRxCallback(Exo *exo, UART_HandleTypeDef *huart, uint16_t data_size);
-void CallExoUartErrorCallback(Exo *exo, UART_HandleTypeDef *huart);
-void CallExoSpiRxStart(Exo *exo);
-void CallExoSpiRxCallback(Exo *exo);
-void CallExoSpiErrorCallback(Exo *exo, SPI_HandleTypeDef *hspi);
-}
 
 
 #endif

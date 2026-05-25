@@ -6,6 +6,11 @@
 #define UART_PRINTF_HANDLE   huart9
 #define UART_PRINTF_TIMEOUT  100
 extern USBD_HandleTypeDef hUsbDeviceHS;
+
+static void *s_usart_ctx = NULL;
+static BspUartRxCallback s_usart_rx_cb = NULL;
+static BspUartErrorCallback s_usart_err_cb = NULL;
+
 #ifdef __GNUC__
 int _write(int file, char *ptr, int len)
 {
@@ -42,17 +47,31 @@ int fputc(int ch, FILE *f)
 }
 #endif
 
-extern struct Exo *g_exo;
-extern void CallExoUartRxCallback(struct Exo *exo, UART_HandleTypeDef *huart, uint16_t data_size);
-extern void CallExoUartErrorCallback(struct Exo *exo, UART_HandleTypeDef *huart);
+void BspUsartRegisterRxCallback(void *ctx, BspUartRxCallback cb)
+{
+    s_usart_ctx = ctx;
+    s_usart_rx_cb = cb;
+}
+
+void BspUsartRegisterErrorCallback(void *ctx, BspUartErrorCallback cb)
+{
+    s_usart_ctx = ctx;
+    s_usart_err_cb = cb;
+}
 
 void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t size)
 {
-    CallExoUartRxCallback(g_exo, huart, size);
+    if (s_usart_rx_cb != NULL)
+    {
+        s_usart_rx_cb(s_usart_ctx, huart, size);
+    }
 }
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
-    CallExoUartErrorCallback(g_exo, huart);
+    if (s_usart_err_cb != NULL)
+    {
+        s_usart_err_cb(s_usart_ctx, huart);
+    }
 }
 

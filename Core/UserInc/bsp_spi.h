@@ -7,6 +7,10 @@ extern "C" {
 
 #include "spi.h"
 
+typedef void (*BspSpiErrorCallback)(void *ctx, SPI_HandleTypeDef *hspi);
+
+void BspSpiRegisterErrorCallback(void *ctx, BspSpiErrorCallback cb);
+
 #ifdef __cplusplus
 }
 #endif

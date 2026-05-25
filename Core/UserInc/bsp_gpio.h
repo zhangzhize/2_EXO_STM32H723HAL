@@ -7,6 +7,10 @@ extern "C" {
 
 #include "gpio.h"
 
+typedef void (*BspGpioExtiCallback)(void *ctx, uint16_t GPIO_Pin);
+
+void BspGpioRegisterExtiCallback(void *ctx, BspGpioExtiCallback cb);
+
 #ifdef __cplusplus
 }
 #endif

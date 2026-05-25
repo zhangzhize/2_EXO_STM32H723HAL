@@ -7,6 +7,12 @@ extern "C" {
 
 #include "usart.h"
 
+typedef void (*BspUartRxCallback)(void *ctx, UART_HandleTypeDef *huart, uint16_t data_size);
+typedef void (*BspUartErrorCallback)(void *ctx, UART_HandleTypeDef *huart);
+
+void BspUsartRegisterRxCallback(void *ctx, BspUartRxCallback cb);
+void BspUsartRegisterErrorCallback(void *ctx, BspUartErrorCallback cb);
+
 #ifdef __cplusplus
 }
 #endif

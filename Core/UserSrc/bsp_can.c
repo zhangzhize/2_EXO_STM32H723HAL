@@ -1,5 +1,14 @@
 #include "bsp_can.h"
 
+static void *s_can_ctx = NULL;
+static BspCanRxCallback s_can_rx_cb = NULL;
+
+void BspCanRegisterRxCallback(void *ctx, BspCanRxCallback cb)
+{
+    s_can_ctx = ctx;
+    s_can_rx_cb = cb;
+}
+
 void BspCanInit(FDCAN_HandleTypeDef *hfdcan)
 {
     FDCAN_FilterTypeDef fdcan_filter;
@@ -69,9 +78,6 @@ static uint32_t FDCanReceive(FDCAN_HandleTypeDef *hfdcan, uint32_t *rec_id, uint
 	return 0;
 }
 
-extern struct Exo *g_exo;
-extern void CallExoCanRxCallBack(struct Exo *exo, FDCAN_HandleTypeDef *hfdcan, uint32_t can_ext_id, uint8_t *rx_data);
-
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 {
     uint32_t can_id = 0;
@@ -80,8 +86,8 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 
     rx_len = FDCanReceive(hfdcan, &can_id, rx_data);
 
-    if (rx_len == FDCAN_DLC_BYTES_8)
+    if (rx_len == FDCAN_DLC_BYTES_8 && s_can_rx_cb != NULL)
     {
-        CallExoCanRxCallBack(g_exo, hfdcan, can_id, rx_data);
+        s_can_rx_cb(s_can_ctx, hfdcan, can_id, rx_data);
     }
 }

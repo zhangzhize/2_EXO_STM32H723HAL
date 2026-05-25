@@ -32,9 +32,6 @@ uint8_t cdc_rx_flag = 0;
 
 __attribute__((section(".dma_buf"), aligned(32))) uint32_t g_adc_data[3] = {0};
 
-/* 外骨骼需要用到的外设句柄, 并实例化外骨骼数据对象, 及控制外骨骼和处理外骨骼的对象 */
-Exo *g_exo = nullptr;
-
 /* 属于用户真正的main函数 */
 void AltMainTask(void *argument)
 {
@@ -55,7 +52,7 @@ void AltMainTask(void *argument)
     BspCanInit(&hfdcan1);
     BspCanInit(&hfdcan3);
 
-    // 外骨骼躯干节点依赖这个函数;
+    /* 外骨骼躯干IMU节点依赖这个函数 */
     while(BMI088_init());
 
     /* 蜂鸣器, 暂不启用 */
@@ -77,12 +74,11 @@ void AltMainTask(void *argument)
     };
     static ExoData exo_data;
     static Exo exo(exo_data, exo_hw);
-    g_exo = &exo;
 
     /* 给电机上电 */
     HAL_GPIO_WritePin(POWER_24V_1_GPIO_Port, POWER_24V_1_Pin|POWER_24V_2_Pin, GPIO_PIN_SET);
     HAL_Delay(1000);     /* 稍微延迟一下等电机上电启动完毕 */
-    g_exo->Initialize();
+    exo.Initialize();
     HAL_Delay(1000);     /* 稍微延迟一下 */
 
 	/* 启动定时器 */
@@ -94,7 +90,7 @@ void AltMainTask(void *argument)
             g_timer2_flag = 0;
             
             /* 外骨骼 */
-            g_exo->Run();
+            exo.Run();
         }
 	}
 }
