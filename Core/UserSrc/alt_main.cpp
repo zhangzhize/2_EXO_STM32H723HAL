@@ -35,8 +35,6 @@ __attribute__((section(".dma_buf"), aligned(32))) uint32_t g_adc_data[3] = {0};
 /* 外骨骼需要用到的外设句柄, 并实例化外骨骼数据对象, 及控制外骨骼和处理外骨骼的对象 */
 Exo *g_exo = nullptr;
 
-float run_time_us = 0.0f;
-
 /* 属于用户真正的main函数 */
 void AltMainTask(void *argument)
 {
@@ -96,9 +94,7 @@ void AltMainTask(void *argument)
             g_timer2_flag = 0;
             
             /* 外骨骼 */
-            uint32_t start_tick = DWT_CYCCNT;
             g_exo->Run();
-            run_time_us = DWTGetDeltaUs(start_tick);
         }
 	}
 }

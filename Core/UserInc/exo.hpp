@@ -26,7 +26,7 @@
 #include "mahony.hpp"
 
 /** 应该与NRF54代码中的一致 */
-typedef struct foot_sensor_packet_t
+typedef struct __attribute__((packed)) foot_sensor_packet_t
 {
     int32_t mV_heel;
     int32_t mV_toe;
@@ -37,7 +37,7 @@ typedef struct foot_sensor_packet_t
     float quatReal;
 } foot_sensor_packet_t;
 
-typedef struct exo_sensor_packet_t
+typedef struct __attribute__((packed)) exo_sensor_packet_t
 {
     foot_sensor_packet_t left_foot;
     foot_sensor_packet_t right_foot;
@@ -110,9 +110,9 @@ public:
     float magnet_uT_[3] = {0.0f, 0.0f, 0.0f};
     float chip_temp_c_ = 0.0f;
 
-    bool is_left_ = true;
+    bool is_left_;
     bool is_used_ = true;
-    bool is_calibrated_ = true;
+    bool is_calibrated_ = false;
 };
 
 class JointData
@@ -133,7 +133,7 @@ public:
 
     bool is_left_;              /** 表示该数据是左侧关节的还是右侧的 */
     bool is_used_ = false;      /** 表示该关节是否使用 */
-    bool is_calibrated_ = true;    /** 上述关节数据暂不需要标定, 先标注为已标定 */
+    bool is_calibrated_ = false;
 };
 
 class AnkleData : public JointData
@@ -421,6 +421,7 @@ public:
     Robstride motor_;
     AnkleForceProfileGenerator force_profile_generator_;
 
+    /** 踝关节控制参数 */
     float cable_released_position_ = 0.2f;
     float cable_pre_tensioned_position_ = 0.4f;
     float cable_tensioned_position_ = 1.6f;
@@ -717,7 +718,7 @@ public:
     void SpiRxStart(void);
     void SpiRxCallback(void);
     void SpiErrorCallback(SPI_HandleTypeDef *hspi);
-    void ProcessSensorSpiData(void);
+    void ProcessSpiData(void);
 
     ExoData &pe_;
     ExoHardware &hw_;

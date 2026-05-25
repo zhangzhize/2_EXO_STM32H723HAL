@@ -1459,18 +1459,24 @@ void Exo::Initialize()
     /** 调试: 选择助力的关节 */
     pe_.left_side_.hip_joint_.is_used_ = false;
     pe_.right_side_.hip_joint_.is_used_ = false;
-    pe_.left_side_.knee_joint_.is_used_ = false;
-    pe_.right_side_.knee_joint_.is_used_ = true;
+    pe_.left_side_.knee_joint_.is_used_ = true;
+    pe_.right_side_.knee_joint_.is_used_ = false;
     pe_.left_side_.ankle_joint_.is_used_ = false;
     pe_.right_side_.ankle_joint_.is_used_ = false;
-
     pe_.left_side_.knee_sea_joint_.is_used_ = false;
     pe_.right_side_.knee_sea_joint_.is_used_ = false;
+
+    pe_.body_imu_.is_used_ = true;
+    pe_.left_side_.shank_imu_.is_used_ = true;
+    pe_.left_side_.thigh_imu_.is_used_ = true;
+    pe_.right_side_.shank_imu_.is_used_ = true;
+    pe_.right_side_.thigh_imu_.is_used_ = true;
+    pe_.ao_data_.is_used_ = true;
 
     /** 调试: 髋关节参数. */
 
     /** 调试: 膝关节参数. */
-
+    
     /** 调试: 踝关节参数 */
     left_side_.ankle_joint_.cable_released_position_ = 0.2f;
     left_side_.ankle_joint_.cable_pre_tensioned_position_ = 0.6f;
@@ -1677,27 +1683,36 @@ void Exo::Calibrate()
 
 void Exo::ResetCalibrationFlags()
 {
+    /** 关节部分 */
     pe_.left_side_.is_calibrated_ = false;
-    pe_.left_side_.hip_joint_.is_calibrated_ = true;  /** 暂不需要标定 */
+    pe_.left_side_.hip_joint_.is_calibrated_ = false;
     pe_.left_side_.knee_joint_.is_calibrated_ = false;
-    pe_.left_side_.ankle_joint_.is_calibrated_ = true;
-    pe_.left_side_.knee_sea_joint_.is_calibrated_ = false; /** 需要标定 */
-    pe_.left_side_.fsr_gait_data_.is_calibrated_ = true;
-    pe_.left_side_.fsr_gait_data_.do_calibration_heel_fsr_ = false;
-    pe_.left_side_.fsr_gait_data_.do_calibration_toe_fsr_ = false;
-    pe_.left_side_.fsr_gait_data_.do_calibration_refinement_heel_fsr_ = false;
-    pe_.left_side_.fsr_gait_data_.do_calibration_refinement_toe_fsr_ = false;
-
+    pe_.left_side_.ankle_joint_.is_calibrated_ = false;
+    pe_.left_side_.knee_sea_joint_.is_calibrated_ = false;
     pe_.right_side_.is_calibrated_ = false;
-    pe_.right_side_.hip_joint_.is_calibrated_ = true; /** 暂不需要标定 */
-    pe_.right_side_.knee_joint_.is_calibrated_ = true;
-    pe_.right_side_.ankle_joint_.is_calibrated_ = true;
-    pe_.right_side_.knee_sea_joint_.is_calibrated_ = false; /** 需要标定 */
-    pe_.right_side_.fsr_gait_data_.is_calibrated_ = true;
-    pe_.right_side_.fsr_gait_data_.do_calibration_heel_fsr_ = false;
-    pe_.right_side_.fsr_gait_data_.do_calibration_toe_fsr_ = false;
-    pe_.right_side_.fsr_gait_data_.do_calibration_refinement_heel_fsr_ = false;
-    pe_.right_side_.fsr_gait_data_.do_calibration_refinement_toe_fsr_ = false;
+    pe_.right_side_.hip_joint_.is_calibrated_ = false;
+    pe_.right_side_.knee_joint_.is_calibrated_ = false;
+    pe_.right_side_.ankle_joint_.is_calibrated_ = false;
+    pe_.right_side_.knee_sea_joint_.is_calibrated_ = false;
+
+    /* FSR读数标定 */
+    pe_.left_side_.fsr_gait_data_.is_calibrated_ = false;
+    pe_.left_side_.fsr_gait_data_.do_calibration_heel_fsr_ = true;
+    pe_.left_side_.fsr_gait_data_.do_calibration_toe_fsr_ = true;
+    pe_.left_side_.fsr_gait_data_.do_calibration_refinement_heel_fsr_ = true;
+    pe_.left_side_.fsr_gait_data_.do_calibration_refinement_toe_fsr_ = true;
+    pe_.right_side_.fsr_gait_data_.is_calibrated_ = false;
+    pe_.right_side_.fsr_gait_data_.do_calibration_heel_fsr_ = true;
+    pe_.right_side_.fsr_gait_data_.do_calibration_toe_fsr_ = true;
+    pe_.right_side_.fsr_gait_data_.do_calibration_refinement_heel_fsr_ = true;
+    pe_.right_side_.fsr_gait_data_.do_calibration_refinement_toe_fsr_ = true;
+
+    /* IMU读数标定 */
+    pe_.body_imu_.is_calibrated_ = false;
+    pe_.left_side_.shank_imu_.is_calibrated_ = false;
+    pe_.left_side_.thigh_imu_.is_calibrated_ = false;
+    pe_.right_side_.shank_imu_.is_calibrated_ = false;
+    pe_.right_side_.thigh_imu_.is_calibrated_ = false;
 }
 
 float semg_adc1 = 0.0f;
@@ -1705,12 +1720,12 @@ float semg_adc2 = 0.0f;
 void Exo::Read()
 {
     pe_.battery_voltage_ = (g_adc_data[0] * 3.3f / 65535) * 11;
-    // pe_.battery_voltage_ = 24; /** #HACK 强制令电压读数大于唤醒电压 */
+    // pe_.battery_voltage_ = 24; /* HACK 强制令电压读数大于唤醒电压 */
     semg_adc1 = g_adc_data[1] * 3.3f / 65535;
     semg_adc2 = g_adc_data[2] * 3.3f / 65535;
     if (spi_data_ready_)
     {
-        ProcessSensorSpiData();
+        ProcessSpiData();
         spi_data_ready_ = false;
     }
 
@@ -1723,13 +1738,13 @@ void Exo::Estimate()
 {
     /** high level control */
     // if (pe_.override_usr_.enable_locomode_override)
-    if (true)  /** #HACK: 目前先使用用户选择的运动模式 */
+    if (true)  /* HACK: 目前先使用用户选择的运动模式 */
     {
         pe_.loco_mode_ = pe_.override_usr_.forced_locomode;
     }
     else
     {
-        /** #TODO: 在此执行自动运动意图检测, 并得到pe_.loco_mode_ */
+        /* TODO: 在此执行自动运动意图检测, 并得到pe_.loco_mode_ */
     }
 
     /** Mid level control */
@@ -1742,7 +1757,7 @@ void Exo::Estimate()
     }
     else
     {
-        /** #TODO: 进行其他活动的中层控制; 如检测坐立转换时刻 */
+        /* TODO: 进行其他活动的中层控制; 如检测坐立转换时刻 */
     }
 }
 
@@ -1791,7 +1806,6 @@ void Exo::CheckSystemHealth()
 }
 
 #include "usbd_cdc_if.h"
-extern float run_time_us;
 extern float chirp_output;
 void Exo::VofaSendTelemetry()
 {
@@ -1837,7 +1851,7 @@ void Exo::VofaSendTelemetry()
     buf.f_data[18] = pe_.right_side_.foot_imu_.pitch_deg_;
     buf.f_data[19] = pe_.right_side_.foot_imu_.yaw_deg_;
     
-    buf.f_data[20] = run_time_us;
+    buf.f_data[20] = 0;
     buf.f_data[21] = pe_.battery_voltage_;
 
     uint16_t count = 4 * 22; /** 4 x 浮点数个数 */
@@ -2053,7 +2067,7 @@ void Exo::SpiErrorCallback(SPI_HandleTypeDef *hspi)
 }
 
 
-void Exo::ProcessSensorSpiData()
+void Exo::ProcessSpiData()
 {
     const uint8_t *data = spi_rx_dma_buf[spi_dma_handling_idx_];
 
