@@ -88,7 +88,6 @@ void Shell::SendData(uint16_t data_size)
     if (huart_.gState == HAL_UART_STATE_READY && data_size < DMA_UNION_BUF_SIZE_BYTES)
     {
         HAL_UART_Transmit_DMA(&huart_, txbuffer_.u8_data, data_size);
-	    // CDC_Transmit_HS(txbuffer_.u8_data, data_size);   //zzz: just for debug
     }
 }
 

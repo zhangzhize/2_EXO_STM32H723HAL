@@ -190,19 +190,18 @@ void KneeJoint::Read()
 {
     if (!pj_.is_used_) return;
 
-    if (!pj_.is_left_) // zzz: 绳驱膝关节
+    /* 左侧正转为伸展, 即负角速度方向 */
+    if (!pj_.is_left_)
     {
         pj_.pos_rad_ = motor_.position_ - pj_.pos_offset_rad_;
         pj_.vel_radps_ = motor_.speed_;
         pj_.tor_Nm_ = motor_.torque_;
-        // pj_.tor_Nm_ = pe_.left_side_.ankle_joint_.plantarflexion_force_N_ * 0.035 - pe_.right_side_.ankle_joint_.plantarflexion_force_N_ * 0.035; // zzz: 现在两个踝关节的拉力传感用于测膝力矩了
     }
     else
     {
         pj_.pos_rad_ = -(motor_.position_ - pj_.pos_offset_rad_);
         pj_.vel_radps_ = -motor_.speed_;
         pj_.tor_Nm_ = -motor_.torque_;
-        // pj_.tor_Nm_ = pe_.left_side_.ankle_joint_.plantarflexion_force_N_ * 0.035 - pe_.right_side_.ankle_joint_.plantarflexion_force_N_ * 0.035; // zzz: 现在两个踝关节的拉力传感用于测膝力矩了
     }
 }
 
@@ -224,12 +223,11 @@ void KneeJoint::Assist()
     float force_profile = 0.0f;
 
     float phase_percent = pj_.is_left_ ? pe_.left_side_.fsr_gait_data_.percent_gait_ : pe_.right_side_.fsr_gait_data_.percent_gait_;
-    float phase_rad = phase_percent * _2PI / 100.0f;
 
-    force_profile = force_profile_generator_.GetForceProfile(phase_rad, pj_.pos_rad_, pj_.vel_radps_);
+    force_profile = force_profile_generator_.GetForceProfile(phase_percent, pj_.pos_rad_, pj_.vel_radps_);
     
-    /* 左侧正转为弯曲 */
-    if (!pj_.is_left_)
+    /* 左侧正转为伸展, 即负角速度方向 */
+    if (pj_.is_left_)
     {
         force_profile = -force_profile;
     }
@@ -413,10 +411,9 @@ void KneeSeaJoint::Assist()
     float force_profile = 0.0f;
 
     float phase_percent = pj_.is_left_ ? pe_.left_side_.fsr_gait_data_.percent_gait_ : pe_.right_side_.fsr_gait_data_.percent_gait_;
-    float phase_rad = phase_percent * _2PI / 100.0f;
 
     /** #HACK 先走几步再助力? */
-    force_profile = force_profile_generator_.GetForceProfile(phase_rad, pj_.pos_rad_, pj_.vel_radps_);
+    force_profile = force_profile_generator_.GetForceProfile(phase_percent, pj_.pos_rad_, pj_.vel_radps_);
 
     pj_.force_spring_ref_N_ = force_profile * pe_.user_weight_kg_;
 
@@ -922,7 +919,8 @@ void Side::Calibrate()
     ankle_joint_.Calibrate();
     knee_sea_joint_.Calibrate();
 
-    if (ps_.knee_sea_joint_.is_calibrated_ || !ps_.knee_sea_joint_.is_used_)
+    // if (ps_.knee_sea_joint_.is_calibrated_ || !ps_.knee_sea_joint_.is_used_)
+    if (ps_.knee_joint_.is_calibrated_ || !ps_.knee_joint_.is_used_)
     {
         /** 已在knee_sea_joint_.Standby做了零力控制; 膝关节标定完成、进入零力控制后膝关节才走得动, 才能标定fsr */
         fsr_gait_estimator_.Calibrate();
@@ -1524,7 +1522,10 @@ void Exo::Initialize()
     /** 调试: 髋关节参数. */
 
     /** 调试: 膝关节参数. */
-    
+    pe_.user_weight_kg_ = 20.0f;
+    left_side_.knee_joint_.force_profile_generator_.damping_ = 0.0f;
+    left_side_.knee_joint_.force_profile_generator_.stiffness_ = 0.05f;
+
     /** 调试: 踝关节参数 */
     left_side_.ankle_joint_.cable_released_position_ = 0.2f;
     left_side_.ankle_joint_.cable_pre_tensioned_position_ = 0.6f;
@@ -1744,17 +1745,20 @@ void Exo::ResetCalibrationFlags()
     pe_.right_side_.ankle_joint_.is_calibrated_ = false;
     pe_.right_side_.knee_sea_joint_.is_calibrated_ = false;
 
+    pe_.left_side_.knee_joint_.pos_offset_rad_ = 0.0f;
+    pe_.right_side_.knee_joint_.pos_offset_rad_ = 0.0f;
+
     /* FSR读数标定 */
     pe_.left_side_.fsr_gait_data_.is_calibrated_ = false;
     pe_.left_side_.fsr_gait_data_.do_calibration_heel_fsr_ = true;
-    pe_.left_side_.fsr_gait_data_.do_calibration_toe_fsr_ = true;
+    pe_.left_side_.fsr_gait_data_.do_calibration_toe_fsr_ = false;
     pe_.left_side_.fsr_gait_data_.do_calibration_refinement_heel_fsr_ = true;
-    pe_.left_side_.fsr_gait_data_.do_calibration_refinement_toe_fsr_ = true;
+    pe_.left_side_.fsr_gait_data_.do_calibration_refinement_toe_fsr_ = false;
     pe_.right_side_.fsr_gait_data_.is_calibrated_ = false;
     pe_.right_side_.fsr_gait_data_.do_calibration_heel_fsr_ = true;
-    pe_.right_side_.fsr_gait_data_.do_calibration_toe_fsr_ = true;
+    pe_.right_side_.fsr_gait_data_.do_calibration_toe_fsr_ = false;
     pe_.right_side_.fsr_gait_data_.do_calibration_refinement_heel_fsr_ = true;
-    pe_.right_side_.fsr_gait_data_.do_calibration_refinement_toe_fsr_ = true;
+    pe_.right_side_.fsr_gait_data_.do_calibration_refinement_toe_fsr_ = false;
 
     /* IMU读数暂不需要标定 */
     pe_.body_imu_.is_calibrated_ = true;

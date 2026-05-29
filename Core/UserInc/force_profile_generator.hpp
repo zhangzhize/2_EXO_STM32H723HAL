@@ -10,20 +10,20 @@ public:
     KneeForceProfileGenerator();
     ~KneeForceProfileGenerator() = default;
 
-    float GetForceProfile(float gait_phase_rad, float knee_angle_rad, float knee_velocity);
+    float GetForceProfile(float gait_phase_percent, float knee_angle_rad, float knee_velocity);
 
-    float stiffness_onset_phase_rad_;
-    float stiffness_offset_phase_rad_;
+    float stiffness_onset_phase_percent_;
+    float stiffness_offset_phase_percent_;
     float stiffness_;
 
     HermiteInterp force_profile_interp_;
-    float peak_time_phase_rad_;
+    float peak_time_phase_percent_;
     float peak_torque_Nmkg_;
-    float rise_time_phase_rad_;
-    float fall_time_phase_rad_;
+    float rise_time_phase_percent_;
+    float fall_time_phase_percent_;
 
-    float damping_onset_phase_rad_;
-    float damping_offset_phase_rad_;
+    float damping_onset_phase_percent_;
+    float damping_offset_phase_percent_;
     float damping_;
 };
 
@@ -33,15 +33,15 @@ public:
     AnkleForceProfileGenerator();
     ~AnkleForceProfileGenerator() = default;
 
-    float GetForceProfile(float gait_phase_rad);
+    float GetForceProfile(float gait_phase_percent);
 
-    float start_time_phase_rad_;
-    float end_time_phase_rad_;
+    float start_time_phase_percent_;
+    float end_time_phase_percent_;
 
-    float peak_time_phase_rad_;
+    float peak_time_phase_percent_;
     float peak_torque_Nmkg_;
-    float rise_time_phase_rad_;
-    float fall_time_phase_rad_;
+    float rise_time_phase_percent_;
+    float fall_time_phase_percent_;
     HermiteInterp force_profile_interp_;
 };
 

@@ -25,7 +25,8 @@
 #include "exo.hpp"
 #include "mahony.hpp"
 
-/* 保存虚拟串口接收到的数据, 可以来自PC, 或其它类型设备 */
+
+/* USB 虚拟串口接收的数据及其标志位 */
 #include "usbd_cdc_if.h"
 uint8_t cdc_rx_buffer[512] = {0};
 uint8_t cdc_rx_flag = 0;
@@ -55,14 +56,6 @@ void AltMainTask(void *argument)
     /* 外骨骼躯干IMU节点依赖这个函数 */
     while(BMI088_init());
 
-    /* 蜂鸣器, 暂不启用 */
-    // HAL_TIM_PWM_Start(&htim12, TIM_CHANNEL_2);
-    // TIM12->CCR2 = TIM12->ARR / 2;
-    // HAL_Delay(500);
-    // TIM12->CCR2 = TIM12->ARR / 4;
-    // HAL_Delay(500);
-    // TIM12->CCR2 = 0;
-
     static ExoHardware exo_hw = {
         .motor_can = hfdcan1,
         .dm_imu_can = hfdcan3,
@@ -79,7 +72,6 @@ void AltMainTask(void *argument)
     HAL_GPIO_WritePin(POWER_24V_1_GPIO_Port, POWER_24V_1_Pin|POWER_24V_2_Pin, GPIO_PIN_SET);
     HAL_Delay(1000);     /* 稍微延迟一下等电机上电启动完毕 */
     exo.Initialize();
-    HAL_Delay(1000);     /* 稍微延迟一下 */
 
 	/* 启动定时器 */
 	HAL_TIM_Base_Start_IT(&htim2);  
