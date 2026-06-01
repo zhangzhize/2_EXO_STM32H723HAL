@@ -11,7 +11,15 @@ public:
 
     void CalCoeffs(float* ptr_xs, float* ptr_ys, float *ptr_dys, uint16_t num_xs);
     void Interp(float x_interp_interval);
+    float Sample(float x) const;
 
+    // Read-only accessors for interpolated output
+    uint16_t GetNumInterp() const;
+    float GetXInterpStart() const;
+    float GetXInterpInterval() const;
+    const float* GetYInterp() const;
+
+private:
     float *ptr_xs_;
     float *ptr_ys_;
     float *ptr_dys_;

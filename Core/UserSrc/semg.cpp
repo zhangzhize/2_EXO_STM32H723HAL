@@ -1,45 +1,66 @@
 #include "semg.hpp"
 #include "math.h"
 
-void Emg::Update(int32_t raw_adc_value)
+/* ==========================================================================
+ * sEmg — 基于 ARM CMSIS-DSP 的 sEMG 信号处理器
+ * ========================================================================== */
+
+sEmg::sEmg()
 {
+    // 系数和状态已在类声明中初始化，这里只需配置 CMSIS-DSP 实例
+    arm_biquad_cascade_df2T_init_f32(&biquad_inst_,
+                                     (uint8_t)kNumBiquadStages,
+                                     &biquad_coeffs_[0][0],
+                                     &biquad_state_[0][0]);
+}
+
+void sEmg::Update(int32_t raw_adc_value)
+{
+    float32_t input_f32 = (float32_t)raw_adc_value;
+    float32_t filtered;
+
     semg_raw_value_ = raw_adc_value;
-    semg_filtered_value_ = ButterWorthFilter((float)semg_raw_value_);
-    semg_envelope_value_ = CalculateEnvelope((int32_t)fabsf(semg_filtered_value_));
+
+    // 1. CMSIS-DSP 双二阶级联巴特沃斯带通滤波
+    arm_biquad_cascade_df2T_f32(&biquad_inst_, &input_f32, &filtered, 1);
+
+    semg_filtered_value_ = filtered;
+
+    // 2. 全波整流 + 滑动平均包络
+    semg_envelope_value_ = CalcEnvelope((int32_t)fabsf(filtered));
 }
 
-float Emg::ButterWorthFilter(float semg_raw_value)
+void sEmg::SetFilterCoeffs(const float32_t *coeffs, uint32_t num_stages)
 {
-    float output = semg_raw_value;
-    {
-        float x = output - (-0.55195385f * z1_[0]) - (0.60461714f * z2_[0]);
-        output = 0.00223489f * x + (0.00446978f * z1_[0]) + (0.00223489f * z2_[0]);
-        z2_[0] = z1_[0];
-        z1_[0] = x;
-    }
-    {
-        float x = output - (-0.86036562f * z1_[1]) - (0.63511954f * z2_[1]);
-        output = 1.00000000f * x + (2.00000000f * z1_[1]) + (1.00000000f * z2_[1]);
-        z2_[1] = z1_[1];
-        z1_[1] = x;
-    }
-    {
-        float x = output - (-0.37367240f * z1_[2]) - (0.81248708f * z2_[2]);
-        output = 1.00000000f * x + (-2.00000000f * z1_[2]) + (1.00000000f * z2_[2]);
-        z2_[2] = z1_[2];
-        z1_[2] = x;
-    }
-    {
-        float x = output - (-1.15601175f * z1_[3]) - (0.84761589f * z2_[3]);
-        output = 1.00000000f * x + (-2.00000000f * z1_[3]) + (1.00000000f * z2_[3]);
-        z2_[3] = z1_[3];
-        z1_[3] = x;
-    }
-    return output;
+    if (num_stages > kNumBiquadStages) return;
+
+    for (uint32_t i = 0; i < num_stages; ++i)
+        for (int j = 0; j < 5; ++j)
+            biquad_coeffs_[i][j] = coeffs[i * 5 + j];
+
+    arm_fill_f32(0.0f, &biquad_state_[0][0], 2 * kNumBiquadStages);
+    arm_biquad_cascade_df2T_init_f32(&biquad_inst_,
+                                     (uint8_t)num_stages,
+                                     &biquad_coeffs_[0][0],
+                                     &biquad_state_[0][0]);
 }
 
-int32_t Emg::CalculateEnvelope(int32_t semg_abs_value)
+void sEmg::Reset()
 {
+    buffer_index_ = 0;
+    buffer_sum_   = 0;
+
+    arm_fill_f32(0.0f, &biquad_state_[0][0], 2 * kNumBiquadStages);
+    for (int i = 0; i < kBufferSize; ++i) circular_buffer_[i] = 0;
+
+    semg_raw_value_      = 0;
+    semg_filtered_value_ = 0.0f;
+    semg_envelope_value_ = 0;
+}
+
+int32_t sEmg::CalcEnvelope(int32_t semg_abs_value)
+{
+    // O(1) 增量滑动平均，每步减旧值、加新值，无需遍历
     buffer_sum_ -= circular_buffer_[buffer_index_];
     buffer_sum_ += semg_abs_value;
     circular_buffer_[buffer_index_] = semg_abs_value;

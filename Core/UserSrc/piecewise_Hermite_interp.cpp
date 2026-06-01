@@ -140,3 +140,51 @@ void HermiteInterp::Interp(float x_interp_interval)
         ptr_y_interp_[i] = ((a * s + b) * s + c) * s + d;
     }
 }
+
+float HermiteInterp::Sample(float x) const
+{
+    if (ptr_y_interp_ == nullptr || num_interp_ == 0)
+    {
+        return 0.0f;
+    }
+
+    float x0 = x_interp_start_;
+    float dx = x_interp_interval_;
+    float idxf = (x - x0) / dx;
+
+    if (idxf <= 0.0f)
+    {
+        return ptr_y_interp_[0];
+    }
+    if (idxf >= (float)(num_interp_ - 1))
+    {
+        return ptr_y_interp_[num_interp_ - 1];
+    }
+
+    int i0 = (int)idxf;
+    int i1 = i0 + 1;
+    float y0 = ptr_y_interp_[i0];
+    float y1 = ptr_y_interp_[i1];
+    float frac = idxf - (float)i0;
+    return y0 + frac * (y1 - y0);
+}
+
+uint16_t HermiteInterp::GetNumInterp() const
+{
+    return num_interp_;
+}
+
+float HermiteInterp::GetXInterpStart() const
+{
+    return x_interp_start_;
+}
+
+float HermiteInterp::GetXInterpInterval() const
+{
+    return x_interp_interval_;
+}
+
+const float* HermiteInterp::GetYInterp() const
+{
+    return ptr_y_interp_;
+}

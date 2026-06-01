@@ -1,17 +1,42 @@
-# 声明我们的基础风格是纯正的 Google 规范
+# .clang-format — 嵌入式 C/C++ 格式化规则
+# 基础风格: Google，大括号用 Allman，4 空格缩进
+
 BasedOnStyle: Google
 
-# 核心配置：允许没有 else 的短 if 语句放在同一行
+# 核心
+IndentWidth:         4
+TabWidth:            4
+UseTab:              Never
+ColumnLimit:         200
+MaxEmptyLinesToKeep: 1
+
+# 大括号 — 永远另起一行
+BreakBeforeBraces:   Allman
+
+# 访问修饰符不缩进
+AccessModifierOffset: -4
+
+# 指针/引用符号靠变量名
+PointerAlignment:    Right
+
+# 短语句控制
 AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine:        false
+AllowShortFunctionsOnASingleLine:    None
+AllowShortBlocksOnASingleLine:       Empty
 
-# 强制规定指针星号靠近变量
-PointerAlignment: Right
+# 空格控制
+SpaceAfterCStyleCast:        false
+SpaceBeforeParens:           ControlStatements
+SpacesInAngles:              false
+SpacesInContainerLiterals:   false
 
-# 4空格缩进
-IndentWidth: 4
+# 初始化列表缩进，逗号前换行
+ConstructorInitializerIndentWidth: 4
+BreakConstructorInitializers:       BeforeComma
 
-# 每行最多120字符
-ColumnLimit: 120
+# switch-case 不额外缩进
+IndentCaseLabels: false
 
-# 括号全部另起一行
-BreakBeforeBraces: Allman
+# 不自动重排注释（避免破坏中文注释）
+ReflowComments: false

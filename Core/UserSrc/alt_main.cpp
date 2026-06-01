@@ -21,15 +21,23 @@
 #include "ws2812.h"
 #include "bmi088_driver.h"
 #include "status_led.hpp"
-#include "fsr.hpp"
 #include "exo.hpp"
 #include "mahony.hpp"
+
+#include "semg.hpp"
 
 
 /* USB 虚拟串口接收的数据及其标志位 */
 #include "usbd_cdc_if.h"
 uint8_t cdc_rx_buffer[512] = {0};
 uint8_t cdc_rx_flag = 0;
+
+float semg_pa0_raw = 0.0f;
+float semg_pa2_raw = 0.0f;
+float semg_pa0_filtered = 0.0f;
+float semg_pa2_filtered = 0.0f;
+float semg_pa0_envelope = 0.0f;
+float semg_pa2_envelope = 0.0f;
 
 __attribute__((section(".dma_buf"), aligned(32))) uint32_t g_adc_data[3] = {0};
 
@@ -70,19 +78,19 @@ void AltMainTask(void *argument)
 
     /* 给电机上电 */
     HAL_GPIO_WritePin(POWER_24V_1_GPIO_Port, POWER_24V_1_Pin|POWER_24V_2_Pin, GPIO_PIN_SET);
-    HAL_Delay(1000);     /* 稍微延迟一下等电机上电启动完毕 */
+    HAL_Delay(1000);             /* 稍微延迟一下等电机上电启动完毕 */
     exo.Initialize();
 
-	/* 启动定时器 */
-	HAL_TIM_Base_Start_IT(&htim2);  
-	while (1)
-	{   
-        if (g_timer2_flag == 1)   /* 现在控制周期是1ms */
+    /* 启动定时器 */
+    HAL_TIM_Base_Start_IT(&htim2);
+    while (1)
+    {
+        if (g_timer2_flag == 1) /* 控制周期 1ms */
         {
             g_timer2_flag = 0;
-            
+
             /* 外骨骼 */
             exo.Run();
         }
-	}
+    }
 }
