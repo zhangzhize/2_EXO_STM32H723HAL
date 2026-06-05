@@ -2,36 +2,37 @@
 
 #include "bsp_can.h"
 
+/* 灵足电机 CAN 扩展帧通信类型编码(占扩展ID bit24~28) */
 enum ComTypeCode
 {
-    kComTypeObtainDeviceID = 0x00,      // 获取设备ID和64位MCU唯一标识符
-    kComTypeMotionControl = 0x01,       // 发送运控模式电机控制指令
-    kComTypeStatusFeedback = 0x02,      // 电机反馈数据
-    kComTypeEnableMotor = 0x03,         // 电机使能运行
-    kComTypeDisableMotor = 0x04,        // 电机停止运行
-    kComTypeSetMechPosZero = 0x06,      // 把当前电机位置设为机械零位(掉电丢失)
-    kComTypeSetMotorCanID = 0x07,       // 设置电机CAN_ID, 立即生效
-    kComTypeReadSingleParam = 0x11,     // 单个参数读取
-    kComTypeSetSingleParam = 0x12,      // 单个参数写入(掉电丢失)
-    kComTypeFaultFeedback = 0x15,       // 故障反馈帧
-    kComTypeStatusFeedbackReq = 0x16,   // 电机数据保存帧,请求
-    kComTypeSetBaudRate = 0x17,         // 电机波特率修改帧(重新上电生效)
-    kComTypeStatusFeedbackAuto = 0x18,  // 电机主动上报帧
+    kComTypeObtainDeviceID = 0x00,      /*!< 获取设备ID和64位MCU唯一标识符 */
+    kComTypeMotionControl = 0x01,       /*!< 发送运控模式电机控制指令(pos+vel+kp+kd) */
+    kComTypeStatusFeedback = 0x02,      /*!< 电机反馈数据(pos+vel+torq+温度) */
+    kComTypeEnableMotor = 0x03,         /*!< 电机使能运行 */
+    kComTypeDisableMotor = 0x04,        /*!< 电机停止运行 */
+    kComTypeSetMechPosZero = 0x06,      /*!< 把当前电机位置设为机械零位(掉电丢失) */
+    kComTypeSetMotorCanID = 0x07,       /*!< 设置电机CAN_ID, 立即生效, 需重启后生效 */
+    kComTypeReadSingleParam = 0x11,     /*!< 单个参数读取(如运行模式, PID增益等) */
+    kComTypeSetSingleParam = 0x12,      /*!< 单个参数写入(掉电丢失), 用于非运控模式设置目标值 */
+    kComTypeFaultFeedback = 0x15,       /*!< 故障反馈帧(电机自动上报) */
+    kComTypeStatusFeedbackReq = 0x16,   /*!< 电机数据保存帧, 请求电机反馈状态 */
+    kComTypeSetBaudRate = 0x17,         /*!< 电机波特率修改帧(重新上电生效) */
+    kComTypeStatusFeedbackAuto = 0x18,  /*!< 电机主动上报帧(定时自动发送状态数据) */
 };
 
-#define Master_CAN_ID (0x00)
-/* 控制参数最值, 谨慎更改 */
-#define P_MIN (-12.57f)
-#define P_MAX (12.57f)
-#define V_MIN (-44.0f)
-#define V_MAX (44.0f)
-#define T_MIN (-17.0f)
-#define T_MAX (17.0f)
+#define Master_CAN_ID (0x00)  /*!< 主机 CAN ID, 固定为 0x00 */
+/* 控制参数范围最值, 谨慎更改 — 用于运控模式下定点数归一化映射 */
+#define P_MIN (-12.57f)  /*!< 位置最小值(rad), 即 -4pi */
+#define P_MAX (12.57f)   /*!< 位置最大值(rad), 即 +4pi */
+#define V_MIN (-44.0f)   /*!< 速度最小值(rad/s) */
+#define V_MAX (44.0f)    /*!< 速度最大值(rad/s) */
+#define T_MIN (-17.0f)   /*!< 扭矩最小值(Nm) */
+#define T_MAX (17.0f)    /*!< 扭矩最大值(Nm) */
 
-#define KP_MIN (0.0f)
-#define KP_MAX (500.0f)
-#define KD_MIN (0.0f)
-#define KD_MAX (5.0f)
+#define KP_MIN (0.0f)    /*!< 运控模式 Kp 最小值 */
+#define KP_MAX (500.0f)  /*!< 运控模式 Kp 最大值 */
+#define KD_MIN (0.0f)    /*!< 运控模式 Kd 最小值 */
+#define KD_MAX (5.0f)    /*!< 运控模式 Kd 最大值 */
 
 /**
  * @brief          ROBSTRIDE电机数据发送函数
@@ -134,6 +135,7 @@ void Robstride::MotionControl(void)
     can_txdata[6] = temp >> 8;
     can_txdata[7] = temp;
 
+    /* 扩展ID编码: bit24-28=通信类型1, bit8-23=扭矩前馈(16bit定点), bit0-7=电机CAN_ID */
     can_ext_id = kComTypeMotionControl << 24 | FloatToUint(torque_forward_, T_MIN, T_MAX, 16) << 8 | can_id_;
     RobstrideSendData(can_ext_id, can_txdata, sizeof(can_txdata));
 }
@@ -145,15 +147,18 @@ void Robstride::MotionControl(void)
  */
 void Robstride::StatusFeedbackReceive(uint32_t can_ext_id, const uint8_t *can_rxdata)
 {
+    /* 反馈数据区: 位置(16bit) | 速度(16bit) | 扭矩(16bit) | 温度(16bit), 均为定点数 */
     position_ = UintToFloat(can_rxdata[0] << 8 | can_rxdata[1], P_MIN, P_MAX, 16); /* 当前角度[0~65536] (-4pi~4pi)rad */
     speed_ = UintToFloat(can_rxdata[2] << 8 | can_rxdata[3], V_MIN, V_MAX, 16);  /* 当前角速度[0~65536] (-44~44)rad/s */
     torque_ = UintToFloat(can_rxdata[4] << 8 | can_rxdata[5], T_MIN, T_MAX, 16); /* 当前力矩[0~65536] (-17~17)Nm */
-    temperature_ = (can_rxdata[6] << 8 | can_rxdata[7]) * 0.1;
+    temperature_ = (can_rxdata[6] << 8 | can_rxdata[7]) * 0.1; /* 温度 = 定点值 * 0.1 (摄氏度) */
+    /* 扩展ID bit16-21 携带错误代码(6bit), 非0表示电机故障 */
     error_code_ = (can_ext_id & 0x3F0000) >> 16;
     if (error_code_ != 0x00)
     {
-        DisableMotor(ROBSTRIDE_KEEP_FAULT);
+        DisableMotor(ROBSTRIDE_KEEP_FAULT); /* 故障时保持状态不清除, 等待外部处理 */
     }
+    /* 扩展ID bit22-23 携带电机工作模式(2bit), 0=复位 1=标定 2=正常 */
     pattern_ = (can_ext_id & 0xC00000) >> 22;
 }
 
