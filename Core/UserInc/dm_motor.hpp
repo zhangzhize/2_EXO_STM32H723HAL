@@ -160,7 +160,7 @@ typedef struct DMFeedback
     int state_;             /*!< 电机状态字 */
     float pos_rad_;         /*!< 当前机械位置(rad), 由 16bit 定点数解算 */
     float vel_radps_;       /*!< 当前机械速度(rad/s), 由 12bit 定点数解算 */
-    float tor_Nm_;          /*!< 当前扭矩(Nm), 由 12bit 定点数解算 */
+    float tor_output_Nm_;          /*!< 当前扭矩(Nm), 由 12bit 定点数解算 */
     float Kp_;              /*!< MIT模式当前使用的 Kp */
     float Kd_;              /*!< MIT模式当前使用的 Kd */
     float Tmos_;            /*!< MOS管温度(摄氏度), 直接映射 data[6] */

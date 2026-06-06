@@ -32,7 +32,18 @@
 /* USER CODE BEGIN PV */
 /* Private variables ---------------------------------------------------------*/
 extern uint8_t cdc_rx_buffer[512];
-extern uint8_t cdc_rx_flag;
+extern volatile uint16_t cdc_rx_len;
+extern volatile uint8_t cdc_rx_flag;
+
+static uint8_t cdc_rx_assembly_buffer[512];
+static uint16_t cdc_rx_assembly_len = 0;
+static uint16_t cdc_rx_expected_len = 0;
+
+static void CDC_ResetFrameAssembly(void)
+{
+    cdc_rx_assembly_len = 0;
+    cdc_rx_expected_len = 0;
+}
 /* USER CODE END PV */
 
 /** @addtogroup STM32_USB_OTG_DEVICE_LIBRARY
@@ -265,12 +276,53 @@ static int8_t CDC_Control_HS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 static int8_t CDC_Receive_HS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 11 */
-    memcpy(cdc_rx_buffer, Buf, *Len);
-    cdc_rx_flag = 1;
+    uint32_t offset = 0;
 
-  USBD_CDC_SetRxBuffer(&hUsbDeviceHS, &Buf[0]);
-  USBD_CDC_ReceivePacket(&hUsbDeviceHS);
-  return (USBD_OK);
+    while (offset < *Len)
+    {
+        if (cdc_rx_flag != 0)
+        {
+            break; /* 上一完整帧还没被主循环取走, 暂时丢弃后续数据 */
+        }
+
+        uint32_t room = sizeof(cdc_rx_assembly_buffer) - cdc_rx_assembly_len;
+        if (room == 0u)
+        {
+            CDC_ResetFrameAssembly();
+            break;
+        }
+
+        uint32_t copy_len = *Len - offset;
+        if (copy_len > room) copy_len = room;
+        memcpy(&cdc_rx_assembly_buffer[cdc_rx_assembly_len], &Buf[offset], copy_len);
+        cdc_rx_assembly_len += (uint16_t)copy_len;
+        offset += copy_len;
+
+        if (cdc_rx_expected_len == 0u && cdc_rx_assembly_len >= 5u)
+        {
+            uint8_t float_count = cdc_rx_assembly_buffer[4];
+            uint16_t expected   = 5u + 4u * (uint16_t)float_count;
+            if (float_count == 0u || expected > sizeof(cdc_rx_assembly_buffer))
+            {
+                CDC_ResetFrameAssembly();
+                break;
+            }
+            cdc_rx_expected_len = expected;
+        }
+
+        if (cdc_rx_expected_len > 0u && cdc_rx_assembly_len >= cdc_rx_expected_len)
+        {
+            memcpy(cdc_rx_buffer, cdc_rx_assembly_buffer, cdc_rx_expected_len);
+            cdc_rx_len  = cdc_rx_expected_len;
+            cdc_rx_flag = 1;
+            CDC_ResetFrameAssembly();
+            break;
+        }
+    }
+
+    USBD_CDC_SetRxBuffer(&hUsbDeviceHS, &Buf[0]);
+    USBD_CDC_ReceivePacket(&hUsbDeviceHS);
+    return (USBD_OK);
   /* USER CODE END 11 */
 }
 

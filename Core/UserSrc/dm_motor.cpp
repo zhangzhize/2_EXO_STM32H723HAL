@@ -512,7 +512,7 @@ void DMMotor::CanRxCallBack(uint32_t can_id, const uint8_t *can_rxdata)
         int t_int_ = ((can_rxdata[4] & 0xF) << 8) | can_rxdata[5];
         feedback_.pos_rad_ = uint_to_float(p_int_, -inf_.PMAX_, inf_.PMAX_, 16);
         feedback_.vel_radps_ = uint_to_float(v_int_, -inf_.VMAX_, inf_.VMAX_, 12);
-        feedback_.tor_Nm_ = uint_to_float(t_int_, -inf_.TMAX_, inf_.TMAX_, 12);
+        feedback_.tor_output_Nm_ = uint_to_float(t_int_, -inf_.TMAX_, inf_.TMAX_, 12);
         feedback_.Tmos_ = (float)(can_rxdata[6]);
         feedback_.Tcoil_ = (float)(can_rxdata[7]);
     }
