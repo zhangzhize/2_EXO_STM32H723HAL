@@ -21,11 +21,16 @@ public:
 
     void UpdateColor(uint8_t status_idx);
     void UpdateColorBDMA(uint8_t status_idx);
+    void UpdateEmergencyStopColor();
+    void UpdateEmergencyStopColorBDMA();
 private:
+    static constexpr uint8_t kColorCount = 9;
+    static constexpr uint8_t kEmergencyStopColorIdx = kColorCount - 1;
+
     uint8_t status_idx_ = 255;                /*!< 上一次更新的状态索引，用于变化检测 */
 
-    /* 9 色 RGB 查找表，索引对应 ExoData::State 枚举值 */
-    const uint8_t kRGBColors[9][3] = {
+    /* RGB 查找表: 普通状态颜色放前面，最后一项固定保留给急停 */
+    const uint8_t kRGBColors[kColorCount][3] = {
         {0x00, 0x00, 0x00}, /* 熄灭       #000000 */
         {0x00, 0xFF, 0x00}, /* 绿色       #00FF00 */
         {0x00, 0x00, 0xFF}, /* 蓝色       #0000FF */
@@ -33,8 +38,8 @@ private:
         {0xFF, 0x00, 0xFF}, /* 品红色     #FF00FF */
         {0x00, 0xFF, 0xFF}, /* 青色       #00FFFF */
         {0xFF, 0x8C, 0x00}, /* 橙色       #FF8C00 */
-        {0x80, 0x00, 0x80}, /* 紫色       #800080 */
-        {0xFF, 0x00, 0x00}, /* 红色       #FF0000 */
+        {0x80, 0x00, 0x80}, /* 保留紫色   #800080 */
+        {0xFF, 0x00, 0x00}, /* 急停红色   #FF0000 */
     };
 };
 
