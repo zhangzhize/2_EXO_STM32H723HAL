@@ -28,24 +28,9 @@ public:
     Mahony(float sample_freq) : inv_sample_freq_(1.0f / sample_freq) {};
     ~Mahony() = default;
 
-    /**
-     * @brief 9 轴姿态更新 (陀螺仪 + 加速度计 + 磁力计)
-     * @param gyro_degps_  陀螺仪三轴角速度 (deg/s)
-     * @param accel_mps2_  加速度计三轴加速度 (m/s²)
-     * @param magnet_uT_   磁力计三轴磁场强度 (uT)
-     * @note 磁力计数据全零时自动降级为 6 轴模式
-     */
-    void Update9Axis(float gyro_degps_[3], float accel_mps2_[3], float magnet_uT_[3]);
+    void Update9Axis(float gyro_radps_[3], float accel_mps2_[3], float magnet_uT_[3]);
+    void Update6Axis(float gyro_radps_[3], float accel_mps2_[3]);
 
-    /**
-     * @brief 6 轴姿态更新 (陀螺仪 + 加速度计)
-     * @param gyro_degps_  陀螺仪三轴角速度 (deg/s)
-     * @param accel_mps2_  加速度计三轴加速度 (m/s²)
-     * @note 仅使用重力矢量修正 pitch/roll，yaw 无绝对参考
-     */
-    void Update6Axis(float gyro_degps_[3], float accel_mps2_[3]);
-
-    /** @brief 获取欧拉角 (度)，内部惰性计算四元数→欧拉角转换 */
     void GetEulerAnglesDeg(float& roll_deg, float& pitch_deg, float& yaw_deg)
     {
         if (!is_angle_computed_) ComputeAngles();
@@ -54,7 +39,6 @@ public:
         yaw_deg = yaw_rad_ * 57.29578f;
     }
 
-    /** @brief 获取欧拉角 (弧度)，内部惰性计算四元数→欧拉角转换 */
     void GetEulerAnglesRad(float& roll_rad, float& pitch_rad, float& yaw_rad)
     {
         if (!is_angle_computed_) ComputeAngles();

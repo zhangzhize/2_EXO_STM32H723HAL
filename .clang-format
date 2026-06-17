@@ -1,62 +1,77 @@
-# .clang-format — 嵌入式 C/C++ 格式化规则
-# 基础风格: Google，大括号用 Allman，4 空格缩进
-
 BasedOnStyle: Google
 
-# 访问说明符(public, private等)的偏移
-AccessModifierOffset: -4
-
-# 开括号(开圆括号, 开尖括号, 开方括号)后的对齐
-AlignAfterOpenBracket: Align
-
-# 连续赋值时, 对齐所有等号
-AlignConsecutiveAssignments: true
-
-# 连续声明时, 对齐所有声明的变量名
-AlignConsecutiveDeclarations: false
-
-# 左对齐逃脱换行(使用反斜杠换行)的反斜杠
-AlignEscapedNewlines: Left
-
-# 水平对齐二元和三元表达式的操作数
-AlignOperands: Align
-
-# 对齐连续的尾随的注释
-AlignTrailingComments: true
-
-
-
-# 核心
-IndentWidth:         4
-TabWidth:            4
-UseTab:              Never
-ColumnLimit:         200
+BreakBeforeBraces: Allman
+ColumnLimit: 0
 MaxEmptyLinesToKeep: 1
 
-# 大括号 — 永远另起一行
-BreakBeforeBraces:   Allman
+# 缩进
+IndentWidth: 2
+TabWidth: 2
+UseTab: Never
+ContinuationIndentWidth: 2
+AccessModifierOffset: -2
+ConstructorInitializerIndentWidth: 2
+IndentCaseLabels: false
 
-# 指针/引用符号靠变量名
-PointerAlignment:    Right
+# 对齐
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignEscapedNewlines: Left
+AlignOperands: Align
+AlignTrailingComments: false
+
+# 指针引用符号位置
+PointerAlignment: Right
+ReferenceAlignment: Right
+DerivePointerAlignment: false
+QualifierAlignment: Leave
 
 # 短语句控制
 AllowShortIfStatementsOnASingleLine: WithoutElse
-AllowShortLoopsOnASingleLine:        false
-AllowShortFunctionsOnASingleLine:    None
-AllowShortBlocksOnASingleLine:       Empty
+AllowShortLoopsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: None
+AllowShortBlocksOnASingleLine: Never
+AllowShortCaseLabelsOnASingleLine: false
+AllowShortEnumsOnASingleLine: false
+
+# 函数参数
+BinPackArguments: false
+BinPackParameters: false
+AllowAllArgumentsOnNextLine: true
+AllowAllParametersOfDeclarationOnNextLine: true
 
 # 空格控制
-SpaceAfterCStyleCast:        false
-SpaceBeforeParens:           ControlStatements
-SpacesInAngles:              false
-SpacesInContainerLiterals:   false
+SpaceAfterCStyleCast: false
+SpaceBeforeParens: ControlStatements
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceBeforeCtorInitializerColon: true
+SpaceBeforeInheritanceColon: true
+SpacesInAngles: false
+SpacesInContainerLiterals: false
+SpacesInParentheses: false
 
 # 初始化列表缩进，逗号前换行
-ConstructorInitializerIndentWidth: 4
-BreakConstructorInitializers:       BeforeComma
+BreakConstructorInitializers: AfterColon
+PackConstructorInitializers: Never
 
-# switch-case 不额外缩进
-IndentCaseLabels: false
+# 运算符换行
+BreakBeforeBinaryOperators: None
+BreakBeforeTernaryOperators: true
+
+# namespace
+NamespaceIndentation: None
+FixNamespaceComments: true
+CompactNamespaces: false
 
 # 不自动重排注释（避免破坏中文注释）
-ReflowComments: false
+ReflowComments: IndentOnly
+
+# include
+SortIncludes: false
+IncludeBlocks: Preserve
+
+# 自动结构修改：不建议开启
+InsertBraces: false
+RemoveBracesLLVM: false
