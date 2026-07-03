@@ -42,7 +42,7 @@ void BspCanInit(FDCAN_HandleTypeDef *hfdcan)
 
     /* 配置扩展 ID 过滤器：全接收 */
     fdcan_filter.IdType = FDCAN_EXTENDED_ID;
-    fdcan_filter.FilterIndex = 0;
+    fdcan_filter.FilterIndex = 1; /* 不能和标准 ID 共用 FilterIndex 0 */
     fdcan_filter.FilterType = FDCAN_FILTER_MASK;
     fdcan_filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
     fdcan_filter.FilterID1 = 0x00000000;
@@ -79,7 +79,7 @@ void FDCanSendData(FDCAN_HandleTypeDef *hfdcan, uint32_t id, uint32_t id_type, u
     pTxHeader.IdType = id_type;
     pTxHeader.TxFrameType = FDCAN_DATA_FRAME;
     pTxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-    pTxHeader.BitRateSwitch = FDCAN_BRS_OFF;       /*!< 不启用比特率切换 */
+    pTxHeader.BitRateSwitch = FDCAN_BRS_OFF;
     pTxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
     pTxHeader.MessageMarker = 0;
     if (len > 8)
@@ -108,18 +108,22 @@ void FDCanSendData(FDCAN_HandleTypeDef *hfdcan, uint32_t id, uint32_t id_type, u
  * @param  hfdcan HAL FDCAN 句柄
  * @param  rec_id 输出：接收到的报文 ID
  * @param  buf    输出：数据缓冲区（至少 64 字节）
+ * @param  buf_size 输入：缓冲区大小
  * @return 实际接收的数据长度（DLC 编码值），失败返回 0
  */
-static uint32_t FDCanReceive(FDCAN_HandleTypeDef *hfdcan, uint32_t *rec_id, uint8_t *buf)
+static void FDCanReceive(FDCAN_HandleTypeDef *hfdcan, uint32_t *rec_id, uint8_t *buf, uint32_t *buf_size)
 {
     FDCAN_RxHeaderTypeDef pRxHeader;
 
     if(HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &pRxHeader, buf)==HAL_OK)
     {
         *rec_id = pRxHeader.Identifier;
-        return pRxHeader.DataLength;
+        *buf_size = pRxHeader.DataLength;
     }
-    return 0;
+    else
+    {
+      *buf_size = 0;
+    }
 }
 
 /**
@@ -139,10 +143,10 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
     uint8_t rx_data[64] = {0};
     uint32_t rx_len = 0;
 
-    rx_len = FDCanReceive(hfdcan, &can_id, rx_data);
+    FDCanReceive(hfdcan, &can_id, rx_data, &rx_len);
 
-    if (rx_len == FDCAN_DLC_BYTES_8 && s_can_rx_cb != NULL)
+    if (s_can_rx_cb != NULL)
     {
-        s_can_rx_cb(s_can_ctx, hfdcan, can_id, rx_data);
+        s_can_rx_cb(s_can_ctx, hfdcan, can_id, rx_data, rx_len);
     }
 }

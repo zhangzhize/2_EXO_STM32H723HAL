@@ -1,17 +1,22 @@
-.pio
-.settings
-
-/Debug
-/Release
-
-# .vscode
+# Editors and IDEs
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/tasks.json
+.pio
+.settings
 
+# Agent files
+.agents
+.claude
 
+# Build outputs
+/Debug
+/Release
+
+# Test files
 /test
 
+# Python
 /__pycache__
 
 

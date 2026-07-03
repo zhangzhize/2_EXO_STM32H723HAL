@@ -25,8 +25,33 @@ public:
      * @brief 构造 Mahony 滤波器
      * @param sample_freq 传感器采样频率 (Hz)，用于积分步长计算
      */
-    Mahony(float sample_freq) : inv_sample_freq_(1.0f / sample_freq) {};
+    explicit Mahony(float sample_freq, float kp = 6.0f, float ki = 0.1f)
+    {
+        SetParams(sample_freq, kp, ki);
+    }
     ~Mahony() = default;
+
+    void SetParams(float sample_freq, float kp, float ki)
+    {
+        inv_sample_freq_ = (sample_freq > 0.0f) ? (1.0f / sample_freq) : 0.001f;
+        two_Kp_ = 2.0f * kp;
+        two_Ki_ = 2.0f * ki;
+    }
+
+    void Reset()
+    {
+        q_[0] = 1.0f;
+        q_[1] = 0.0f;
+        q_[2] = 0.0f;
+        q_[3] = 0.0f;
+        integral_FBx_ = 0.0f;
+        integral_FBy_ = 0.0f;
+        integral_FBz_ = 0.0f;
+        roll_rad_ = 0.0f;
+        pitch_rad_ = 0.0f;
+        yaw_rad_ = 0.0f;
+        is_angle_computed_ = false;
+    }
 
     void Update9Axis(float gyro_radps_[3], float accel_mps2_[3], float magnet_uT_[3]);
     void Update6Axis(float gyro_radps_[3], float accel_mps2_[3]);
@@ -57,7 +82,7 @@ public:
     }
 
 private:
-    float inv_sample_freq_;                          /*!< 采样频率的倒数 (积分步长) */
+    float inv_sample_freq_ = 0.001f;                 /*!< 采样频率的倒数 (积分步长) */
 
     float two_Kp_ = (2.0f * 6.0f);                   /*!< 2 × 比例增益 (Kp)，控制互补滤波修正强度 */
     float two_Ki_ = (2.0f * 0.1f);                   /*!< 2 × 积分增益 (Ki)，控制陀螺零偏修正强度 */

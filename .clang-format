@@ -12,6 +12,7 @@ ContinuationIndentWidth: 2
 AccessModifierOffset: -2
 ConstructorInitializerIndentWidth: 2
 IndentCaseLabels: false
+IndentExternBlock: NoIndent
 
 # 对齐
 AlignAfterOpenBracket: Align

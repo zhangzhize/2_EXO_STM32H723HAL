@@ -49,7 +49,7 @@ float semg_pa2_envelope = 0.0f; /*!< PA2 通道肌电包络值 */
 __attribute__((section(".dma_buf"), aligned(32))) uint32_t g_adc_data[3] = {0};
 
 static void SendCdcReplayAck(void);
-static bool DecodeCdcFloatFrame(const uint8_t *rx, uint16_t rx_len, uint32_t *seq, uint8_t *float_count, float *values, uint8_t max_values);
+static bool DecodeCdcFloatFrame(const uint8_t *rx, uint16_t rx_len, uint32_t *seq, float *values, uint8_t *float_count, uint8_t max_values);
 
 /**
  * @brief 外骨骼主任务入口
@@ -98,7 +98,7 @@ void AltMainTask(void *argument)
    *----------------------------------------------------------------------*/
   static ExoHardware exo_hw = {
     .motor_can = hfdcan1, /* 电机 CAN */
-    .dm_imu_can = hfdcan3, /* IMU CAN */
+    .sensor_can = hfdcan3, /* IMU CAN */
     .sensor_spi = hspi3, /* 传感器 SPI */
     .sensor_uart = huart8, /* 传感器串口 */
     .shell_uart = huart9, /* Shell 命令行串口 */
@@ -127,7 +127,7 @@ void AltMainTask(void *argument)
   {
     if (g_timer2_flag == 1)
     {
-      g_timer2_flag = 0; /* 先清零标志，防止中断重入时重复执行 */
+      g_timer2_flag = 0;
 
       exo.Run(); /* 外骨骼核心控制逻辑 (~1ms 内完成) */
     }
@@ -145,7 +145,7 @@ void AltMainTask(void *argument)
 
       uint32_t seq = 0;
       uint8_t float_count = 0;
-      bool decoded = DecodeCdcFloatFrame(rx_copy, rx_len, &seq, &float_count, cdc_rx_floats, (uint8_t)DMA_UNION_BUF_SIZE_FLOATS); /* get: seq, float_count, cdc_rx_floats */
+      bool decoded = DecodeCdcFloatFrame(rx_copy, rx_len, &seq, cdc_rx_floats, &float_count, (uint8_t)DMA_UNION_BUF_SIZE_FLOATS);
       bool replay_loaded = false;
 
       if (decoded)
@@ -174,7 +174,7 @@ static void SendCdcReplayAck(void)
   }
 }
 
-static bool DecodeCdcFloatFrame(const uint8_t *rx, uint16_t rx_len, uint32_t *seq, uint8_t *float_count, float *values, uint8_t max_values)
+static bool DecodeCdcFloatFrame(const uint8_t *rx, uint16_t rx_len, uint32_t *seq, float *values, uint8_t *float_count, uint8_t max_values)
 {
   if (rx == nullptr || seq == nullptr || float_count == nullptr || values == nullptr) return false;
   if (rx_len < 5u) return false;

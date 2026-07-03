@@ -27,7 +27,7 @@ extern "C" {
 #include "fdcan.h"
 
 /* CAN 接收回调函数类型 —— 单例模式核心：将 HAL 中断数据转发到 Exo 对象上下文 */
-typedef void (*BspCanRxCallback)(void *ctx, FDCAN_HandleTypeDef *hfdcan, uint32_t can_ext_id, const uint8_t *rx_data);
+typedef void (*BspCanRxCallback)(void *ctx, FDCAN_HandleTypeDef *hfdcan, uint32_t can_ext_id, const uint8_t *rx_data, uint32_t rx_dlc);
 
 /* 初始化 FDCAN 过滤器和水印，启动外设并开启 RX FIFO0 消息到达中断 */
 void BspCanInit(FDCAN_HandleTypeDef *hfdcan);

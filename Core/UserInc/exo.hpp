@@ -27,29 +27,23 @@
 #include "chirp_generator.hpp"
 #include "mahony.hpp"
 
-/**
- * @brief NRF54L15 无线单足传感器数据包 (通过 SPI 从 NRF54 接收)
- * @note  结构体布局必须与 NRF54 固件中的定义完全一致 (packed)
- */
-typedef struct __attribute__((packed)) foot_sensor_packet_t
+typedef struct __attribute__((packed)) foot_sensor_packet_v2_t
 {
-  int32_t mV_toe; /*!< 足尖 FSR 原始电压 (mV) */
-  int32_t mV_heel; /*!< 足跟 FSR 原始电压 (mV) */
-  float force; /*!< 拉力传感器原始电压 (mV), 用于踝关节 plantarflexion 力估计 */
-  float quatI; /*!< 足部 IMU 四元数 i 分量 */
-  float quatJ; /*!< 足部 IMU 四元数 j 分量 */
-  float quatK; /*!< 足部 IMU 四元数 k 分量 */
-  float quatReal; /*!< 足部 IMU 四元数实部 (w) */
-} foot_sensor_packet_t;
+  float force_heel_N;
+  float force_toe_N;
+  float cop_x_mm;
+  float cop_y_mm;
+  float quatI;
+  float quatJ;
+  float quatK;
+  float quatReal;
+} foot_sensor_packet_v2_t;
 
-/**
- * @brief 双足传感器完整数据包
- */
-typedef struct __attribute__((packed)) exo_sensor_packet_t
+typedef struct __attribute__((packed)) exo_sensor_packet_v2_t
 {
-  foot_sensor_packet_t left_foot; /*!< 左足传感器数据 */
-  foot_sensor_packet_t right_foot; /*!< 右足传感器数据 */
-} exo_sensor_packet_t;
+  foot_sensor_packet_v2_t left_foot; /*!< 左足传感器数据 */
+  foot_sensor_packet_v2_t right_foot; /*!< 右足传感器数据 */
+} exo_sensor_packet_v2_t;
 
 /**
  * @brief 为 enum class 生成位运算操作符 (|, &, ^, ~)
@@ -109,6 +103,7 @@ class Side;
 class ExoShell;
 class BodyImu;
 class DaMiaoImuHub;
+class HiPnucImuHub;
 class StreamingFeatureExtractor;
 class IntentionRecognizer;
 class Exo;
@@ -124,8 +119,9 @@ public:
     kGravityYz,
   };
 
-  explicit ImuData(bool is_left = true, SagittalSource sagittal_source = SagittalSource::kEulerPitch) :
+  explicit ImuData(bool is_left = true, bool is_sagittal_inverted = false, SagittalSource sagittal_source = SagittalSource::kEulerPitch) :
     is_left_(is_left),
+    is_sagittal_inverted_(is_sagittal_inverted),
     sagittal_source_(sagittal_source)
   {
   }
@@ -156,6 +152,8 @@ public:
   /* Flags */
   bool is_left_;
   bool is_enabled_ = false;
+  bool is_sagittal_inverted_ = false;
+  bool is_quat_updated_ = false;
   SagittalSource sagittal_source_;
 
   static constexpr uint32_t kDataTimeoutMs = 200u;
@@ -213,6 +211,14 @@ public:
     Quaternion2EulerRad(q_, &roll_rad_, &pitch_rad_, &yaw_rad_);
   }
 
+  void ApplyPendingQuaternion()
+  {
+    if (!is_quat_updated_) return;
+    is_quat_updated_ = false;
+    UpdateEulerFromQuaternion();
+    UpdateSagittalKinematics();
+  }
+
   void UpdateSagittalKinematics()
   {
     switch (sagittal_source_)
@@ -258,6 +264,12 @@ public:
     }
 
     sagittal_pos_rad_ = is_stand_posture_valid_ ? WrapPi(sagittal_raw_rad_ - sagittal_stand_ref_rad_) : sagittal_raw_rad_;
+    if (is_sagittal_inverted_)
+    {
+      sagittal_raw_rad_ = -sagittal_raw_rad_;
+      sagittal_gyro_radps_ = -sagittal_gyro_radps_;
+      sagittal_pos_rad_ = -sagittal_pos_rad_;
+    }
   }
 
 private:
@@ -399,13 +411,21 @@ struct FsrSensorData
   bool ground_contact_during_refinement = false; /*!< 精细标定过程中的临时着地状态 */
   bool ground_contact = false; /*!< 当前着地状态 (施密特触发器输出) */
 
-  /* 自适应包络跟踪: 快速扩展、慢速遗忘的动态峰谷包络, 适应FSR长期漂移 */
-  bool adaptive_inited = false; /*!< 自适应跟踪器是否已用标定值初始化 */
-  bool enable_adaptive_range = false; /*!< 启用自适应范围 */
-  float adaptive_decay_rate = 0.002f; /*!< 包络遗忘速率 (1kHz时 τ≈0.5s); 过大会让包络贴近raw */
-  float adaptive_min_range = 0.2f; /*!< 最小范围保护, 防止长时间站立导致范围塌缩 */
-  float adaptive_max = 0.0f; /*!< 动态着地峰值估计 (运行时持续更新) */
-  float adaptive_min = 0.0f; /*!< 动态摆动谷值估计 (运行时持续更新) */
+  /* 状态约束自适应接触检测 */
+  float contact_baseline = 0.0f;
+  float contact_peak_ref = 1.0f;
+  float contact_peak_step = 0.0f;
+  float contact_norm = 0.0f;
+  float contact_on_ratio = 0.25f;
+  float contact_off_ratio = 0.15f;
+  float contact_baseline_alpha = 0.005f;
+  float contact_peak_alpha = 0.25f;
+  uint8_t contact_on_count = 0;
+  uint8_t contact_off_count = 0;
+  uint8_t contact_on_count_threshold = 2;
+  uint8_t contact_off_count_threshold = 4;
+  bool contact_inited = false;
+  float contact_min_range = 300.0f;
 };
 
 /**
@@ -472,6 +492,10 @@ public:
 
   FsrSensorData heel_; /*!< 足跟 FSR 传感器数据 */
   FsrSensorData toe_; /*!< 足尖 FSR 传感器数据 */
+  float cop_x_mm_ = 0.0f;
+  float cop_y_mm_ = 0.0f;
+  float vgrf_N_ = 0.0f;
+  float vgrf_calibrated_ = 0.0f;
   uint32_t last_update_ms_ = 0;
 
   /* 步态事件时间戳与历史窗口 — 按 GaitEventIdx 索引 */
@@ -499,17 +523,20 @@ public:
   /* FSR 着地状态与边沿检测 */
   bool heel_contact_state_ = false; /*!< 足跟当前着地状态 */
   bool toe_contact_state_ = false; /*!< 足尖当前着地状态 */
-  bool prev_heel_contact_state_ = true; /*!< 足跟上周期着地状态 (初始 true 避免误触发) */
-  bool prev_toe_contact_state_ = true; /*!< 足尖上周期着地状态 (初始 true 避免误触发) */
+  bool foot_contact_state_ = false;
+  bool prev_heel_contact_state_ = false; /*!< 足跟上周期着地状态 */
+  bool prev_toe_contact_state_ = false; /*!< 足尖上周期着地状态 */
+  bool prev_foot_contact_state_ = false;
 
   /* 本周期检测到的步态事件标志 */
-  bool event_ic_ = false; /*!< IC 事件 (同侧 heel ↑) */
-  bool event_oto_ = false; /*!< OTO 事件 (对侧 toe ↓) */
-  bool event_hr_ = false; /*!< HR 事件 (同侧 heel ↓) */
-  bool event_oic_ = false; /*!< OIC 事件 (对侧 heel ↑) */
-  bool event_to_ = false; /*!< TO 事件 (同侧 toe ↓) */
-  bool event_fa_ = false; /*!< FA 事件 (膝速过零) */
-  bool event_tv_ = false; /*!< TV 事件 (小腿俯仰≈站立参考) */
+  bool event_hs_ = false; /*!< Heel Strike */
+  bool event_ic_ = false; /*!< Initial Contact */
+  bool event_oto_ = false; /*!< Opposite Toe Off */
+  bool event_hr_ = false; /*!< Heel Raise */
+  bool event_oic_ = false; /*!< Opposite Initial Contact */
+  bool event_to_ = false; /*!< Toe Off */
+  bool event_fa_ = false; /*!< Feet Adjacent */
+  bool event_tv_ = false; /*!< Tibial Vertical */
 
   float shank_gyro_prev_radps_ = 0.0f; /*!< 小腿矢状面角速度前一帧值 (deg/s), 用于 FA 过零检测 */
 
@@ -631,9 +658,9 @@ public:
     ankle_joint_(is_left),
     fsr_gait_data_(is_left),
     stair_phase_data_(is_left),
-    foot_imu_(is_left, ImuData::SagittalSource::kEulerPitch),
-    shank_imu_(is_left, ImuData::SagittalSource::kGravityYz),
-    thigh_imu_(is_left, ImuData::SagittalSource::kGravityYz),
+    foot_imu_(is_left, !is_left, ImuData::SagittalSource::kEulerPitch),
+    shank_imu_(is_left, false, ImuData::SagittalSource::kEulerRoll),
+    thigh_imu_(is_left, false, ImuData::SagittalSource::kEulerRoll),
     is_left_(is_left)
   {
   }
@@ -833,7 +860,7 @@ public:
   SideData right_side_; /*!< 右侧数据 (is_left = false) */
   AoData ao_data_; /*!< 自适应振荡器输出数据 */
   StsPhaseData sts_phase_data_; /*!< 坐立转换相位数据 */
-  ImuData body_imu_{true, ImuData::SagittalSource::kGravityXz}; /*!< 躯干 IMU 数据 (BMI088 + Mahony 滤波器) */
+  ImuData body_imu_{true, false, ImuData::SagittalSource::kGravityXz}; /*!< 躯干 IMU 数据 (BMI088 + Mahony 滤波器) */
   IntentionData intention_data_; /*!< 意图识别/运动模式识别层数据 */
 
   State state_ = State::kSleep; /*!< 当前系统状态 */
@@ -869,7 +896,7 @@ DEFINE_ENUM_CLASS_BITWISE_OPS(ExoData::SysEvent)
 struct ExoHardware
 {
   FDCAN_HandleTypeDef &motor_can; /*!< FDCAN1: 电机总线 (髋/膝/踝/SEA) */
-  FDCAN_HandleTypeDef &dm_imu_can; /*!< FDCAN3: 达妙四肢 IMU */
+  FDCAN_HandleTypeDef &sensor_can; /*!< FDCAN3: CAN传感器 */
   SPI_HandleTypeDef &sensor_spi; /*!< SPI3: NRF54 足部传感器 (备用通道) */
   UART_HandleTypeDef &sensor_uart; /*!< UART8: NRF54 足部传感器 (主通道) */
   UART_HandleTypeDef &shell_uart; /*!< UART9: 调试 Shell / 蓝牙透传 */
@@ -972,6 +999,8 @@ public:
 
   struct BiLegGeometry
   {
+    float delta_ajc_y_locked_cm_ = 0.0f;
+    float delta_ajc_dist_locked_cm_ = 0.0f;
     float delta_ajc_y_cm = 0.0f;
     float delta_ajc_dist_cm = 0.0f;
     bool is_leading_left = true;
@@ -1237,7 +1266,7 @@ public:
  *
  * 处理流程:
  *   1. Calibrate(): 两阶段标定 (基础 5s min/max → 精细 7 步峰谷值)
- *   2. ProcessSensorUpdate(): 归一化 + 施密特触发器 → ground_contact
+ *   2. UpdateSensorCalibratedReading()/UpdateContactAdaptive(): fixed calibration normalization + state-constrained contact detection
  *   3. PrepareUpdate()/FinalizeUpdate()/CommitUpdate(): 双侧同步提取 IC/OTO/HR/OIC/TO/FA/TV,
  *      维护事件间期滑动平均窗口, 计算步态相位百分比
  *
@@ -1264,8 +1293,9 @@ public:
 
 private:
   void ProcessCalibration(FsrSensorData &sensor, bool &do_calibrate, bool &do_refinement);
-  void ProcessSensorUpdate(FsrSensorData &sensor);
-  void UpdateAdaptiveRange(FsrSensorData &sensor);
+  void UpdateSensorCalibratedReading(FsrSensorData &sensor);
+  void UpdateContactAdaptive(FsrSensorData &sensor, bool prev_foot_swing);
+  void FinalizeStepPeak(FsrSensorData &sensor);
   static void ResetSensorCalibration(FsrSensorData &sensor);
 
   void ClearCycleEvents();
@@ -1522,13 +1552,28 @@ public:
   }
   virtual ~DaMiaoImuHub() = default;
 
-  void CanRxCallback(uint32_t can_id, const uint8_t *data);
+  void CanRxCallback(uint32_t can_id, const uint8_t *data, uint32_t dlc);
 
   ExoData &pe_;
   FDCAN_HandleTypeDef &hfdcan_;
 
 private:
-  void UpdateImuData(ImuData &imu_data, const uint8_t *data);
+  static ImuData &ImuById(ExoData &pe, uint8_t id)
+  {
+    switch (id)
+    {
+    case kLeftShank:
+      return pe.left_side_.shank_imu_;
+    case kRightShank:
+      return pe.right_side_.shank_imu_;
+    case kLeftThigh:
+      return pe.left_side_.thigh_imu_;
+    case kRightThigh:
+    default:
+      return pe.right_side_.thigh_imu_;
+    }
+  }
+
   static float UintToFloat(uint32_t x, float x_min, float x_max, int num_bits)
   {
     uint32_t span = (1 << num_bits) - 1;
@@ -1550,6 +1595,57 @@ private:
   static constexpr float kTempMax = 60.0f;
   static constexpr float kQuaternionMin = -1.0f;
   static constexpr float kQuaternionMax = 1.0f;
+};
+
+class HiPnucImuHub
+{
+public:
+  enum CanID : uint8_t
+  {
+    kLeftShank = 0x01,
+    kRightShank = 0x02,
+    kLeftThigh = 0x03,
+    kRightThigh = 0x04
+  };
+
+  explicit HiPnucImuHub(ExoData &pe, FDCAN_HandleTypeDef &hfdcan) :
+    pe_(pe),
+    hfdcan_(hfdcan)
+  {
+  }
+  virtual ~HiPnucImuHub() = default;
+
+  void CanRxCallback(uint32_t can_id, const uint8_t *data, uint32_t dlc);
+
+  ExoData &pe_;
+  FDCAN_HandleTypeDef &hfdcan_;
+
+private:
+  static ImuData &ImuById(ExoData &pe, uint8_t id)
+  {
+    switch (id)
+    {
+    case kLeftShank:
+      return pe.left_side_.shank_imu_;
+    case kRightShank:
+      return pe.right_side_.shank_imu_;
+    case kLeftThigh:
+      return pe.left_side_.thigh_imu_;
+    case kRightThigh:
+    default:
+      return pe.right_side_.thigh_imu_;
+    }
+  }
+
+  static inline int16_t unpack_i16(const uint8_t *d)
+  {
+    return (int16_t)(d[0] | (d[1] << 8));
+  }
+
+  static constexpr float kAccelMGtoMps2 = 0.00980665f;
+  static constexpr float kGyro01DpsToRps = 0.00174533f;
+  static constexpr float kEuler001DegToRad = 0.000174533f;
+  static constexpr float kQuatScale = 1.0f / 10000.0f;
 };
 
 /* ============================================================================
@@ -1744,7 +1840,8 @@ public:
     pe_(pe),
     hw_(hw),
     dji_esc_hub_(hw.motor_can),
-    dm_imu_hub_(pe, hw.dm_imu_can),
+    dm_imu_hub_(pe, hw.sensor_can),
+    hipnuc_imu_hub_(pe, hw.sensor_can),
     ao_(pe),
     intention_recognizer_(pe),
     sts_phase_estimator_(pe),
@@ -1778,7 +1875,7 @@ public:
   bool IsCalibrateDone();
   bool IsStopWalking();
 
-  void CanRxCallback(FDCAN_HandleTypeDef *hfdcan, uint32_t can_id, const uint8_t *data);
+  void CanRxCallback(FDCAN_HandleTypeDef *hfdcan, uint32_t can_id, const uint8_t *data, uint32_t dlc);
   void SensorUartReceiveDma(void);
   void UartRxCallback(UART_HandleTypeDef *huart, uint16_t data_size);
   void UartErrorCallback(UART_HandleTypeDef *huart);
@@ -1793,6 +1890,7 @@ public:
 
   DjiEscHub dji_esc_hub_;
   DaMiaoImuHub dm_imu_hub_;
+  HiPnucImuHub hipnuc_imu_hub_;
   AdaptiveOscillator ao_;
   IntentionRecognizer intention_recognizer_;
   StsPhaseEstimator sts_phase_estimator_;
