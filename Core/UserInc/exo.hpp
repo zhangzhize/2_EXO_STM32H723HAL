@@ -388,7 +388,7 @@ struct FsrSensorData
   static constexpr float kSchmittLowerThresholdRefinement = 0.33f; /*!< 精细标定时施密特下阈值 (归一化) */
   static constexpr float kSchmittUpperThresholdRefinement = 0.66f; /*!< 精细标定时施密特上阈值 (归一化) */
 
-  float raw_reading = 0.0f; /*!< 原始读数 (V), 由 NRF54 采集后经 SPI/UART 传输 */
+  float raw_reading = 0.0f; /*!< 原始读数, 由 NRF54 采集后经 SPI/UART 传输 */
   float calibrated_reading = 0.0f; /*!< 归一化读数 [0, 1], 由 (raw - min) / (max - min) 计算 */
   float calibration_min = -1.0f; /*!< 基础标定阶段记录的最小值 (-1 表示未标定) */
   float calibration_max = -1.0f; /*!< 基础标定阶段记录的最大值 (-1 表示未标定) */
@@ -416,10 +416,10 @@ struct FsrSensorData
   float contact_peak_ref = 1.0f;
   float contact_peak_step = 0.0f;
   float contact_norm = 0.0f;
-  float contact_on_ratio = 0.25f;
-  float contact_off_ratio = 0.15f;
+  float contact_on_ratio = 0.30f;
+  float contact_off_ratio = 0.12f;
   float contact_baseline_alpha = 0.005f;
-  float contact_peak_alpha = 0.25f;
+  float contact_peak_alpha = 0.20f;
   uint8_t contact_on_count = 0;
   uint8_t contact_off_count = 0;
   uint8_t contact_on_count_threshold = 2;
@@ -429,42 +429,33 @@ struct FsrSensorData
 };
 
 /**
- * @brief RLA (Rancho Los Amigos) 步态相位枚举
- * @note  两大相 (Stance/Swing) 细分为 7 个子相, 由 7 个步态事件边界划分
+ * @brief FSR 主步态相位枚举
+ * @note  仅保留 Unknown/Stance/Swing, 不再细分旧子相.
  */
 enum class GaitPhase : uint8_t
 {
-  kLoadingResponse = 0, /*!< 支撑初期/承重反应期 (IC → OTO) */
-  kMidStance, /*!< 支撑中期 (OTO → HR) */
-  kTerminalStance, /*!< 支撑末期 (HR → OIC) */
-  kPreSwing, /*!< 推进阶段/预摆动 (OIC → TO) */
-  kInitialSwing, /*!< 摆动初期 (TO → FA) */
-  kMidSwing, /*!< 摆动中期 (FA → TV) */
-  kTerminalSwing, /*!< 摆动末期 (TV → IC) */
+  kUnknown = 0,
+  kStance,
+  kSwing,
 };
 
-/**
- * @brief 步态事件边界索引 (7 个)
- * @note  kIC = 步态周期起点, 也用于计算 percent_gait_
- */
-enum GaitEventIdx : uint8_t
+enum GaitEvent : uint8_t
 {
-  kIC = 0, /*!< Initial Contact — 同侧脚跟触地 */
-  kOTO = 1, /*!< Opposite Toe Off — 对侧趾尖离地 */
-  kHR = 2, /*!< Heel Rise — 同侧足跟抬升 */
-  kOIC = 3, /*!< Opposite Initial Contact — 对侧脚跟触地 */
-  kTO = 4, /*!< Toe Off — 同侧趾尖离地 */
-  kFA = 5, /*!< Feet Adjacent — 双足贴近 (膝速过零) */
-  kTV = 6, /*!< Tibia Vertical — 胫骨竖直 (小腿俯仰≈站立参考) */
-  kNumGaitEvents = 7,
+  kFS = 0, /*!< Foot Strike: foot_contact rising */
+  kHS, /*!< Heel Strike: heel_contact rising */
+  kTS, /*!< Toe Strike: toe_contact rising */
+  kFO, /*!< Foot Off: foot_contact falling */
+  kHO, /*!< Heel Off: heel_contact falling */
+  kTO, /*!< Toe Off: toe_contact falling */
+  kNumGaitEvents,
 };
 
 /**
- * @brief 单侧 FSR 步态估计数据 —— RLA 八相位步态系统
- * @note  7 个步态事件边界 (IC/OTO/HR/OIC/TO/FA/TV) 划分 7 个步态子相.
- *        双侧 FSR 提供 IC/OTO/HR/OIC/TO, 小腿 IMU 可选提供 FA/TV.
+ * @brief 单侧 FSR 步态估计数据 —— FS/FO + Stance/Swing 系统
+ * @note  FS/FO 是主事件, 用于支撑/摆动相切换和百分比计算.
+ *        HS/TS/HO/TO 是局部接触事件, 主要用于调试、落脚类型判断和模式识别.
  *
- *        percent_gait_ 仍然基于 IC → next IC 计算, 初始值 -1 表示无效
+ *        percent_gait_ 基于 FS -> next FS 计算, 初始值 -1 表示无效
  */
 class FsrGaitData
 {
@@ -487,6 +478,11 @@ public:
     return is_enabled_ && is_calibrated_ && IsFresh(GetSysTimeMs());
   }
 
+  bool IsContactReady() const
+  {
+    return is_enabled_ && IsFresh(GetSysTimeMs()) && heel_.contact_inited && toe_.contact_inited;
+  }
+
   static constexpr uint8_t kNumStepsAvg = 3; /*!< 步态周期滑动平均窗口大小 */
   static constexpr uint32_t kFsrDataTimeoutMs = 500u; /*!< FSR 数据超时阈值 (ms), 超过此时间未更新则判定失联 */
 
@@ -495,26 +491,27 @@ public:
   float cop_x_mm_ = 0.0f;
   float cop_y_mm_ = 0.0f;
   float vgrf_N_ = 0.0f;
-  float vgrf_calibrated_ = 0.0f;
   uint32_t last_update_ms_ = 0;
 
-  /* 步态事件时间戳与历史窗口 — 按 GaitEventIdx 索引 */
+  /* 步态事件时间戳与相位时长窗口 */
   uint32_t event_ts_ms_[kNumGaitEvents] = {0}; /*!< 最近一次各事件的发生时间戳 (ms) */
   uint32_t prev_event_ts_ms_[kNumGaitEvents] = {0}; /*!< 前一次各事件的发生时间戳 (ms) */
-  uint32_t event_times_ms_[kNumGaitEvents][kNumStepsAvg] = {{0}}; /*!< 各事件间期的滑动窗口 (ms) */
   uint32_t event_count_[kNumGaitEvents] = {0}; /*!< 各事件累计触发次数, 用于低频遥测诊断 */
-  float expected_duration_ms_[kNumGaitEvents] = {-1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f}; /*!< 预期各事件间期 (当前事件→下一事件) 时长 (ms) */
-  float expected_step_duration_ms_ = -1.0f; /*!< 预期步态周期时长 (IC→next IC) (ms), 单独追踪避免与 TSw 冲突 */
-  GaitPhase current_phase_ = GaitPhase::kLoadingResponse; /*!< 当前 RLA 步态相位 */
-  GaitPhase prev_phase_ = GaitPhase::kLoadingResponse; /*!< 上一周期的步态相位 (用于上升沿检测) */
+  uint32_t gait_duration_window_ms_[kNumStepsAvg] = {0}; /*!< FS->next FS 滑动窗口 (ms) */
+  uint32_t stance_duration_window_ms_[kNumStepsAvg] = {0}; /*!< FS->FO 滑动窗口 (ms) */
+  uint32_t swing_duration_window_ms_[kNumStepsAvg] = {0}; /*!< FO->next FS 滑动窗口 (ms) */
+  float expected_gait_duration_ms_ = -1.0f; /*!< 预期步态周期时长 (FS->next FS) (ms) */
+  float expected_stance_duration_ms_ = -1.0f; /*!< 预期支撑相时长 (FS->FO) (ms) */
+  float expected_swing_duration_ms_ = -1.0f; /*!< 预期摆动相时长 (FO->next FS) (ms) */
+  GaitPhase current_phase_ = GaitPhase::kUnknown;
+  GaitPhase prev_phase_ = GaitPhase::kUnknown;
   bool phase_changed_ = false; /*!< 本周期相位是否发生变化 (上升沿) */
   bool is_data_fresh_ = false; /*!< 本周期 FSR 数据是否新鲜有效 */
   bool is_phase_valid_ = false; /*!< 本周期 FSR 步态相位/百分比是否可用于控制 */
 
-  float percent_gait_ = -1.0f; /*!< 步态周期百分比 (IC→next IC) [0, 100], -1 表示无效 */
-  float percent_stance_ = -1.0f; /*!< 支撑相百分比 (IC→TO) [0, 100] */
-  float percent_swing_ = -1.0f; /*!< 摆动相百分比 (TO→next IC) [0, 100] */
-  float percent_subphase_ = -1.0f; /*!< 当前子相内百分比 [0, 100] */
+  float percent_gait_ = -1.0f; /*!< 步态周期百分比 [0, 100], -1 表示无效 */
+  float percent_stance_ = -1.0f; /*!< 支撑相百分比 [0, 100] */
+  float percent_swing_ = -1.0f; /*!< 摆动相百分比 [0, 100] */
 
   /* 滑动平均过滤参数 */
   float expected_duration_window_upper_coeff_ = 1.75f; /*!< 异常值过滤: 上界系数 (× max) */
@@ -529,16 +526,14 @@ public:
   bool prev_foot_contact_state_ = false;
 
   /* 本周期检测到的步态事件标志 */
+  bool event_fs_ = false; /*!< Foot Strike */
   bool event_hs_ = false; /*!< Heel Strike */
-  bool event_ic_ = false; /*!< Initial Contact */
-  bool event_oto_ = false; /*!< Opposite Toe Off */
-  bool event_hr_ = false; /*!< Heel Raise */
-  bool event_oic_ = false; /*!< Opposite Initial Contact */
+  bool event_ts_ = false; /*!< Toe Strike */
+  bool event_fo_ = false; /*!< Foot Off */
+  bool event_ho_ = false; /*!< Heel Off */
   bool event_to_ = false; /*!< Toe Off */
-  bool event_fa_ = false; /*!< Feet Adjacent */
-  bool event_tv_ = false; /*!< Tibial Vertical */
-
-  float shank_gyro_prev_radps_ = 0.0f; /*!< 小腿矢状面角速度前一帧值 (deg/s), 用于 FA 过零检测 */
+  bool event_opposite_fs_ = false; /*!< Opposite Foot Strike */
+  bool event_opposite_fo_ = false; /*!< Opposite Foot Off */
 
   /* FSR 标定控制 */
   bool do_calibration_toe_fsr_ = true; /*!< 足尖 FSR 基础标定使能 */
@@ -1267,11 +1262,11 @@ public:
  * 处理流程:
  *   1. Calibrate(): 两阶段标定 (基础 5s min/max → 精细 7 步峰谷值)
  *   2. UpdateSensorCalibratedReading()/UpdateContactAdaptive(): fixed calibration normalization + state-constrained contact detection
- *   3. PrepareUpdate()/FinalizeUpdate()/CommitUpdate(): 双侧同步提取 IC/OTO/HR/OIC/TO/FA/TV,
+ *   3. PrepareUpdate()/FinalizeUpdate()/CommitUpdate(): 双侧同步提取 FS/FO 与局部接触事件,
  *      维护事件间期滑动平均窗口, 计算步态相位百分比
  *
- * @note  percent_gait_ 从 0 (足跟着地) 到 100 (下一次足跟着地),
- *        基于 expected_step_duration_ms_ 线性插值, 异常值通过窗口系数过滤
+ * @note  percent_gait_ 从 0 (FS) 到 100 (下一次 FS),
+ *        基于 expected_gait_duration_ms_ 线性插值, 异常值通过窗口系数过滤
  */
 class FsrGaitEstimator
 {
@@ -1299,17 +1294,22 @@ private:
   static void ResetSensorCalibration(FsrSensorData &sensor);
 
   void ClearCycleEvents();
-  void DetectOwnFsrEvents(); /* 检测同侧 IC/HR/TO (FSR 边沿) */
-  void DetectOppositeFsrEvents(); /* 根据对侧同侧事件映射 OTO/OIC */
-  void DetectImuEvents(); /* 检测 FA (膝速过零) 和 TV (小腿俯仰) */
+  void DetectOwnFsrEvents();
+  void DetectOppositeFsrEvents();
+  void ApplyEventGuards(uint32_t now_ms);
   void UpdateEventTimings(uint32_t now_ms);
-  void ResolvePhase(); /* 根据能力级别和事件边界解析当前步态相位 */
-  void UpdatePercentages(uint32_t now_ms); /* 更新 percent_gait_/percent_stance_/percent_swing_/percent_subphase_ */
-  void UpdateValidity(); /* 更新 is_valid_: 判断当前步态相位/百分比是否可用于控制 */
-  void UpdateDurationFromStartEvent(uint8_t start_ev_idx, uint32_t now_ms);
+  void ResolvePhase();
+  void UpdatePercentages(uint32_t now_ms);
+  void UpdateValidity();
+  void UpdateExpectedDuration(uint32_t duration_ms, uint32_t duration_window_ms[], float &expected_duration_ms);
   void RecordEventTimestamp(uint8_t ev_idx, uint32_t now_ms);
   bool IsOppositeFsrUsable();
-  bool IsShankImuUsable();
+
+  static constexpr uint32_t kMinStanceDurationMs = 150u;
+  static constexpr uint32_t kMinSwingDurationMs = 150u;
+  static constexpr uint32_t kMinStepDurationMs = 350u;
+  static constexpr uint32_t kMaxStepDurationMs = 4000u;
+  static constexpr uint32_t kMinLocalContactEventIntervalMs = 50u;
 
   static inline bool SchmittTrigger(float value, bool is_last_high, float lower, float upper)
   {

@@ -234,7 +234,7 @@ void KneeJoint::DivekarUpdate()
   divekar_input_.f_grf_contra = ps_.is_left_ ? pe_.right_side_.fsr_gait_data_.heel_.calibrated_reading + pe_.right_side_.fsr_gait_data_.toe_.calibrated_reading : pe_.left_side_.fsr_gait_data_.heel_.calibrated_reading + pe_.left_side_.fsr_gait_data_.toe_.calibrated_reading;
   divekar_input_.f_heel_ipsi = ps_.fsr_gait_data_.heel_.calibrated_reading;
   divekar_input_.f_heel_contra = ps_.is_left_ ? pe_.right_side_.fsr_gait_data_.heel_.calibrated_reading : pe_.left_side_.fsr_gait_data_.heel_.calibrated_reading;
-  divekar_input_.own_heel_strike_event = ps_.is_left_ ? pe_.left_side_.fsr_gait_data_.event_ic_ : pe_.right_side_.fsr_gait_data_.event_ic_;
+  divekar_input_.own_heel_strike_event = ps_.is_left_ ? pe_.left_side_.fsr_gait_data_.event_fs_ : pe_.right_side_.fsr_gait_data_.event_fs_;
   divekar_input_.is_leading_leg = ps_.is_left_ ? KneeJoint::bi_leg_geometry_.is_leading_left : (!KneeJoint::bi_leg_geometry_.is_leading_left);
 
   const float dt_s = _constrain(divekar_input_.dt_s, 1.0e-5f, 0.1f);
@@ -858,7 +858,7 @@ void FsrGaitEstimator::PrepareUpdate(uint32_t now_ms)
 
   const bool prev_foot_swing = !gait_data_.prev_foot_contact_state_;
 
-  const bool was_contact_inited = gait_data_.heel_.contact_inited &&  gait_data_.toe_.contact_inited;
+  const bool was_contact_inited = gait_data_.heel_.contact_inited && gait_data_.toe_.contact_inited;
 
   UpdateSensorCalibratedReading(gait_data_.heel_);
   UpdateSensorCalibratedReading(gait_data_.toe_);
@@ -871,6 +871,8 @@ void FsrGaitEstimator::PrepareUpdate(uint32_t now_ms)
 
   if (!was_contact_inited)
   {
+    gait_data_.current_phase_ = gait_data_.foot_contact_state_ ? GaitPhase::kStance : GaitPhase::kSwing;
+    gait_data_.prev_phase_ = gait_data_.current_phase_;
     gait_data_.prev_foot_contact_state_ = gait_data_.foot_contact_state_;
     gait_data_.prev_toe_contact_state_ = gait_data_.toe_contact_state_;
     gait_data_.prev_heel_contact_state_ = gait_data_.heel_contact_state_;
@@ -892,10 +894,7 @@ void FsrGaitEstimator::FinalizeUpdate(uint32_t now_ms)
   if (!gait_data_.is_enabled_ || !gait_data_.is_data_fresh_) return;
 
   DetectOppositeFsrEvents();
-  if (IsShankImuUsable())
-  {
-    DetectImuEvents();
-  }
+  ApplyEventGuards(now_ms);
   UpdateEventTimings(now_ms);
   ResolvePhase();
   UpdatePercentages(now_ms);
@@ -913,24 +912,25 @@ void FsrGaitEstimator::CommitUpdate()
 
 void FsrGaitEstimator::ClearCycleEvents()
 {
+  gait_data_.event_fs_ = false;
   gait_data_.event_hs_ = false;
-  gait_data_.event_ic_ = false;
-  gait_data_.event_oto_ = false;
-  gait_data_.event_hr_ = false;
-  gait_data_.event_oic_ = false;
+  gait_data_.event_ts_ = false;
+  gait_data_.event_fo_ = false;
+  gait_data_.event_ho_ = false;
   gait_data_.event_to_ = false;
-  gait_data_.event_fa_ = false;
-  gait_data_.event_tv_ = false;
+  gait_data_.event_opposite_fs_ = false;
+  gait_data_.event_opposite_fo_ = false;
   gait_data_.phase_changed_ = false;
-  gait_data_.is_phase_valid_ = false;
 }
 
 void FsrGaitEstimator::DetectOwnFsrEvents()
 {
-  gait_data_.event_ic_ = (gait_data_.foot_contact_state_ && !gait_data_.prev_foot_contact_state_);
-  gait_data_.event_hr_ = (!gait_data_.heel_contact_state_ && gait_data_.prev_heel_contact_state_);
-  gait_data_.event_to_ = (!gait_data_.toe_contact_state_ && gait_data_.prev_toe_contact_state_);
+  gait_data_.event_fs_ = (gait_data_.foot_contact_state_ && !gait_data_.prev_foot_contact_state_);
+  gait_data_.event_fo_ = (!gait_data_.foot_contact_state_ && gait_data_.prev_foot_contact_state_);
   gait_data_.event_hs_ = (gait_data_.heel_contact_state_ && !gait_data_.prev_heel_contact_state_);
+  gait_data_.event_ho_ = (!gait_data_.heel_contact_state_ && gait_data_.prev_heel_contact_state_);
+  gait_data_.event_ts_ = (gait_data_.toe_contact_state_ && !gait_data_.prev_toe_contact_state_);
+  gait_data_.event_to_ = (!gait_data_.toe_contact_state_ && gait_data_.prev_toe_contact_state_);
 }
 
 void FsrGaitEstimator::DetectOppositeFsrEvents()
@@ -938,65 +938,83 @@ void FsrGaitEstimator::DetectOppositeFsrEvents()
   FsrGaitData &opposite_fsr = gait_data_.is_left_ ? pe_.right_side_.fsr_gait_data_ : pe_.left_side_.fsr_gait_data_;
   if (!IsOppositeFsrUsable()) return;
 
-  gait_data_.event_oto_ = opposite_fsr.event_to_;
-  gait_data_.event_oic_ = opposite_fsr.event_ic_;
+  gait_data_.event_opposite_fs_ = opposite_fsr.event_fs_;
+  gait_data_.event_opposite_fo_ = opposite_fsr.event_fo_;
 }
 
 bool FsrGaitEstimator::IsOppositeFsrUsable()
 {
   FsrGaitData &opposite_fsr = gait_data_.is_left_ ? pe_.right_side_.fsr_gait_data_ : pe_.left_side_.fsr_gait_data_;
-  return opposite_fsr.IsUsable();
+  return opposite_fsr.IsContactReady();
 }
 
-bool FsrGaitEstimator::IsShankImuUsable()
+
+void FsrGaitEstimator::ApplyEventGuards(uint32_t now_ms)
 {
-  ImuData &shank_imu = gait_data_.is_left_ ? pe_.left_side_.shank_imu_ : pe_.right_side_.shank_imu_;
-  return shank_imu.is_enabled_;
-}
+  const bool can_enter_stance = (gait_data_.current_phase_ == GaitPhase::kSwing ||
+                                 gait_data_.current_phase_ == GaitPhase::kUnknown);
+  const bool can_enter_swing = (gait_data_.current_phase_ == GaitPhase::kStance ||
+                                gait_data_.current_phase_ == GaitPhase::kUnknown);
 
-/**
- * @brief IMU 事件检测: FA (小腿角速度过零) + TV (小腿俯仰接近参考)
- * @note  使用大小腿 IMU 推算人体运动学, 而非外骨骼关节编码器:
- *        FA: 摆动相中小腿矢状面角速度 (gyro pitch rate) 从负(后摆)变正(前摆)的过零点
- *             此时膝关节屈曲接近最大, 双足接近
- *        TV: 摆动末期小腿俯仰角进入站立标定参考 +/-4 deg 范围
- *             胫骨接近竖直, 即将足跟着地
- */
-void FsrGaitEstimator::DetectImuEvents()
-{
-  gait_data_.event_fa_ = false;
-  gait_data_.event_tv_ = false;
+  const bool request_fs = gait_data_.event_fs_ ||
+                          (gait_data_.foot_contact_state_ && can_enter_stance);
+  const bool request_fo = gait_data_.event_fo_ ||
+                          (!gait_data_.foot_contact_state_ && can_enter_swing);
 
-  ImuData &shank_imu = gait_data_.is_left_ ? pe_.left_side_.shank_imu_ : pe_.right_side_.shank_imu_;
-  if (!shank_imu.is_enabled_) return;
+  gait_data_.event_fs_ = false;
+  gait_data_.event_fo_ = false;
 
-  bool in_swing = (!gait_data_.heel_contact_state_ && !gait_data_.toe_contact_state_);
-
-  /* FA 检测: 小腿矢状面角速度过零 (后摆 -> 前摆) */
+  if (request_fs)
   {
-    float shank_gyro_now = shank_imu.SagittalGyroRadps();
-    if (in_swing && gait_data_.shank_gyro_prev_radps_ < 0.0f && shank_gyro_now >= 0.0f)
+    bool accept = can_enter_stance;
+
+    if (accept && gait_data_.event_ts_ms_[kFO] > 0u &&
+        (now_ms - gait_data_.event_ts_ms_[kFO]) < kMinSwingDurationMs)
     {
-      gait_data_.event_fa_ = true;
+      accept = false;
     }
-    gait_data_.shank_gyro_prev_radps_ = shank_gyro_now;
+
+    if (accept && gait_data_.event_ts_ms_[kFS] > 0u)
+    {
+      const uint32_t step_time = now_ms - gait_data_.event_ts_ms_[kFS];
+      if (step_time < kMinStepDurationMs)
+      {
+        accept = false;
+      }
+    }
+
+    gait_data_.event_fs_ = accept;
   }
 
-  /* TV 检测: 小腿矢状面角接近站立参考 (胫骨竖直) */
+  if (request_fo)
   {
-    float shank_from_ref_rad = shank_imu.IsUsable() && shank_imu.is_stand_posture_valid_ ? shank_imu.SagittalFromStandRefRad() : 0;
-    float pitch_error = fabsf(shank_from_ref_rad * RAD_TO_DEG);
-    if (in_swing && pitch_error < 4.0f)
+    bool accept = can_enter_swing;
+
+    if (accept && gait_data_.event_ts_ms_[kFS] > 0u &&
+        (now_ms - gait_data_.event_ts_ms_[kFS]) < kMinStanceDurationMs)
     {
-      gait_data_.event_tv_ = true;
+      accept = false;
     }
+
+    gait_data_.event_fo_ = accept;
   }
+
+  auto gate_local_event = [&](bool &event_flag, uint8_t event_idx)
+  {
+    if (!event_flag) return;
+    if (gait_data_.event_ts_ms_[event_idx] > 0u &&
+        (now_ms - gait_data_.event_ts_ms_[event_idx]) < kMinLocalContactEventIntervalMs)
+    {
+      event_flag = false;
+    }
+  };
+
+  gate_local_event(gait_data_.event_hs_, kHS);
+  gate_local_event(gait_data_.event_ts_, kTS);
+  gate_local_event(gait_data_.event_ho_, kHO);
+  gate_local_event(gait_data_.event_to_, kTO);
 }
 
-/**
- * @brief 检查 FSR 数据新鲜度
- * @note  FSR 数据超时会使步态估计无效; IMU 暂不做 fresh 检查。
- */
 void FsrGaitEstimator::CheckDataFreshness(uint32_t now_ms)
 {
   if (gait_data_.last_update_ms_ == 0u)
@@ -1005,7 +1023,6 @@ void FsrGaitEstimator::CheckDataFreshness(uint32_t now_ms)
     gait_data_.percent_gait_ = -1.0f;
     gait_data_.percent_stance_ = -1.0f;
     gait_data_.percent_swing_ = -1.0f;
-    gait_data_.percent_subphase_ = -1.0f;
     return;
   }
 
@@ -1015,196 +1032,86 @@ void FsrGaitEstimator::CheckDataFreshness(uint32_t now_ms)
     gait_data_.percent_gait_ = -1.0f;
     gait_data_.percent_stance_ = -1.0f;
     gait_data_.percent_swing_ = -1.0f;
-    gait_data_.percent_subphase_ = -1.0f;
     Reset();
   }
 }
 
 /**
- * @brief 根据最新事件边界解析当前 RLA 相位
+ * @brief 根据 FS/FO 主事件解析当前支撑/摆动相位
  */
+
 void FsrGaitEstimator::ResolvePhase()
 {
   gait_data_.prev_phase_ = gait_data_.current_phase_;
 
-  uint8_t latest_ev = kIC;
-  uint32_t latest_ts = gait_data_.event_ts_ms_[kIC];
-  bool has_opposite_fsr = IsOppositeFsrUsable();
-  bool has_shank_imu = IsShankImuUsable();
-
-  auto consider_event = [&](uint8_t ev)
+  if (gait_data_.event_fs_)
   {
-    if (gait_data_.event_ts_ms_[ev] > latest_ts ||
-        (gait_data_.event_ts_ms_[ev] > 0 && gait_data_.event_ts_ms_[ev] == latest_ts))
-    {
-      latest_ts = gait_data_.event_ts_ms_[ev];
-      latest_ev = ev;
-    }
-  };
-
-  if (has_opposite_fsr)
-  {
-    consider_event(kOTO);
-    consider_event(kOIC);
+    gait_data_.current_phase_ = GaitPhase::kStance;
   }
-  consider_event(kHR);
-  consider_event(kTO);
-  if (has_shank_imu)
+  else if (gait_data_.event_fo_)
   {
-    consider_event(kFA);
-    consider_event(kTV);
-  }
-
-  switch (latest_ev)
-  {
-  case kOTO:
-    gait_data_.current_phase_ = GaitPhase::kMidStance;
-    break;
-  case kHR:
-    gait_data_.current_phase_ = GaitPhase::kTerminalStance;
-    break;
-  case kOIC:
-    gait_data_.current_phase_ = GaitPhase::kPreSwing;
-    break;
-  case kTO:
-    gait_data_.current_phase_ = GaitPhase::kInitialSwing;
-    break;
-  case kFA:
-    gait_data_.current_phase_ = GaitPhase::kMidSwing;
-    break;
-  case kTV:
-    gait_data_.current_phase_ = GaitPhase::kTerminalSwing;
-    break;
-  case kIC:
-  default:
-    gait_data_.current_phase_ = GaitPhase::kLoadingResponse;
-    break;
+    gait_data_.current_phase_ = GaitPhase::kSwing;
   }
 
   gait_data_.phase_changed_ = (gait_data_.current_phase_ != gait_data_.prev_phase_);
 }
 
-/**
- * @brief 更新所有步态百分比
- * @note  percent_gait_: IC -> next IC
- *        percent_stance_: IC -> TO
- *        percent_swing_: TO -> next IC
- *        percent_subphase_: 当前子相内百分比
- */
 void FsrGaitEstimator::UpdatePercentages(uint32_t now_ms)
 {
-  bool has_opposite_fsr = IsOppositeFsrUsable();
-  bool has_shank_imu = IsShankImuUsable();
-  bool in_stance = (gait_data_.heel_contact_state_ || gait_data_.toe_contact_state_);
-  bool in_swing = !in_stance;
+  const float expected_gait = gait_data_.expected_gait_duration_ms_;
 
-  /* percent_gait_: 步态全周期 (IC -> next IC) */
-  float expected_step = gait_data_.expected_step_duration_ms_;
-  if (expected_step > 0.0f)
+  if (expected_gait > 0.0f && gait_data_.event_ts_ms_[kFS] > 0u)
   {
-    gait_data_.percent_gait_ = 100.0f * ((float)(now_ms - gait_data_.event_ts_ms_[kIC]) / expected_step);
-    if (gait_data_.percent_gait_ > 100.0f) gait_data_.percent_gait_ = 100.0f;
-    if (gait_data_.percent_gait_ < 0.0f) gait_data_.percent_gait_ = 0.0f;
+    gait_data_.percent_gait_ = 100.0f * ((float)(now_ms - gait_data_.event_ts_ms_[kFS]) / expected_gait);
+    gait_data_.percent_gait_ = _constrain(gait_data_.percent_gait_, 0.0f, 100.0f);
+  }
+  else
+  {
+    gait_data_.percent_gait_ = -1.0f;
   }
 
-  /* percent_stance_: 支撑相 (IC -> TO) = LR + MS + TS + PS */
+  if (gait_data_.current_phase_ == GaitPhase::kStance)
   {
-    float expected_stance = expected_step > 0.0f ? expected_step * 0.6f : -1.0f;
-    float measured_stance = 0.0f;
-    bool has_measured_stance = false;
-
-    if (has_opposite_fsr &&
-        gait_data_.expected_duration_ms_[kIC] > 0.0f &&
-        gait_data_.expected_duration_ms_[kOTO] > 0.0f &&
-        gait_data_.expected_duration_ms_[kHR] > 0.0f &&
-        gait_data_.expected_duration_ms_[kOIC] > 0.0f)
+    float expected_stance = gait_data_.expected_stance_duration_ms_;
+    if (expected_stance <= 0.0f && expected_gait > 0.0f)
     {
-      measured_stance = gait_data_.expected_duration_ms_[kIC] + gait_data_.expected_duration_ms_[kOTO] +
-                        gait_data_.expected_duration_ms_[kHR] + gait_data_.expected_duration_ms_[kOIC];
-      has_measured_stance = true;
-    }
-    else if (gait_data_.expected_duration_ms_[kIC] > 0.0f && gait_data_.expected_duration_ms_[kHR] > 0.0f)
-    {
-      measured_stance = gait_data_.expected_duration_ms_[kIC] + gait_data_.expected_duration_ms_[kHR];
-      has_measured_stance = true;
+      expected_stance = expected_gait * 0.6f;
     }
 
-    if (has_measured_stance) expected_stance = measured_stance;
-    if (in_stance && expected_stance > 0.0f)
+    if (expected_stance > 0.0f && gait_data_.event_ts_ms_[kFS] > 0u)
     {
-      float percent = 100.0f * ((float)(now_ms - gait_data_.event_ts_ms_[kIC]) / expected_stance);
-      if (percent > 100.0f) percent = 100.0f;
-      if (percent < 0.0f) percent = 0.0f;
-      if (gait_data_.percent_stance_ >= 0.0f && percent < gait_data_.percent_stance_)
-        percent = gait_data_.percent_stance_;
-      gait_data_.percent_stance_ = percent;
+      gait_data_.percent_stance_ = 100.0f * ((float)(now_ms - gait_data_.event_ts_ms_[kFS]) / expected_stance);
+      gait_data_.percent_stance_ = _constrain(gait_data_.percent_stance_, 0.0f, 100.0f);
     }
-  }
-  if (in_swing)
-    gait_data_.percent_stance_ = 0.0f; /* 摆动相中强制归零 */
-
-  /* percent_swing_: 摆动相 (TO -> next IC) = ISw + MSw + TSw */
-  if (gait_data_.event_ts_ms_[kTO] > 0)
-  {
-    float expected_swing = expected_step > 0.0f ? expected_step * 0.4f : -1.0f;
-
-    if (has_shank_imu &&
-        gait_data_.expected_duration_ms_[kTO] > 0.0f &&
-        gait_data_.expected_duration_ms_[kFA] > 0.0f &&
-        gait_data_.expected_duration_ms_[kTV] > 0.0f)
+    else
     {
-      expected_swing = gait_data_.expected_duration_ms_[kTO] + gait_data_.expected_duration_ms_[kFA] + gait_data_.expected_duration_ms_[kTV];
+      gait_data_.percent_stance_ = -1.0f;
     }
-    else if (gait_data_.expected_duration_ms_[kTO] > 0.0f)
-    {
-      expected_swing = gait_data_.expected_duration_ms_[kTO];
-    }
-
-    if (in_swing && expected_swing > 0.0f)
-    {
-      float percent = 100.0f * ((float)(now_ms - gait_data_.event_ts_ms_[kTO]) / expected_swing);
-      if (percent > 100.0f) percent = 100.0f;
-      if (percent < 0.0f) percent = 0.0f;
-      if (gait_data_.percent_swing_ >= 0.0f && percent < gait_data_.percent_swing_)
-        percent = gait_data_.percent_swing_;
-      gait_data_.percent_swing_ = percent;
-    }
-  }
-  if (in_stance)
     gait_data_.percent_swing_ = 0.0f;
-
-  /* percent_subphase_: 当前 RLA 子相内百分比 (起始事件 -> 下一事件) */
-  uint8_t start_ev = kIC;
-  switch (gait_data_.current_phase_)
-  {
-  case GaitPhase::kLoadingResponse:
-    start_ev = kIC;
-    break;
-  case GaitPhase::kMidStance:
-    start_ev = kOTO;
-    break;
-  case GaitPhase::kTerminalStance:
-    start_ev = kHR;
-    break;
-  case GaitPhase::kPreSwing:
-    start_ev = kOIC;
-    break;
-  case GaitPhase::kInitialSwing:
-    start_ev = kTO;
-    break;
-  case GaitPhase::kMidSwing:
-    start_ev = kFA;
-    break;
-  case GaitPhase::kTerminalSwing:
-    start_ev = kTV;
-    break;
   }
-  float expected_sub = gait_data_.expected_duration_ms_[start_ev];
-  if (expected_sub > 0.0f)
+  else if (gait_data_.current_phase_ == GaitPhase::kSwing)
   {
-    gait_data_.percent_subphase_ = 100.0f * ((float)(now_ms - gait_data_.event_ts_ms_[start_ev]) / expected_sub);
-    if (gait_data_.percent_subphase_ > 100.0f) gait_data_.percent_subphase_ = 100.0f;
-    if (gait_data_.percent_subphase_ < 0.0f) gait_data_.percent_subphase_ = 0.0f;
+    float expected_swing = gait_data_.expected_swing_duration_ms_;
+    if (expected_swing <= 0.0f && expected_gait > 0.0f)
+    {
+      expected_swing = expected_gait * 0.4f;
+    }
+
+    if (expected_swing > 0.0f && gait_data_.event_ts_ms_[kFO] > 0u)
+    {
+      gait_data_.percent_swing_ = 100.0f * ((float)(now_ms - gait_data_.event_ts_ms_[kFO]) / expected_swing);
+      gait_data_.percent_swing_ = _constrain(gait_data_.percent_swing_, 0.0f, 100.0f);
+    }
+    else
+    {
+      gait_data_.percent_swing_ = -1.0f;
+    }
+    gait_data_.percent_stance_ = 0.0f;
+  }
+  else
+  {
+    gait_data_.percent_stance_ = -1.0f;
+    gait_data_.percent_swing_ = -1.0f;
   }
 }
 
@@ -1212,121 +1119,102 @@ void FsrGaitEstimator::UpdateValidity()
 {
   gait_data_.is_phase_valid_ =
     gait_data_.is_enabled_ &&
-    gait_data_.is_calibrated_ &&
     gait_data_.is_data_fresh_ &&
-    gait_data_.event_ts_ms_[kIC] > 0 &&
-    gait_data_.expected_step_duration_ms_ > 0.0f &&
+    gait_data_.heel_.contact_inited &&
+    gait_data_.toe_.contact_inited &&
+    gait_data_.event_ts_ms_[kFS] > 0u &&
+    gait_data_.event_ts_ms_[kFO] > 0u &&
+    gait_data_.expected_gait_duration_ms_ > 0.0f &&
     gait_data_.percent_gait_ >= 0.0f &&
     gait_data_.percent_gait_ <= 100.0f;
 }
 
 void FsrGaitEstimator::UpdateEventTimings(uint32_t now_ms)
 {
-  bool has_opposite_fsr = IsOppositeFsrUsable();
-  bool has_shank_imu = IsShankImuUsable();
-
-  if (gait_data_.event_ic_)
+  if (gait_data_.event_fs_)
   {
-    if (gait_data_.event_ts_ms_[kIC] > 0)
+    if (gait_data_.event_ts_ms_[kFO] > 0u)
     {
-      uint32_t step_time = now_ms - gait_data_.event_ts_ms_[kIC];
-      const float alpha = 0.25f;
-      if (gait_data_.expected_step_duration_ms_ < 0.0f)
-        gait_data_.expected_step_duration_ms_ = (float)step_time;
-      else
-        gait_data_.expected_step_duration_ms_ += alpha * ((float)step_time - gait_data_.expected_step_duration_ms_);
+      UpdateExpectedDuration(now_ms - gait_data_.event_ts_ms_[kFO],
+                             gait_data_.swing_duration_window_ms_,
+                             gait_data_.expected_swing_duration_ms_);
     }
 
-    if (has_shank_imu && gait_data_.event_ts_ms_[kTV] > 0)
-      UpdateDurationFromStartEvent(kTV, now_ms);
-    else if (gait_data_.event_ts_ms_[kTO] > 0)
-      UpdateDurationFromStartEvent(kTO, now_ms);
-    RecordEventTimestamp(kIC, now_ms);
+    if (gait_data_.event_ts_ms_[kFS] > 0u)
+    {
+      const uint32_t step_time = now_ms - gait_data_.event_ts_ms_[kFS];
+      if (step_time >= kMinStepDurationMs && step_time <= kMaxStepDurationMs)
+      {
+        UpdateExpectedDuration(step_time,
+                               gait_data_.gait_duration_window_ms_,
+                               gait_data_.expected_gait_duration_ms_);
+      }
+    }
+
+    RecordEventTimestamp(kFS, now_ms);
   }
-  if (gait_data_.event_oto_)
+
+  if (gait_data_.event_fo_)
   {
-    if (gait_data_.event_ts_ms_[kIC] > 0) UpdateDurationFromStartEvent(kIC, now_ms);
-    RecordEventTimestamp(kOTO, now_ms);
+    if (gait_data_.event_ts_ms_[kFS] > 0u)
+    {
+      UpdateExpectedDuration(now_ms - gait_data_.event_ts_ms_[kFS],
+                             gait_data_.stance_duration_window_ms_,
+                             gait_data_.expected_stance_duration_ms_);
+    }
+    RecordEventTimestamp(kFO, now_ms);
   }
-  if (gait_data_.event_hr_)
-  {
-    if (has_opposite_fsr && gait_data_.event_ts_ms_[kOTO] > 0)
-      UpdateDurationFromStartEvent(kOTO, now_ms);
-    else if (gait_data_.event_ts_ms_[kIC] > 0)
-      UpdateDurationFromStartEvent(kIC, now_ms);
-    RecordEventTimestamp(kHR, now_ms);
-  }
-  if (gait_data_.event_oic_)
-  {
-    if (gait_data_.event_ts_ms_[kHR] > 0) UpdateDurationFromStartEvent(kHR, now_ms);
-    RecordEventTimestamp(kOIC, now_ms);
-  }
-  if (gait_data_.event_to_)
-  {
-    if (has_opposite_fsr && gait_data_.event_ts_ms_[kOIC] > 0)
-      UpdateDurationFromStartEvent(kOIC, now_ms);
-    else if (gait_data_.event_ts_ms_[kHR] > 0)
-      UpdateDurationFromStartEvent(kHR, now_ms);
-    RecordEventTimestamp(kTO, now_ms);
-  }
-  if (gait_data_.event_fa_)
-  {
-    if (gait_data_.event_ts_ms_[kTO] > 0) UpdateDurationFromStartEvent(kTO, now_ms);
-    RecordEventTimestamp(kFA, now_ms);
-  }
-  if (gait_data_.event_tv_)
-  {
-    if (gait_data_.event_ts_ms_[kFA] > 0) UpdateDurationFromStartEvent(kFA, now_ms);
-    RecordEventTimestamp(kTV, now_ms);
-  }
+
+  if (gait_data_.event_hs_) RecordEventTimestamp(kHS, now_ms);
+  if (gait_data_.event_ts_) RecordEventTimestamp(kTS, now_ms);
+  if (gait_data_.event_ho_) RecordEventTimestamp(kHO, now_ms);
+  if (gait_data_.event_to_) RecordEventTimestamp(kTO, now_ms);
 }
 
-void FsrGaitEstimator::UpdateDurationFromStartEvent(uint8_t start_ev_idx, uint32_t now_ms)
+void FsrGaitEstimator::UpdateExpectedDuration(uint32_t duration_ms,
+                                              uint32_t duration_window_ms[],
+                                              float &expected_duration_ms)
 {
-  uint32_t phase_time = now_ms - gait_data_.event_ts_ms_[start_ev_idx];
-  float expected = gait_data_.expected_duration_ms_[start_ev_idx];
-
   uint8_t num_uninitialized = 0;
   for (int i = 0; i < FsrGaitData::kNumStepsAvg; i++)
   {
-    num_uninitialized += (gait_data_.event_times_ms_[start_ev_idx][i] == 0);
+    num_uninitialized += (duration_window_ms[i] == 0u);
   }
 
-  uint32_t *max_val = std::max_element(gait_data_.event_times_ms_[start_ev_idx], gait_data_.event_times_ms_[start_ev_idx] + FsrGaitData::kNumStepsAvg);
-  uint32_t *min_val = std::min_element(gait_data_.event_times_ms_[start_ev_idx], gait_data_.event_times_ms_[start_ev_idx] + FsrGaitData::kNumStepsAvg);
+  uint32_t *max_val = std::max_element(duration_window_ms, duration_window_ms + FsrGaitData::kNumStepsAvg);
+  uint32_t *min_val = std::min_element(duration_window_ms, duration_window_ms + FsrGaitData::kNumStepsAvg);
 
   if (num_uninitialized > 0)
   {
     for (int i = (FsrGaitData::kNumStepsAvg - 1); i > 0; i--)
     {
-      gait_data_.event_times_ms_[start_ev_idx][i] = gait_data_.event_times_ms_[start_ev_idx][i - 1];
+      duration_window_ms[i] = duration_window_ms[i - 1];
     }
-    gait_data_.event_times_ms_[start_ev_idx][0] = phase_time;
+    duration_window_ms[0] = duration_ms;
     uint32_t sum_times = 0;
     uint8_t valid_count = 0;
     for (int i = 0; i < FsrGaitData::kNumStepsAvg; i++)
     {
-      if (gait_data_.event_times_ms_[start_ev_idx][i] > 0)
+      if (duration_window_ms[i] > 0u)
       {
-        sum_times += gait_data_.event_times_ms_[start_ev_idx][i];
+        sum_times += duration_window_ms[i];
         valid_count++;
       }
     }
-    if (valid_count > 0) expected = (float)sum_times / valid_count;
+    if (valid_count > 0u) expected_duration_ms = (float)sum_times / valid_count;
   }
-  else if ((phase_time <= (gait_data_.expected_duration_window_upper_coeff_ * *max_val)) &&
-           (phase_time >= (gait_data_.expected_duration_window_lower_coeff_ * *min_val)))
+  else if ((duration_ms <= (gait_data_.expected_duration_window_upper_coeff_ * *max_val)) &&
+           (duration_ms >= (gait_data_.expected_duration_window_lower_coeff_ * *min_val)))
   {
-    uint32_t sum_times = phase_time;
+    uint32_t sum_times = duration_ms;
     for (int i = (FsrGaitData::kNumStepsAvg - 1); i > 0; i--)
     {
-      sum_times += gait_data_.event_times_ms_[start_ev_idx][i - 1];
-      gait_data_.event_times_ms_[start_ev_idx][i] = gait_data_.event_times_ms_[start_ev_idx][i - 1];
+      sum_times += duration_window_ms[i - 1];
+      duration_window_ms[i] = duration_window_ms[i - 1];
     }
-    gait_data_.event_times_ms_[start_ev_idx][0] = phase_time;
-    expected = (float)sum_times / FsrGaitData::kNumStepsAvg;
+    duration_window_ms[0] = duration_ms;
+    expected_duration_ms = (float)sum_times / FsrGaitData::kNumStepsAvg;
   }
-  gait_data_.expected_duration_ms_[start_ev_idx] = expected;
 }
 
 void FsrGaitEstimator::RecordEventTimestamp(uint8_t ev_idx, uint32_t now_ms)
@@ -1346,21 +1234,24 @@ void FsrGaitEstimator::Reset()
     gait_data_.event_ts_ms_[ev] = 0;
     gait_data_.prev_event_ts_ms_[ev] = 0;
     gait_data_.event_count_[ev] = 0;
-    for (int i = 0; i < FsrGaitData::kNumStepsAvg; i++)
-      gait_data_.event_times_ms_[ev][i] = 0;
   }
-  arm_fill_f32(-1.0f, gait_data_.expected_duration_ms_, kNumGaitEvents); /* CMSIS-DSP 向量填充 */
-  gait_data_.expected_step_duration_ms_ = -1.0f;
+  for (int i = 0; i < FsrGaitData::kNumStepsAvg; i++)
+  {
+    gait_data_.gait_duration_window_ms_[i] = 0;
+    gait_data_.stance_duration_window_ms_[i] = 0;
+    gait_data_.swing_duration_window_ms_[i] = 0;
+  }
+  gait_data_.expected_gait_duration_ms_ = -1.0f;
+  gait_data_.expected_stance_duration_ms_ = -1.0f;
+  gait_data_.expected_swing_duration_ms_ = -1.0f;
 
-  gait_data_.current_phase_ = GaitPhase::kLoadingResponse;
-  gait_data_.prev_phase_ = GaitPhase::kLoadingResponse;
+  gait_data_.current_phase_ = GaitPhase::kUnknown;
+  gait_data_.prev_phase_ = GaitPhase::kUnknown;
   gait_data_.phase_changed_ = false;
   gait_data_.is_phase_valid_ = false;
   gait_data_.percent_gait_ = -1.0f;
   gait_data_.percent_stance_ = -1.0f;
   gait_data_.percent_swing_ = -1.0f;
-  gait_data_.percent_subphase_ = -1.0f;
-  gait_data_.shank_gyro_prev_radps_ = 0.0f;
   gait_data_.heel_contact_state_ = false;
   gait_data_.toe_contact_state_ = false;
   gait_data_.foot_contact_state_ = false;
@@ -1372,11 +1263,16 @@ void FsrGaitEstimator::Reset()
 
 void FsrGaitEstimator::ResetCalibration()
 {
-  gait_data_.is_calibrated_ = false;
-  gait_data_.do_calibration_heel_fsr_ = true;
-  gait_data_.do_calibration_toe_fsr_ = true;
-  gait_data_.do_calibration_refinement_heel_fsr_ = true;
-  gait_data_.do_calibration_refinement_toe_fsr_ = true;
+  // gait_data_.is_calibrated_ = false;
+  // gait_data_.do_calibration_heel_fsr_ = true;
+  // gait_data_.do_calibration_toe_fsr_ = true;
+  // gait_data_.do_calibration_refinement_heel_fsr_ = true;
+  // gait_data_.do_calibration_refinement_toe_fsr_ = true;
+  gait_data_.is_calibrated_ = true;
+  gait_data_.do_calibration_heel_fsr_ = false;
+  gait_data_.do_calibration_toe_fsr_ = false;
+  gait_data_.do_calibration_refinement_heel_fsr_ = false;
+  gait_data_.do_calibration_refinement_toe_fsr_ = false; 
 
   ResetSensorCalibration(gait_data_.heel_);
   ResetSensorCalibration(gait_data_.toe_);
@@ -1525,8 +1421,21 @@ void FsrGaitEstimator::UpdateContactAdaptive(FsrSensorData &sensor, bool prev_fo
 {
   if (!sensor.contact_inited)
   {
-    sensor.contact_baseline = sensor.raw_reading;
-    sensor.contact_peak_ref = sensor.raw_reading + sensor.contact_min_range;
+    if (sensor.calibration_refinement_max > sensor.calibration_refinement_min + sensor.contact_min_range)
+    {
+      sensor.contact_baseline = sensor.calibration_refinement_min;
+      sensor.contact_peak_ref = sensor.calibration_refinement_max;
+    }
+    else if (sensor.calibration_max > sensor.calibration_min + sensor.contact_min_range)
+    {
+      sensor.contact_baseline = sensor.calibration_min;
+      sensor.contact_peak_ref = sensor.calibration_max;
+    }
+    else
+    {
+      sensor.contact_baseline = sensor.raw_reading;
+      sensor.contact_peak_ref = sensor.raw_reading + sensor.contact_min_range;
+    }
     sensor.contact_peak_step = sensor.raw_reading;
     sensor.contact_norm = 0.0f;
     sensor.contact_on_count = 0;
@@ -1534,13 +1443,14 @@ void FsrGaitEstimator::UpdateContactAdaptive(FsrSensorData &sensor, bool prev_fo
     sensor.contact_inited = true;
   }
 
-  if (sensor.raw_reading < sensor.contact_baseline)
+  if (prev_foot_swing)
   {
-    sensor.contact_baseline = sensor.raw_reading;
-  }
-  else if (prev_foot_swing)
-  {
-    sensor.contact_baseline += sensor.contact_baseline_alpha * (sensor.raw_reading - sensor.contact_baseline);
+    float alpha = sensor.contact_baseline_alpha;
+    if (sensor.raw_reading < sensor.contact_baseline)
+    {
+      alpha *= 10.0f;
+    }
+    sensor.contact_baseline += alpha * (sensor.raw_reading - sensor.contact_baseline);
   }
 
   float range = sensor.contact_peak_ref - sensor.contact_baseline;
@@ -2060,7 +1970,7 @@ bool AdaptiveOscillator::IsAoImuUsable(const ImuData &imu)
 
 bool AdaptiveOscillator::IsAoFsrUsable(const FsrGaitData &fsr)
 {
-  return fsr.is_enabled_ && fsr.is_calibrated_ && fsr.is_data_fresh_;
+  return fsr.IsContactReady();
 }
 
 float AdaptiveOscillator::ClampValue(float value, float lower, float upper)
@@ -2182,8 +2092,8 @@ void AdaptiveOscillator::Update()
     right_contact_prev_ = right_contact;
   }
 
-  bool is_left_event = (left_fsr_ok && left_fsr.event_ic_) || left_contact_edge;
-  bool is_right_event = (right_fsr_ok && right_fsr.event_ic_) || right_contact_edge;
+  bool is_left_event = (left_fsr_ok && left_fsr.event_fs_) || left_contact_edge;
+  bool is_right_event = (right_fsr_ok && right_fsr.event_fs_) || right_contact_edge;
 
   const float left_roll_vel_radps = left_thigh.gyro_radps_[0];
   const float right_roll_vel_radps = right_thigh.gyro_radps_[0];
@@ -2872,7 +2782,7 @@ __attribute__((noinline)) void IntentionRecognizer::UpdateSlopeEstimate(uint32_t
     }
     else if (last_slope_sample_ms_ > 0u)
     {
-      float step_ms = pe_.left_side_.fsr_gait_data_.expected_step_duration_ms_;
+      float step_ms = pe_.left_side_.fsr_gait_data_.expected_gait_duration_ms_;
       if (step_ms <= 0.0f) step_ms = 1000.0f;
       float tau_ms = step_ms * 0.8f;
       if (tau_ms > 1.0f)
@@ -3208,7 +3118,7 @@ void IntentionRecognizer::UpdateGaitSvmRouter()
                          StreamingFeatureExtractor &extractor,
                          bool &svm_done_this_step)
   {
-    if (fsr.event_to_)
+    if (fsr.event_fo_)
     {
       extractor.Reset();
       svm_done_this_step = false;
@@ -3264,7 +3174,7 @@ void IntentionRecognizer::Update()
   if (enable_svm_router_)
   {
     UpdateGaitSvmRouter(); /* 填充投票窗 */
-    if ((pe_.left_side_.fsr_gait_data_.event_ic_ || pe_.right_side_.fsr_gait_data_.event_ic_) &&
+    if ((pe_.left_side_.fsr_gait_data_.event_fs_ || pe_.right_side_.fsr_gait_data_.event_fs_) &&
         vote_count_ >= kVoteBufferSize)
     {
       SvmPrediction next = GetMajorityVote();
@@ -3758,21 +3668,21 @@ void Exo::Estimate()
   left_side_.knee_joint_.ComputePlanarLegGeometry();
   right_side_.knee_joint_.ComputePlanarLegGeometry();
 
-  const bool left_ic = pe_.left_side_.fsr_gait_data_.event_ic_;
-  const bool right_ic = pe_.right_side_.fsr_gait_data_.event_ic_;
+  const bool left_fs = pe_.left_side_.fsr_gait_data_.event_fs_;
+  const bool right_fs = pe_.right_side_.fsr_gait_data_.event_fs_;
 
   /* 每周期连续计算 (调试用, 写入 _cont_ 字段) */
   KneeJoint::ComputeDeltaAjcY(left_side_.knee_joint_.leg_geometry_, right_side_.knee_joint_.leg_geometry_);
   KneeJoint::ComputeDeltaAjcDist(left_side_.knee_joint_.leg_geometry_, right_side_.knee_joint_.leg_geometry_);
 
-  /* IC 事件时锁存到原变量 */
-  if (left_ic && !right_ic)
+  /* FS 事件时锁存到原变量 */
+  if (left_fs && !right_fs)
   {
     KneeJoint::bi_leg_geometry_.delta_ajc_y_locked_cm_    = KneeJoint::bi_leg_geometry_.delta_ajc_y_cm;
     KneeJoint::bi_leg_geometry_.delta_ajc_dist_locked_cm_  = KneeJoint::bi_leg_geometry_.delta_ajc_dist_cm;
     KneeJoint::bi_leg_geometry_.is_leading_left = true;
   }
-  else if (!left_ic && right_ic)
+  else if (!left_fs && right_fs)
   {
     KneeJoint::bi_leg_geometry_.delta_ajc_y_locked_cm_    = KneeJoint::bi_leg_geometry_.delta_ajc_y_cm;
     KneeJoint::bi_leg_geometry_.delta_ajc_dist_locked_cm_  = KneeJoint::bi_leg_geometry_.delta_ajc_dist_cm;
@@ -3855,13 +3765,12 @@ extern float semg_pa2_envelope;
 uint8_t BuildFsrEventMask(const FsrGaitData &fsr)
 {
   uint8_t mask = 0;
-  if (fsr.event_ic_) mask |= 1u << kIC;
-  if (fsr.event_oto_) mask |= 1u << kOTO;
-  if (fsr.event_hr_) mask |= 1u << kHR;
-  if (fsr.event_oic_) mask |= 1u << kOIC;
+  if (fsr.event_fs_) mask |= 1u << kFS;
+  if (fsr.event_hs_) mask |= 1u << kHS;
+  if (fsr.event_ts_) mask |= 1u << kTS;
+  if (fsr.event_fo_) mask |= 1u << kFO;
+  if (fsr.event_ho_) mask |= 1u << kHO;
   if (fsr.event_to_) mask |= 1u << kTO;
-  if (fsr.event_fa_) mask |= 1u << kFA;
-  if (fsr.event_tv_) mask |= 1u << kTV;
   return mask;
 }
 
@@ -3919,6 +3828,29 @@ void Exo::VofaSendTelemetry()
   buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.toe_.calibrated_reading;
   buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.percent_gait_;
   buf.f_data[idx++] = static_cast<float>(pe_.right_side_.fsr_gait_data_.current_phase_);
+
+  FsrGaitData &left_fsr = pe_.left_side_.fsr_gait_data_;
+  FsrGaitData &right_fsr = pe_.right_side_.fsr_gait_data_;
+
+  buf.f_data[idx++] = left_fsr.heel_.contact_norm;//32
+  buf.f_data[idx++] = left_fsr.toe_.contact_norm;
+  buf.f_data[idx++] = left_fsr.foot_contact_state_ ? 1.0f : 0.0f;
+  buf.f_data[idx++] = left_fsr.percent_stance_;
+  buf.f_data[idx++] = left_fsr.percent_swing_;
+  buf.f_data[idx++] = left_fsr.is_phase_valid_ ? 1.0f : 0.0f;
+
+  buf.f_data[idx++] = right_fsr.heel_.contact_norm;
+  buf.f_data[idx++] = right_fsr.toe_.contact_norm;
+  buf.f_data[idx++] = right_fsr.heel_.contact_baseline;
+  buf.f_data[idx++] = right_fsr.toe_.contact_baseline;
+  buf.f_data[idx++] = right_fsr.heel_.contact_peak_ref;
+  buf.f_data[idx++] = right_fsr.toe_.contact_peak_ref;
+  buf.f_data[idx++] = right_fsr.heel_contact_state_ ? 1.0f : 0.0f;
+  buf.f_data[idx++] = right_fsr.toe_contact_state_ ? 1.0f : 0.0f;
+  buf.f_data[idx++] = right_fsr.foot_contact_state_ ? 1.0f : 0.0f;
+  buf.f_data[idx++] = right_fsr.percent_stance_;
+  buf.f_data[idx++] = right_fsr.percent_swing_;
+  buf.f_data[idx++] = right_fsr.is_phase_valid_ ? 1.0f : 0.0f;
 
   VofaCdcSendJustFloat(buf, idx);
 
