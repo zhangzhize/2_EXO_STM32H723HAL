@@ -15,6 +15,7 @@
 
 # Test files
 /test
+/doc
 
 # Python
 /__pycache__
