@@ -32,8 +32,10 @@ extern "C" {
 
 typedef struct __attribute__((packed)) foot_sensor_packet_v2_t
 {
-  float force_heel_N;
-  float force_toe_N;
+  // float force_heel_N;
+  // float force_toe_N;
+  float heel_raw_reading;
+  float toe_raw_reading;
   float cop_x_mm;
   float cop_y_mm;
   float quatI;
@@ -310,6 +312,7 @@ public:
   float sagittal_pos_offset_rad_ = 0.0f; /*!< 人体关节矢状面角度偏移/中立位偏置 */
   bool is_sagittal_pos_offset_valid_ = false; /*!< true: sagittal_pos_offset_rad_ 已捕获 */
 
+  float motor_to_joint_sign_ = 1.0f; /*!< 电机反馈到膝关节坐标的方向符号: +1 电机正向=膝屈曲, -1 电机正向=膝伸展 */
   float link_pos_ctrlref_rad_ = 0.0f; /*!< 连杆关节角度参考 */
   float link_pos_rad_ = 0.0f; /*!< 连杆关节角度反馈 */
   float link_vel_ctrlref_radps_ = 0.0f; /*!< 连杆关节角速度参考 */
@@ -392,7 +395,8 @@ public:
 
 struct FsrSensorData
 {
-  float raw_reading = 0.0f; /*!< 原始读数, 由 NRF54 采集后经 SPI/UART 传输 */
+  float raw_reading = 0.0f; /*!< 原始读数 */
+  float force_N = 0.0f;
   bool ground_contact = false; /*!< 当前着地状态 (施密特触发器输出) */
   float contact_norm = 0.0f; /*!< 归一化读数 [0, 1], = (raw - baseline) / range */
 
@@ -957,10 +961,12 @@ public:
   virtual ~KneeJoint() = default;
   void Calibrate();
   void Read();
+  void PrepareMotorConnectionCheck();
   bool IsMotorConnect();
   void Shutdown();
   void Standby();
   void Assist();
+  void ApplyDivekarFeedforward(float torque_scale);
 
   ExoData &pe_;
   SideData &ps_;
@@ -974,10 +980,13 @@ public:
 
   struct DivekarParams
   {
+    /* false: thigh IMU + shank IMU; true: thigh IMU + knee link feedback */
+    bool use_thigh_imu_and_link_feedback = false;
+
     /* Stance: ascent spring */
     float k_a = 50.0f; /*!<ascent spring stiffness, Nm/rad */
     float m_theta_la = -50.0f; /*!< leg angle sigmoid slope */
-    float d_theta_la = 0.2f; /*!<leg angle sigmoid offset, rad */
+    float d_theta_la = 0.2f; /*!< leg angle sigmoid offset, rad */
 
     /* Stance: non-ascent spring-damper */
     float k_na = 40.0f; /*!< non-ascent spring stiffness, Nm/rad */
@@ -1009,14 +1018,15 @@ public:
     /* ZZZ: STS */
     float k_sts = 20.0f; /*!< Nm/rad */
     float c_sts = 6.0f; /*!< Nm*s/rad */
-    float m_sts_foot_loaded = 20.0f;
-    float d_sts_foot_loaded = 0.25f; /*!< BW */
-    float m_sts_total_foot_loading = 4.0f; /*!< BW/s */
-    float d_sts_total_foot_loading = 0.5f; /*!< BW/s */
+    float m_sts_foot_loaded = 50.0f;
+    float d_sts_foot_loaded = 0.48f; /*!< BW */
+    float m_sts_knee_raise_vel = -30.0f;
+    float d_sts_knee_raise_vel = -0.15f; /*!< rad/s, knee extension is negative */
     float m_sts_knee_lower_vel = 20.0f;
-    float d_sts_knee_lower_vel = 0.3f;
-    float m_sts_knee_pos_sym = -80.0f;
-    float d_sts_knee_pos_sym = 0.2f;  /*!< rad */
+    float d_sts_knee_lower_vel = 0.15f; /*!< rad/s, knee flexion is positive */
+    float m_sts_knee_pos_sym = -20.0f;
+    float d_sts_knee_pos_sym = 0.30f; /*!< rad */
+    float kStsVelocityLpfAlpha = 0.04901f; /*!< first-order LPF alpha, 8 Hz at 1 kHz */
 
     /* Swing: gravity / inertia / spring-damper */
     float g_sw = 8.0f; /*!< Nm */
@@ -1044,15 +1054,13 @@ public:
     float extension_slew_rate_Nmps = 200.0f;
 
     /* Optional internal acceleration estimator */
-    float grf_dot_lpf_alpha = 0.006f;     /*!< EMA alpha for GRF derivative LPF */
-    float sum_grf_bw_dot_lpf_alpha = 0.006f;
-    float torque_lpf_alpha = 0.147f;    /*!< EMA alpha for torque LPF, 200Hz fc≈5Hz */
-    float theta_k_ddot_lpf_alpha = 0.02f;
+    float torque_lpf_alpha = 0.03093f; /*!< EMA alpha for torque LPF at 1 kHz, fc approximately 5 Hz */
+    float theta_k_ddot_lpf_alpha = 0.01867f; /*!< EMA alpha for knee acceleration LPF at 1 kHz, fc approximately 3 Hz */
   };
 
   struct BiLegContex
   {
-    float dt_s = 0.001f; /*!< 当前帧时间步长 (s) */
+    float dt_s = 0.001f;
     float delta_ajc_y_l_minus_r_cm = 0.0f;
     float delta_ajc_dist_cm = 0.0f;
     float delta_ajc_dist_fs_cm = 0.0f;
@@ -1071,15 +1079,15 @@ public:
     float gate_sts_knee_pos_sym = 0.0f;
 
     /* ZZZ: STS */
-    float f_sum_grf_BW = 0.0f;
-    float f_sum_grf_BW_prev = 0.0f;
-    float f_sum_grf_BW_dot_lpf = 0.0f;
-    float gate_sts_total_foot_loading = 0.0f;
     float gate_sts_left_foot_loaded = 0.0f;
     float gate_sts_right_foot_loaded = 0.0f;
     float gate_sts_both_foot_loaded = 0.0f;
-    bool f_sum_grf_BW_history_valid = false;
-
+    float gate_sts_left_knee_raise_vel = 0.0f;
+    float gate_sts_right_knee_raise_vel = 0.0f;
+    float gate_sts_bilateral_knee_raise_vel = 0.0f;
+    float gate_sts_left_knee_lower_vel = 0.0f;
+    float gate_sts_right_knee_lower_vel = 0.0f;
+    float gate_sts_bilateral_knee_lower_vel = 0.0f;
     bool is_leading_left = false;
     uint64_t update_prev_us = 0u;
   };
@@ -1092,6 +1100,7 @@ public:
     /* Knee kinematics */
     float theta_k_rad = 0.0f; /*!< knee flexion positive */
     float theta_k_dot_radps = 0.0f;
+    float theta_k_dot_sts_lpf_radps = 0.0f; /*!< filtered velocity for STS gates and damping */
     float theta_kd_rad = 0.0f; /*!< θ_k - θ_k_hs, 预处理 */
 
     /* Segment and leg angles */
@@ -1132,8 +1141,6 @@ public:
     float theta_kd_max_rad = 0.0f;
     float theta_k_dot_prev_radps = 0.0f;
     float theta_k_ddot_lpf_radps2 = 0.0f;
-    float f_grf_ipsi_BW_prev = 0.0f;
-    float f_grf_ipsi_BW_dot_lpf = 0.0f;
     float tau_prev_Nm = 0.0f;
     float tau_divekar_lpf_prev_Nm = 0.0f;
     bool theta_k_dot_history_valid = false;
@@ -1197,34 +1204,15 @@ private:
     return 1.0f / (1.0f + expf(z));
   }
 
-  /* Tight clip: ±15, 误差 < 3e-7, 大部分门函数都在 clip 外, 减少 expf 调用 */
-  static float SigmoidTight(float x, float m, float d)
+  static float SigmoidFromZero(float x, float m, float d)
   {
-    const float z = -m * (x - d);
-    if (z > 15.0f) return 0.0f;
-    if (z < -15.0f) return 1.0f;
-    return 1.0f / (1.0f + expf(z));
+    const float value_at_zero = Sigmoid(0.0f, m, d);
+    const float normalized = (Sigmoid(x, m, d) - value_at_zero) / (1.0f - value_at_zero);
+    return _constrain(normalized, 0.0f, 1.0f);
   }
 
-  /* Fast polynomial exp: tight clip + 5次自乘近似 exp (约 8 cycles vs 30 for expf) */
-  static float SigmoidFast(float x, float m, float d)
-  {
-    const float z = -m * (x - d);
-    if (z > 12.0f) return 0.0f; /* e^12 ≈ 1.6e5, 1/(1+e^12) ≈ 6e-6 */
-    if (z < -12.0f) return 1.0f;
-    /* fast_exp: (1 + z/32)^32 ≈ e^z, 误差 < 2% in [-8, 8] */
-    float ez = 1.0f + z * 0.03125f; /* z/32 */
-    ez *= ez;
-    ez *= ez;
-    ez *= ez;
-    ez *= ez;
-    ez *= ez; /* ^32 */
-    return 1.0f / (1.0f + ez);
-  }
-
-  float GetThetaKddotLpf(const DivekarState &in, float dt_s);
-  float GetGrfDotLpf(float f_sum_grf_bw, float dt_s);
-  static float GetSumGrfBwDotLpf(float f_sum_grf_BW, float dt_s);
+  void UpdateDivekarFeedbackKinematics();
+  float GetThetaKddotLpf(float theta_k_dot_radps, float dt_s);
   float GetTorqueLpf(float tau_unfiltered_Nm);
   float ApplySafetyLimits(float tau_unfiltered_Nm, float dt_s);
 };
