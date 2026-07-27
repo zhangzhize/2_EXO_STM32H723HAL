@@ -15,20 +15,21 @@
 #include <cstdint>
 #include <math.h>
 #include "utils.h"
-extern "C" {
+extern "C"
+{
 #include "arm_math.h"
 }
 #include "status_led.hpp"
 #include "robstride.hpp"
-#include "dm_motor.hpp"
 #include "dji_esc.hpp"
-#include "mag_encoder.hpp"
 #include "force_profile_generator.hpp"
 #include "pid.hpp"
 #include "disturbance_observer.hpp"
 #include "shell.hpp"
 #include "chirp_generator.hpp"
 #include "mahony.hpp"
+#include "hip_joint.hpp"
+#include "knee_sea_joint.hpp"
 
 typedef struct __attribute__((packed)) foot_sensor_packet_v2_t
 {
@@ -98,8 +99,6 @@ class ExoData;
 
 class AnkleJoint;
 class KneeJoint;
-class KneeSeaJoint;
-class HipJoint;
 class FsrGaitEstimator;
 class StairPhaseEstimator;
 class StsPhaseEstimator;
@@ -113,6 +112,19 @@ class StreamingFeatureExtractor;
 class IntentionRecognizer;
 class Exo;
 
+/**
+ * @brief IMU 数据类
+ * @note 1. sagittal_raw_rad_ 表示肢段相对大地的矢状面角度,
+ *          由所选欧拉角或四元数重力投影计算.
+ *       2. sagittal_pos_rad_ 表示相对站立参考姿态的矢状面角度;
+ *          仅当 is_stand_posture_valid_ 为 true 时, 0 表示与站立参考一致.
+ *          未捕获站立参考时, sagittal_pos_rad_ 保持为 0;
+ *          未参考角度应显式读取 sagittal_raw_rad_.
+ *       3. sagittal_gyro_radps_ 及其低通值表示对应矢状轴角速度,
+ *          不减去站立参考.
+ *       4. 期望正方向为: 躯干前倾, 大腿前摆, 小腿前摆, 足尖向上;
+ *          实际方向由安装方式, sagittal_source_ 和 sagittal_direction_sign_ 共同决定.
+ */
 class ImuData
 {
 public:
@@ -124,15 +136,18 @@ public:
     kGravityYz,
   };
 
-  explicit ImuData(bool is_left = true, bool is_sagittal_inverted = false, SagittalSource sagittal_source = SagittalSource::kEulerPitch) :
+  explicit ImuData(bool is_left = true,
+                   float sagittal_direction_sign = 1.0f,
+                   SagittalSource sagittal_source = SagittalSource::kEulerPitch,
+                   float sample_rate_hz = 200.0f) :
     is_left_(is_left),
-    is_sagittal_inverted_(is_sagittal_inverted),
-    sagittal_source_(sagittal_source)
+    sagittal_direction_sign_(sagittal_direction_sign >= 0.0f ? 1.0f : -1.0f),
+    sagittal_source_(sagittal_source),
+    sagittal_gyro_lpf_alpha_(ComputeLpfAlpha(sample_rate_hz))
   {
   }
   virtual ~ImuData() = default;
 
-  /* 解算的姿态*/
   float q_[4] = {1.0f, 0.0f, 0.0f, 0.0f}; /*!< 四元数, 顺序: real, i, j, k */
   float roll_rad_ = 0.0f;
   float pitch_rad_ = 0.0f;
@@ -143,38 +158,56 @@ public:
   float sagittal_stand_ref_rad_ = 0.0f;
   float sagittal_gyro_radps_ = 0.0f;
   float sagittal_gyro_lpf_radps_ = 0.0f;
-  static constexpr float kGyroLpfAlpha = 0.27f; /*!< EMA alpha, 200Hz → fc ≈ 10Hz */
+  bool is_stand_posture_valid_ = false;
 
   float roll_stand_rad_ = 0.0f;
   float pitch_stand_rad_ = 0.0f;
   float yaw_stand_rad_ = 0.0f;
-  bool is_stand_posture_valid_ = false;
 
-  /* 原始数据 */
-  float accel_mps2_[3] = {0.0f, 0.0f, 0.0f};
-  float gyro_radps_[3] = {0.0f, 0.0f, 0.0f}; /*!< 陀螺仪 (rad/s), 顺序: roll pitch yaw */
+  /* 传感器原始数据 */
+  float accel_mps2_[3] = {0.0f, 0.0f, 0.0f}; /*!< 传感器坐标顺序: x, y, z */
+  float gyro_radps_[3] = {0.0f, 0.0f, 0.0f}; /*!< 传感器坐标顺序: x, y, z */
   float magnet_uT_[3] = {0.0f, 0.0f, 0.0f};
   float chip_temp_c_ = 0.0f; /*!< 芯片温度 (°C) */
+  uint32_t last_update_ms_ = 0u; /*!< 数据更新时间 */
 
   /* Flags */
   bool is_left_;
   bool is_enabled_ = false;
-  bool is_sagittal_inverted_ = false;
+  bool is_data_fresh_ = false;
   bool is_quat_updated_ = false;
+  float sagittal_direction_sign_ = 1.0f;
   SagittalSource sagittal_source_;
-
-  static constexpr uint32_t kDataTimeoutMs = 200u;
 
   bool IsUsable() const
   {
-    return is_enabled_;
+    return is_enabled_ && is_data_fresh_;
+  }
+
+  bool IsFresh(uint32_t now_ms) const
+  {
+    return last_update_ms_ > 0u && (now_ms - last_update_ms_) <= kDataTimeoutMs;
+  }
+
+  void MarkKinematicsUpdated(uint32_t now_ms)
+  {
+    last_update_ms_ = now_ms;
+    is_data_fresh_ = true;
+  }
+
+  void UpdateFreshness(uint32_t now_ms)
+  {
+    is_data_fresh_ = IsFresh(now_ms);
+    if (!is_data_fresh_)
+    {
+      is_sagittal_gyro_lpf_inited_ = false;
+    }
   }
 
   void CaptureStandPosture()
   {
     if (!IsUsable() || is_stand_posture_valid_) return;
 
-    UpdateSagittalKinematics();
     roll_stand_rad_ = roll_rad_;
     pitch_stand_rad_ = pitch_rad_;
     yaw_stand_rad_ = yaw_rad_;
@@ -189,7 +222,7 @@ public:
     pitch_stand_rad_ = 0.0f;
     yaw_stand_rad_ = 0.0f;
     sagittal_stand_ref_rad_ = 0.0f;
-    sagittal_pos_rad_ = sagittal_raw_rad_;
+    sagittal_pos_rad_ = 0.0f;
     is_stand_posture_valid_ = false;
   }
 
@@ -203,27 +236,42 @@ public:
     return sagittal_gyro_lpf_radps_;
   }
 
-  float SagittalFromStandRefRad() const
+  float SagittalGyroRawRadps() const
   {
-    return sagittal_pos_rad_;
+    return sagittal_gyro_radps_;
   }
 
-  float SagittalFromStandRefDeg() const
-  {
-    return SagittalFromStandRefRad() * RAD_TO_DEG;
-  }
+  float SagittalFromStandRefRad() const {return sagittal_pos_rad_;}
+  float SagittalFromStandRefDeg() const {return SagittalFromStandRefRad() * RAD_TO_DEG;}
 
-  void UpdateEulerFromQuaternion()
+  bool UpdateEulerFromQuaternion()
   {
+    const float norm_sq =
+      q_[0] * q_[0] +
+      q_[1] * q_[1] +
+      q_[2] * q_[2] +
+      q_[3] * q_[3];
+    if (!isfinite(norm_sq) || norm_sq < 1.0e-6f)
+    {
+      return false;
+    }
+
+    const float inv_norm = 1.0f / sqrtf(norm_sq);
+    q_[0] *= inv_norm;
+    q_[1] *= inv_norm;
+    q_[2] *= inv_norm;
+    q_[3] *= inv_norm;
     Quaternion2EulerRad(q_, &roll_rad_, &pitch_rad_, &yaw_rad_);
+    return true;
   }
 
-  void ApplyPendingQuaternion()
+  void ApplyPendingQuaternion(uint32_t now_ms)
   {
     if (!is_quat_updated_) return;
     is_quat_updated_ = false;
-    UpdateEulerFromQuaternion();
+    if (!UpdateEulerFromQuaternion()) return;
     UpdateSagittalKinematics();
+    MarkKinematicsUpdated(now_ms);
   }
 
   void UpdateSagittalKinematics()
@@ -270,31 +318,42 @@ public:
       break;
     }
 
-    sagittal_pos_rad_ = is_stand_posture_valid_ ? WrapPi(sagittal_raw_rad_ - sagittal_stand_ref_rad_) : sagittal_raw_rad_;
-    if (is_sagittal_inverted_)
-    {
-      sagittal_raw_rad_ = -sagittal_raw_rad_;
-      sagittal_gyro_radps_ = -sagittal_gyro_radps_;
-      sagittal_pos_rad_ = -sagittal_pos_rad_;
-    }
+    sagittal_raw_rad_ = WrapPi(sagittal_direction_sign_ * sagittal_raw_rad_);
+    sagittal_gyro_radps_ *= sagittal_direction_sign_;
+    sagittal_pos_rad_ = is_stand_posture_valid_ ?
+                          WrapPi(sagittal_raw_rad_ - sagittal_stand_ref_rad_) :
+                          0.0f;
 
-    sagittal_gyro_lpf_radps_ += kGyroLpfAlpha * (sagittal_gyro_radps_ - sagittal_gyro_lpf_radps_);
+    if (!is_sagittal_gyro_lpf_inited_)
+    {
+      sagittal_gyro_lpf_radps_ = sagittal_gyro_radps_;
+      is_sagittal_gyro_lpf_inited_ = true;
+    }
+    else
+    {
+      sagittal_gyro_lpf_radps_ += sagittal_gyro_lpf_alpha_ *
+                                   (sagittal_gyro_radps_ - sagittal_gyro_lpf_radps_);
+    }
   }
 
 private:
-  static float WrapPi(float angle_rad)
+  static float ComputeLpfAlpha(float sample_rate_hz)
   {
-    while (angle_rad > _PI)
-      angle_rad -= _2PI;
-    while (angle_rad < -_PI)
-      angle_rad += _2PI;
-    return angle_rad;
+    return sample_rate_hz > 0.0f ?
+             1.0f - expf(-_2PI * 10.0f / sample_rate_hz) :
+             1.0f;
   }
+
+  float sagittal_gyro_lpf_alpha_ = 1.0f;
+  bool is_sagittal_gyro_lpf_inited_ = false;
+  static constexpr uint32_t kDataTimeoutMs = 200u;
 };
 
 /**
- * @brief 关节数据基类 —— 存储人体关节的运动学/动力学参考值与反馈值
- * @note
+ * @brief 关节数据类
+ * @note  1. 膝关节角度: 0° 表示膝伸直, 正值表示膝弯屈, 负值表示膝过伸
+ *        2. 膝关节角速度: 正值表示膝弯屈, 负值表示膝伸展
+ *        3. 膝关节力矩: 正值表示膝弯屈, 负值表示膝伸展
  */
 class JointData
 {
@@ -309,6 +368,7 @@ public:
   float sagittal_pos_rad_ = 0.0f; /*!< 人体关节矢状面角度反馈 */
   float sagittal_vel_ctrlref_radps_ = 0.0f; /*!< 人体关节矢状面角速度参考(控制输入) */
   float sagittal_vel_radps_ = 0.0f; /*!< 人体关节矢状面角速度反馈 */
+  float sagittal_vel_lpf_radps_ = 0.0f; /*!< 人体关节矢状面角速度10 Hz低通反馈 */
   float sagittal_pos_offset_rad_ = 0.0f; /*!< 人体关节矢状面角度偏移/中立位偏置 */
   bool is_sagittal_pos_offset_valid_ = false; /*!< true: sagittal_pos_offset_rad_ 已捕获 */
 
@@ -317,6 +377,7 @@ public:
   float link_pos_rad_ = 0.0f; /*!< 连杆关节角度反馈 */
   float link_vel_ctrlref_radps_ = 0.0f; /*!< 连杆关节角速度参考 */
   float link_vel_radps_ = 0.0f; /*!< 连杆关节角速度反馈 */
+  float link_vel_lpf_radps_ = 0.0f; /*!< 连杆关节角速度10 Hz低通反馈 */
   float link_pos_offset_rad_ = 0.0f; /*!< 连杆关节角度偏移, 用于标定 */
   bool is_link_pos_offset_valid_ = false; /*!< true: link_pos_offset_rad_ 已捕获 */
 
@@ -330,18 +391,60 @@ public:
   bool is_left_;
   bool is_actuator_enabled_ = false;
 
+  void UpdateSagittalVelocity(float velocity_radps, uint32_t sample_ms)
+  {
+    sagittal_vel_radps_ = velocity_radps;
+    if (!sagittal_vel_lpf_inited_)
+    {
+      sagittal_vel_lpf_radps_ = velocity_radps;
+      sagittal_vel_lpf_sample_ms_ = sample_ms;
+      sagittal_vel_lpf_inited_ = true;
+    }
+    else if (sample_ms != sagittal_vel_lpf_sample_ms_)
+    {
+      sagittal_vel_lpf_radps_ += kSagittalVelocityLpfAlpha * (velocity_radps - sagittal_vel_lpf_radps_);
+      sagittal_vel_lpf_sample_ms_ = sample_ms;
+    }
+  }
+
+  void UpdateLinkVelocity(float velocity_radps)
+  {
+    link_vel_radps_ = velocity_radps;
+    if (!link_vel_lpf_inited_)
+    {
+      link_vel_lpf_radps_ = velocity_radps;
+      link_vel_lpf_inited_ = true;
+    }
+    else
+    {
+      link_vel_lpf_radps_ += kLinkVelocityLpfAlpha * (velocity_radps - link_vel_lpf_radps_);
+    }
+  }
+
   void ClearStandPosture()
   {
     sagittal_pos_rad_ = 0.0f;
     sagittal_vel_radps_ = 0.0f;
+    sagittal_vel_lpf_radps_ = 0.0f;
     sagittal_pos_offset_rad_ = 0.0f;
     is_sagittal_pos_offset_valid_ = false;
+    sagittal_vel_lpf_sample_ms_ = 0u;
+    sagittal_vel_lpf_inited_ = false;
 
     link_pos_rad_ = 0.0f;
     link_vel_radps_ = 0.0f;
+    link_vel_lpf_radps_ = 0.0f;
     link_pos_offset_rad_ = 0.0f;
     is_link_pos_offset_valid_ = false;
+    link_vel_lpf_inited_ = false;
   }
+
+private:
+  static constexpr float kSagittalVelocityLpfAlpha = 0.2695973f; /* cutoff 10 Hz, sample rate 200 Hz */
+  static constexpr float kLinkVelocityLpfAlpha = 0.0608986f; /* cutoff 10 Hz, sample rate 1 kHz */
+  uint32_t sagittal_vel_lpf_sample_ms_ = 0u;
+  bool sagittal_vel_lpf_inited_ = false;
+  bool link_vel_lpf_inited_ = false;
 };
 
 class AnkleData : public JointData
@@ -398,7 +501,7 @@ struct FsrSensorData
   float raw_reading = 0.0f; /*!< 原始读数 */
   float force_N = 0.0f;
   bool ground_contact = false; /*!< 当前着地状态 (施密特触发器输出) */
-  float contact_norm = 0.0f; /*!< 归一化读数 [0, 1], = (raw - baseline) / range */
+  float contact_norm = 0.0f; /*!< 归一化接触读数 [0, 1.5], = (raw - baseline) / range */
 
   /* 状态约束自适应接触检测 */
   float contact_baseline = 0.0f;
@@ -523,8 +626,6 @@ public:
   bool event_fo_ = false; /*!< Foot Off */
   bool event_ho_ = false; /*!< Heel Off */
   bool event_to_ = false; /*!< Toe Off */
-  bool event_opposite_fs_ = false; /*!< Opposite Foot Strike */
-  bool event_opposite_fo_ = false; /*!< Opposite Foot Off */
 
   bool is_left_; /*!< 是否为左侧 */
   bool is_enabled_ = false; /*!< 是否启用步态估计 */
@@ -637,9 +738,9 @@ public:
     ankle_joint_(is_left),
     fsr_gait_data_(is_left),
     stair_phase_data_(is_left),
-    foot_imu_(is_left, !is_left, ImuData::SagittalSource::kEulerPitch),
-    shank_imu_(is_left, false, ImuData::SagittalSource::kEulerRoll),
-    thigh_imu_(is_left, false, ImuData::SagittalSource::kEulerRoll),
+    foot_imu_(is_left, is_left ? 1.0f : -1.0f, ImuData::SagittalSource::kEulerPitch),
+    shank_imu_(is_left, 1.0f, ImuData::SagittalSource::kEulerRoll),
+    thigh_imu_(is_left, 1.0f, ImuData::SagittalSource::kEulerRoll),
     is_left_(is_left)
   {
   }
@@ -839,7 +940,7 @@ public:
   SideData right_side_; /*!< 右侧数据 (is_left = false) */
   AoData ao_data_; /*!< 自适应振荡器输出数据 */
   StsPhaseData sts_phase_data_; /*!< 坐立转换相位数据 */
-  ImuData body_imu_{true, false, ImuData::SagittalSource::kGravityXz}; /*!< 躯干 IMU 数据 (BMI088 + Mahony 滤波器) */
+  ImuData body_imu_{true, 1.0f, ImuData::SagittalSource::kGravityXz, 1000.0f}; /*!< 躯干 IMU 数据 (BMI088 + Mahony 滤波器) */
   IntentionData intention_data_; /*!< 意图识别/运动模式识别层数据 */
 
   State state_ = State::kSleep; /*!< 当前系统状态 */
@@ -874,7 +975,8 @@ DEFINE_ENUM_CLASS_BITWISE_OPS(ExoData::SysEvent)
  */
 struct ExoHardware
 {
-  FDCAN_HandleTypeDef &motor_can; /*!< FDCAN1: 电机总线 (髋/膝/踝/SEA) */
+  FDCAN_HandleTypeDef &motor_can1; /*!< 左侧电机总线 */
+  FDCAN_HandleTypeDef &motor_can2; /*!< 右侧电机总线 */
   FDCAN_HandleTypeDef &sensor_can; /*!< FDCAN3: CAN传感器 */
   SPI_HandleTypeDef &sensor_spi; /*!< SPI3: NRF54 足部传感器 (备用通道) */
   UART_HandleTypeDef &sensor_uart; /*!< UART8: NRF54 足部传感器 (主通道) */
@@ -910,11 +1012,11 @@ enum ExoJointCanID : uint8_t
 class AnkleJoint
 {
 public:
-  explicit AnkleJoint(bool is_left, ExoData &pe) :
+  explicit AnkleJoint(bool is_left, ExoData &pe, FDCAN_HandleTypeDef &motor_can) :
     pe_(pe),
     ps_(is_left ? pe_.left_side_ : pe_.right_side_),
     pj_(is_left ? pe_.left_side_.ankle_joint_ : pe_.right_side_.ankle_joint_),
-    motor_(is_left ? ExoJointCanID::kLeftAnkle : ExoJointCanID::kRightAnkle)
+    motor_(motor_can, is_left ? ExoJointCanID::kLeftAnkle : ExoJointCanID::kRightAnkle)
   {
   }
   virtual ~AnkleJoint() = default;
@@ -950,11 +1052,11 @@ public:
     kClosedLoopTorque,
   };
 
-  explicit KneeJoint(bool is_left, ExoData &pe) :
+  explicit KneeJoint(bool is_left, ExoData &pe, FDCAN_HandleTypeDef &motor_can) :
     pe_(pe),
     ps_(is_left ? pe.left_side_ : pe.right_side_),
     pj_(is_left ? pe.left_side_.knee_joint_ : pe.right_side_.knee_joint_),
-    motor_(is_left ? ExoJointCanID::kLeftKnee : ExoJointCanID::kRightKnee),
+    motor_(motor_can, is_left ? ExoJointCanID::kLeftKnee : ExoJointCanID::kRightKnee),
     joint_tor_pid_(2.5f, 0.0f, 0.0f, -1.0f, motor_.limit_current_)
   {
   }
@@ -966,7 +1068,7 @@ public:
   void Shutdown();
   void Standby();
   void Assist();
-  void ApplyDivekarFeedforward(float torque_scale);
+  void ApplyDivekarControl();
 
   ExoData &pe_;
   SideData &ps_;
@@ -981,7 +1083,10 @@ public:
   struct DivekarParams
   {
     /* false: thigh IMU + shank IMU; true: thigh IMU + knee link feedback */
-    bool use_thigh_imu_and_link_feedback = false;
+    bool use_thigh_imu_and_link_feedback = true;
+    /* false: final torque feedforward; true: motor-side impedance parameters */
+    bool use_motion_control_impedance_output = false;
+    float assistance_scale = 0.3f; /*!< Final Divekar output scale, range [0, 1]. */
 
     /* Stance: ascent spring */
     float k_a = 50.0f; /*!<ascent spring stiffness, Nm/rad */
@@ -998,35 +1103,41 @@ public:
     float k_LL = 76.0f; /*!< Nm/rad */
     float m_LL1 = -1.0f;
     float m_LL2 = 5.0f;
+    float d_LL = 1.0f; /*!< rad */
     float x1 = 2.0f;
     float x2 = -1.5f;
-    float d_LL = 1.0f; /*!< rad */
 
     /* Stance: gravity compensation */
     float g_st = 34.0f; /*!< Nm */
 
     /* Task sensitization */
-    float m_F = 75.0f; /*!< heel GRF sigmoid slope for TLL & Tna */
-    float d_F = 0.15f; /*!< heel GRF sigmoid offset for TLL & Tna, BW */
+    float m_heel = 75.0f; /*!< heel-loaded sigmoid slope for TLL and Tna */
+    float d_heel = 0.35f; /*!< heel-loaded sigmoid offset, BW */
+    float m_grf_unloaded = 75.0f; /*!< total-GRF unloaded sigmoid slope magnitude */
+    float d_grf_unloaded = 0.35; /*!< total-GRF unloaded sigmoid offset, BW */
     float m_ajc_dist = 5.0f; /*!< AJCdist sigmoid slope */
     float d_ajc_dist = 14.0f; /*!< AJCdist sigmoid offset, cm */
     float m_ajc_y_a = 5.0f; /*!< AJCy sigmoid slope for ascent spring */
-    float d_ajc_y_a = 7.0f; /*!< AJCy sigmoid offset for ascent spring, cm */
+    float d_ajc_y_a = 4.0f; /*!< AJCy sigmoid offset for ascent spring, cm */
     float m_ajc_y_na = -10.0f; /*!< AJCy sigmoid slope for non-ascent spring */
-    float d_ajc_y_na = 6.0f; /*!< AJCy sigmoid offset for non-ascent spring, cm */
+    float d_ajc_y_na = 3.0f; /*!< AJCy sigmoid offset for non-ascent spring, cm */
 
     /* ZZZ: STS */
     float k_sts = 20.0f; /*!< Nm/rad */
+    float k_stand2sit = 5.0f; /*!< Nm/rad */
     float c_sts = 6.0f; /*!< Nm*s/rad */
     float m_sts_foot_loaded = 50.0f;
     float d_sts_foot_loaded = 0.48f; /*!< BW */
-    float m_sts_knee_raise_vel = -30.0f;
-    float d_sts_knee_raise_vel = -0.15f; /*!< rad/s, knee extension is negative */
-    float m_sts_knee_lower_vel = 20.0f;
-    float d_sts_knee_lower_vel = 0.15f; /*!< rad/s, knee flexion is positive */
-    float m_sts_knee_pos_sym = -20.0f;
-    float d_sts_knee_pos_sym = 0.30f; /*!< rad */
-    float kStsVelocityLpfAlpha = 0.04901f; /*!< first-order LPF alpha, 8 Hz at 1 kHz */
+    float m_sts_knee_raise_vel = -60.0f;
+    float d_sts_knee_raise_vel = -0.225f; /*!< rad/s, knee extension is negative */
+    float m_sts_knee_lower_vel = 60.0f;
+    float d_sts_knee_lower_vel = 0.175f; /*!< rad/s, knee flexion is positive */
+    float m_sts_knee_pos_sym = -50.0f;
+    float d_sts_knee_pos_sym = 0.3f; /*!< rad */
+    float m_sts_thigh_flex = 60.0f;
+    float d_sts_thigh_flex = 0.25f; /*!< rad */
+    float m_sts_deep_flex_decay = -10.0f;
+    float d_sts_deep_flex_decay = 1.50f; /*!< rad */
 
     /* Swing: gravity / inertia / spring-damper */
     float g_sw = 8.0f; /*!< Nm */
@@ -1046,16 +1157,24 @@ public:
 
     /* Stance/swing blending */
     float m_grf_u = 30.0f;
-    float d_grf_u = 0.2f; /*!< normalized body weight */
+    float d_grf_u = 0.4f; /*!< normalized body weight */
 
     /* Safety limits */
     float torque_min_Nm = -20.0f;
     float torque_max_Nm = 20.0f;
-    float extension_slew_rate_Nmps = 200.0f;
+    float extension_slew_rate_Nmps = 100.0f;
 
     /* Optional internal acceleration estimator */
     float torque_lpf_alpha = 0.03093f; /*!< EMA alpha for torque LPF at 1 kHz, fc approximately 5 Hz */
     float theta_k_ddot_lpf_alpha = 0.01867f; /*!< EMA alpha for knee acceleration LPF at 1 kHz, fc approximately 3 Hz */
+    float theta_k_ddot_lpf_alpha_imu = 0.09f; /*!< Equivalent knee acceleration LPF alpha at 200 Hz */
+  };
+
+  enum class LeadingLeg : uint8_t
+  {
+    kUnknown = 0,
+    kLeft,
+    kRight,
   };
 
   struct BiLegContex
@@ -1076,9 +1195,9 @@ public:
     float gate_F_grf_inv_right = 0.0f;
     float gate_delta_ajc_dist = 0.0f;
     float gate_delta_ajc_dist_fs = 0.0f;
-    float gate_sts_knee_pos_sym = 0.0f;
 
     /* ZZZ: STS */
+    float gate_sts_knee_pos_sym = 0.0f;
     float gate_sts_left_foot_loaded = 0.0f;
     float gate_sts_right_foot_loaded = 0.0f;
     float gate_sts_both_foot_loaded = 0.0f;
@@ -1088,7 +1207,15 @@ public:
     float gate_sts_left_knee_lower_vel = 0.0f;
     float gate_sts_right_knee_lower_vel = 0.0f;
     float gate_sts_bilateral_knee_lower_vel = 0.0f;
-    bool is_leading_left = false;
+    float bilateral_lower_vel_radps = 0.0f;
+    float gate_sts_deep_flex_decay = 0.0f;
+    float gate_sts_left_thigh_flex = 0.0f;
+    float gate_sts_right_thigh_flex = 0.0f;
+    float gate_sts_bilateral_thigh_flex = 0.0f;
+
+    bool left_fs_accepted = false;
+    bool right_fs_accepted = false;
+    LeadingLeg leading_leg = LeadingLeg::kUnknown;
     uint64_t update_prev_us = 0u;
   };
 
@@ -1097,26 +1224,21 @@ public:
 
   struct DivekarState
   {
-    /* Knee kinematics */
-    float theta_k_rad = 0.0f; /*!< knee flexion positive */
-    float theta_k_dot_radps = 0.0f;
-    float theta_k_dot_sts_lpf_radps = 0.0f; /*!< filtered velocity for STS gates and damping */
-    float theta_kd_rad = 0.0f; /*!< θ_k - θ_k_hs, 预处理 */
-
     /* Segment and leg angles */
+    float theta_trunk_rad = 0.0f; /*!< ZZZ: body global sagittal angle, for sts */
     float theta_th_rad = 0.0f; /*!< thigh global sagittal angle */
     float theta_sh_rad = 0.0f; /*!< shank global sagittal angle */
     float theta_la_rad = 0.0f; /*!< hip-ankle leg angle */
     float ankle_x_m = 0.0f; /*!< ankle X in hip frame */
     float ankle_y_m = 0.0f; /*!< ankle Y in hip frame */
-    float theta_trunk_rad = 0.0f; /*!< ZZZ: body global sagittal angle, for sts */
+
+    /* Knee kinematics */
+    float theta_k_rad = 0.0f; /*!< knee flexion positive */
+    float theta_k_dot_radps = 0.0f;
+    float theta_kd_rad = 0.0f; /*!< θ_k - θ_k_hs, 预处理 */
 
     /* Task variables, normally frozen at latest heel strike */
     float delta_ajc_y_fs_cm = 0.0f; /*!< default unit: cm */
-
-    /* Event / side state */
-    bool own_foot_strike_event = false;
-    bool is_leading_leg = false;
 
     /* ——— sigmoid gates (debug) ——— */
     float gate_theta_la = 0.0f; /*!< σ(θ_la), gates τ_a/τ_na */
@@ -1125,13 +1247,10 @@ public:
     float gate_theta_k_dot_LL = 0.0f; /*!< σ(θ̇_k, offset), LL velocity taper */
     float gate_delta_ajc_y_a_fs = 0.0f; /*!< σ(δ_ajc_y, m=5), ascent modulation */
     float gate_delta_ajc_y_na_fs = 0.0f; /*!< σ(δ_ajc_y, m=-10), non-ascent modulation */
-    float gate_delta_ajc_dist_plus_F_grf = 0.0f; /*!< min(σ(δ_ajc)+σ(F_grf),1), non-ascent */
 
-    float gate_F_heel_contra_inv = 0.0f; /*!< σ(F_heel^contra, m=-75), τ_na/τ_grav modulation */
     float gate_theta_k_dot_sw = 0.0f; /*!< σ(θ̇_k, m=5), swing gravity gate */
     float gate_F_grf_u = 0.0f; /*!< σ(F_grf^ipsi, m=30), α-blend */
 
-    float gate_sts_knee_lower_vel = 0.0f;
     float gate_sts_sit2stand = 0.0f;
     float gate_sts_stand2sit = 0.0f;
     float gate_sts_ctx = 0.0f;
@@ -1141,6 +1260,8 @@ public:
     float theta_kd_max_rad = 0.0f;
     float theta_k_dot_prev_radps = 0.0f;
     float theta_k_ddot_lpf_radps2 = 0.0f;
+    uint32_t theta_k_dot_sample_id = 0u;
+    float theta_k_dot_sample_elapsed_s = 0.0f;
     float tau_prev_Nm = 0.0f;
     float tau_divekar_lpf_prev_Nm = 0.0f;
     bool theta_k_dot_history_valid = false;
@@ -1174,9 +1295,16 @@ public:
     float tau_sw_Nm = 0.0f;
 
     /* ——— output torques ——— */
-    float tau_divekar_Nm = 0.0f;           /*!< blended torque, before filtering */
-    float tau_divekar_lpf_Nm = 0.0f;       /*!< 5Hz LPF filtered */
+    float tau_divekar_Nm = 0.0f; /*!< blended torque, before filtering */
+    float tau_divekar_lpf_Nm = 0.0f; /*!< 5Hz LPF filtered */
     float tau_divekar_lpf_limited_Nm = 0.0f; /*!< after safety limits */
+
+    /* ——— equivalent MotionControl output in joint coordinates ——— */
+    float mc_stiffness_Nm_per_rad = 0.0f;
+    float mc_damping_Nm_s_per_rad = 0.0f;
+    float mc_position_ref_rad = 0.0f;
+    float mc_velocity_ref_radps = 0.0f;
+    float mc_torque_feedforward_Nm = 0.0f;
   } divekar_output_;
 
   void ComputeAnkleGeometry();
@@ -1204,91 +1332,11 @@ private:
     return 1.0f / (1.0f + expf(z));
   }
 
-  static float SigmoidFromZero(float x, float m, float d)
-  {
-    const float value_at_zero = Sigmoid(0.0f, m, d);
-    const float normalized = (Sigmoid(x, m, d) - value_at_zero) / (1.0f - value_at_zero);
-    return _constrain(normalized, 0.0f, 1.0f);
-  }
-
   void UpdateDivekarFeedbackKinematics();
-  float GetThetaKddotLpf(float theta_k_dot_radps, float dt_s);
+  void UpdateDivekarMotionControlOutput();
+  float GetThetaKddotLpf(float theta_k_dot_radps, float dt_s, bool has_new_sample, float alpha);
   float GetTorqueLpf(float tau_unfiltered_Nm);
   float ApplySafetyLimits(float tau_unfiltered_Nm, float dt_s);
-};
-
-class KneeSeaJoint
-{
-public:
-  enum class CtrlMode : uint8_t
-  {
-    kPosition,
-    kSpringForce,
-  };
-
-  explicit KneeSeaJoint(bool is_left, ExoData &pe, DjiEscHub &dji_esc_hub, UART_HandleTypeDef &huart) :
-    pe_(pe),
-    ps_(is_left ? pe.left_side_ : pe.right_side_),
-    pj_(is_left ? pe.left_side_.knee_sea_joint_ : pe.right_side_.knee_sea_joint_),
-    motor_(dji_esc_hub, is_left ? DjiEsc::EscId::kId1 : DjiEsc::EscId::kId2),
-    mag_encoder_(huart),
-    joint_pos_pid_(5.0f, 1.0f, 0.0f, -100.0f, motor_.max_iqref_amp_),
-    spring_force_pid_(1.0f, 0.1, 0.0, -100.0f, motor_.max_iqref_amp_)
-  {
-  }
-  virtual ~KneeSeaJoint() = default;
-
-  void Calibrate();
-  void Read();
-  bool IsMotorConnect();
-  void Shutdown();
-  void Standby();
-  void Assist();
-
-  void JointPosControl();
-  void SpringForceControl();
-
-  ExoData &pe_;
-  SideData &ps_;
-  KneeSeaJointData &pj_;
-  DjiEsc motor_; /** 电调ID固定: 左膝id=1, 右膝id=2 */
-  MagEncoder mag_encoder_;
-  PIDController joint_pos_pid_; /** 必须放在motor_后面, 因为依赖其进行构造 */
-  PIDController spring_force_pid_; /** 必须放在motor_后面, 因为依赖其进行构造 */
-  KneeForceProfileGenerator force_profile_generator_;
-
-private:
-  CtrlMode ctrl_mode_ = CtrlMode::kSpringForce;
-};
-
-/**
- * @brief 髋关节控制器 (达妙 DM4340 电机, MIT 模式)
- * @note  助力策略: 左右髋关节耦合前馈
- *        tau = K * (sin(posR_delayed) - sin(posL_delayed))
- *        其中 posR_delayed 是右侧髋关节角度经 35 样本延迟 + EMA 低通滤波的结果,
- *        利用对侧腿的相位信息生成同侧助力力矩, 模拟 CPG 耦合
- */
-class HipJoint
-{
-public:
-  explicit HipJoint(bool is_left, ExoData &pe) :
-    pe_(pe),
-    ps_(is_left ? pe_.left_side_ : pe_.right_side_),
-    pj_(is_left ? pe_.left_side_.hip_joint_ : pe_.right_side_.hip_joint_),
-    motor_(is_left ? ExoJointCanID::kLeftHip : ExoJointCanID::kRightHip)
-  {
-  }
-  virtual ~HipJoint() = default;
-  void Calibrate();
-  void Read();
-  bool IsMotorConnect();
-  void Shutdown();
-  void Standby();
-  void Assist();
-  ExoData &pe_;
-  SideData &ps_;
-  JointData &pj_;
-  DMMotor motor_;
 };
 
 /* ============================================================================
@@ -1330,7 +1378,6 @@ private:
 
   void ClearCycleEvents();
   void DetectOwnFsrEvents();
-  void DetectOppositeFsrEvents();
   void ApplyEventGuards(uint32_t now_ms);
   void UpdateEventTimings(uint32_t now_ms);
   void ResolvePhase();
@@ -1338,7 +1385,8 @@ private:
   void UpdateValidity();
   void UpdateExpectedDuration(uint32_t duration_ms, uint32_t duration_window_ms[], float &expected_duration_ms);
   void RecordEventTimestamp(uint8_t ev_idx, uint32_t now_ms);
-  bool IsOppositeFsrUsable();
+
+  uint32_t last_contact_sample_ms_ = 0u; /*!< 最近处理的 FSR 样本时间戳 */
 
   static constexpr uint32_t kMinStanceDurationMs = 150u;
   static constexpr uint32_t kMinSwingDurationMs = 150u;
@@ -1475,13 +1523,26 @@ private:
 class Side
 {
 public:
-  explicit Side(bool is_left, ExoData &pe, DjiEscHub &dji_esc_hub, UART_HandleTypeDef &huart) :
+  explicit Side(bool is_left,
+                ExoData &pe,
+                DjiEscHub &dji_esc_hub,
+                FDCAN_HandleTypeDef &motor_can,
+                UART_HandleTypeDef &huart) :
     pe_(pe),
     ps_(is_left ? pe_.left_side_ : pe_.right_side_),
-    hip_joint_(is_left, pe),
-    knee_joint_(is_left, pe),
-    knee_sea_joint_(is_left, pe, dji_esc_hub, huart),
-    ankle_joint_(is_left, pe),
+    hip_joint_(pe,
+               ps_,
+               ps_.hip_joint_,
+               motor_can,
+               is_left ? ExoJointCanID::kLeftHip : ExoJointCanID::kRightHip),
+    knee_joint_(is_left, pe, motor_can),
+    knee_sea_joint_(pe,
+                    ps_,
+                    ps_.knee_sea_joint_,
+                    dji_esc_hub,
+                    is_left ? DjiEsc::EscId::kId1 : DjiEsc::EscId::kId2,
+                    huart),
+    ankle_joint_(is_left, pe, motor_can),
     fsr_gait_estimator_(ps_.fsr_gait_data_, pe),
     stair_phase_estimator_(pe, ps_)
   {
@@ -1862,7 +1923,7 @@ public:
   explicit Exo(ExoData &pe, ExoHardware &hw) :
     pe_(pe),
     hw_(hw),
-    dji_esc_hub_(hw.motor_can),
+    dji_esc_hub_(hw.motor_can1),
     dm_imu_hub_(pe, hw.sensor_can),
     hipnuc_imu_hub_(pe, hw.sensor_can),
     ao_(pe),
@@ -1870,8 +1931,8 @@ public:
     sts_phase_estimator_(pe),
     body_imu_(pe),
     shell_(hw.shell_uart, *this),
-    left_side_(true, pe, dji_esc_hub_, hw.left_mag_encoder_uart),
-    right_side_(false, pe, dji_esc_hub_, hw.right_mag_encoder_uart)
+    left_side_(true, pe, dji_esc_hub_, hw.motor_can1, hw.left_mag_encoder_uart),
+    right_side_(false, pe, dji_esc_hub_, hw.motor_can2, hw.right_mag_encoder_uart)
   {
   }
   ~Exo() = default;

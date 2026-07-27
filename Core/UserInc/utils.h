@@ -31,12 +31,12 @@ extern "C" {
 /* 取两者中的较小值 */
 #define _min(a,b)           ((a) < (b) ? (a) : (b))
 
-#define DMA_UNION_BUF_SIZE_BYTES         (512U)                         /*!< DMA 缓冲区总字节数 */
-#define DMA_UNION_BUF_SIZE_FLOATS        (DMA_UNION_BUF_SIZE_BYTES/4)   /*!< DMA 缓冲区可容纳的 float 个数 (128) */
+#define DMA_UNION_BUF_SIZE_BYTES         (640U)                         /*!< DMA 缓冲区总字节数 */
+#define DMA_UNION_BUF_SIZE_FLOATS        (DMA_UNION_BUF_SIZE_BYTES/4)   /*!< DMA 缓冲区可容纳的 float 个数 */
 /**
  * @brief DMA 联合体缓冲区
  *
- * 通过 union 将同一块 512 字节内存映射为 4 种类型的视图，
+ * 通过 union 将同一块内存映射为 4 种类型的视图，
  * 实现无拷贝的类型切换。典型用途：
  * - f_data: VOFA JustFloat 浮点数据填充
  * - c_data: snprintf 格式化字符串输出
@@ -44,10 +44,10 @@ extern "C" {
  * - u32_data: 32 位对齐访问
  */
 union DmaUnionBuffer {
-    float f_data[DMA_UNION_BUF_SIZE_FLOATS];       /*!< 浮点视图：128 个 float */
-    uint32_t u32_data[DMA_UNION_BUF_SIZE_FLOATS];  /*!< 32位视图：128 个 uint32_t */
-    char c_data[DMA_UNION_BUF_SIZE_BYTES];         /*!< 字符视图：512 个 char */
-    uint8_t u8_data[DMA_UNION_BUF_SIZE_BYTES];     /*!< 字节视图：512 个 uint8_t */
+    float f_data[DMA_UNION_BUF_SIZE_FLOATS];
+    uint32_t u32_data[DMA_UNION_BUF_SIZE_FLOATS];
+    char c_data[DMA_UNION_BUF_SIZE_BYTES];
+    uint8_t u8_data[DMA_UNION_BUF_SIZE_BYTES];
 };
 
 /**
@@ -79,6 +79,14 @@ uint64_t GetSysTimeUs(void);
  * @return 自启动以来的毫秒数
  */
 uint32_t GetSysTimeMs(void);
+
+/**
+ * @brief 将弧度角归一化到 [-PI, PI]
+ *
+ * @param angle_rad 输入角度 (rad)
+ * @return 归一化后的角度 (rad)
+ */
+float WrapPi(float angle_rad);
 
 /**
  * @brief 欧拉角 (弧度) 转四元数

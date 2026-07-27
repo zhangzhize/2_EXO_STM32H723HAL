@@ -45,6 +45,8 @@ float semg_pa2_filtered = 0.0f; /*!< PA2 通道滤波后肌电值 */
 float semg_pa0_envelope = 0.0f; /*!< PA0 通道肌电包络值 */
 float semg_pa2_envelope = 0.0f; /*!< PA2 通道肌电包络值 */
 
+uint32_t g_exo_run_us = 0;
+
 /* ADC DMA 三通道数据缓冲区：PC4 (电源电压) + PA2 + PA0，位于 DTCM .dma_buf 段 */
 __attribute__((section(".dma_buf"), aligned(32))) uint32_t g_adc_data[3] = {0};
 
@@ -79,11 +81,13 @@ void AltMainTask(void *argument)
   HAL_ADC_Start_DMA(&hadc1, (uint32_t *)g_adc_data, 3);
 
   /*----------------------------------------------------------------------
-   * 初始化两路 FDCAN
-   * hfdcan1: 电机 CAN 总线 (与左右腿电机通信)
+   * 初始化三路 FDCAN
+   * hfdcan1: 左侧电机 CAN 总线
+   * hfdcan2: 右侧电机 CAN 总线
    * hfdcan3: IMU 传感器 CAN 总线 (躯干姿态传感器)
    *----------------------------------------------------------------------*/
   BspCanInit(&hfdcan1);
+  BspCanInit(&hfdcan2);
   BspCanInit(&hfdcan3);
 
   /*----------------------------------------------------------------------
@@ -97,7 +101,8 @@ void AltMainTask(void *argument)
    * 构造外骨骼硬件描述符和核心对象
    *----------------------------------------------------------------------*/
   static ExoHardware exo_hw = {
-    .motor_can = hfdcan1, /* 电机 CAN */
+    .motor_can1 = hfdcan1, /* 左侧电机 CAN */
+    .motor_can2 = hfdcan1, /* 右侧电机 CAN */
     .sensor_can = hfdcan3, /* IMU CAN */
     .sensor_spi = hspi3, /* 传感器 SPI */
     .sensor_uart = huart8, /* 传感器串口 */
@@ -129,7 +134,9 @@ void AltMainTask(void *argument)
     {
       g_timer2_flag = 0;
 
+      uint32_t start_tick = DWT_CYCCNT;
       exo.Run(); /* 外骨骼核心控制逻辑 (~1ms 内完成) */
+      g_exo_run_us = DWTGetDeltaUs(start_tick);
     }
 
     // if (cdc_rx_flag)

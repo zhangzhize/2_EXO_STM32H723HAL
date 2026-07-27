@@ -35,6 +35,9 @@ struct ShellRwParamEntry
     const char *name;           /*!< 参数名称 (write/read 命令匹配用) */
     ShellRwParamType type;      /*!< 参数类型 */
     void *ptr;                  /*!< 指向参数变量的指针 */
+    bool has_float_range = false;
+    float float_min = 0.0f;
+    float float_max = 0.0f;
 };
 
 /**
@@ -70,6 +73,7 @@ public:
 
     /* 注册一个可读写浮点参数 (write/read 命令将修改/查询该变量) */
     void RegisterRwParam(const char *name, float *ptr);
+    void RegisterRwParam(const char *name, float *ptr, float min_value, float max_value);
     /* 注册一个可读写整数参数 */
     void RegisterRwParam(const char *name, int *ptr);
     /* 注册一个可读写布尔参数 */

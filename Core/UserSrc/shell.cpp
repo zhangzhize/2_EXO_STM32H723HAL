@@ -215,6 +215,19 @@ void Shell::RegisterRwParam(const char *name, float *ptr)
     if (param_count_ < kMaxNumRwParams && ptr != nullptr)
         param_table_[param_count_++] = {name, ShellRwParamType::kFloat, static_cast<void *>(ptr)};
 }
+
+void Shell::RegisterRwParam(const char *name, float *ptr, float min_value, float max_value)
+{
+    if (param_count_ < kMaxNumRwParams && ptr != nullptr && min_value <= max_value)
+    {
+        param_table_[param_count_++] = {name,
+                                       ShellRwParamType::kFloat,
+                                       static_cast<void *>(ptr),
+                                       true,
+                                       min_value,
+                                       max_value};
+    }
+}
 /**
  * @brief 注册整型可读写参数
  */
@@ -275,7 +288,22 @@ void Shell::OnCmdWriteParam(int argc, char **argv)
             switch (param_table_[i].type)
             {
                 case ShellRwParamType::kFloat: {
-                    float val = strtof(argv[2], nullptr);
+                    char *end = nullptr;
+                    float val = strtof(argv[2], &end);
+                    if (end == argv[2] || *end != '\0')
+                    {
+                        Printf("Error: Invalid value '%s'.\r\n", argv[2]);
+                        break;
+                    }
+                    if (param_table_[i].has_float_range &&
+                        !(val >= param_table_[i].float_min && val <= param_table_[i].float_max))
+                    {
+                        Printf("Error: %s must be in [%.3f, %.3f], unchanged.\r\n",
+                               target_name,
+                               param_table_[i].float_min,
+                               param_table_[i].float_max);
+                        break;
+                    }
                     *(static_cast<float *>(param_table_[i].ptr)) = val;
                     Printf("OK: %s = %.3f\r\n", target_name, val);
                     break;

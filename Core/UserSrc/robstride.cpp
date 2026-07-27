@@ -34,16 +34,9 @@ enum ComTypeCode
 #define KD_MIN (0.0f)    /*!< 运控模式 Kd 最小值 */
 #define KD_MAX (5.0f)    /*!< 运控模式 Kd 最大值 */
 
-/**
- * @brief          ROBSTRIDE电机数据发送函数
- * @param[in]      can_ext_id:CAN扩展ID
- * @param[in]      data:待发送数据指针
- * @param[in]      data_size:待发送数据长度, 最大8字节
- * @retval         无
- */
-static void RobstrideSendData(uint32_t can_ext_id, uint8_t *data, uint32_t data_size)
+void Robstride::SendData(uint32_t can_ext_id, uint8_t *data, uint32_t data_size)
 {
-    FDCanSendData(&hfdcan1, can_ext_id, FDCAN_EXTENDED_ID, data, data_size);
+    FDCanSendData(&hfdcan_, can_ext_id, FDCAN_EXTENDED_ID, data, data_size);
 }
 
 /**
@@ -90,7 +83,7 @@ void Robstride::ObtainDeviceIDRequest(void)
     uint8_t can_txdata[8] = {0};
 
     can_ext_id = kComTypeObtainDeviceID << 24 | Master_CAN_ID << 8 | can_id_;
-    RobstrideSendData(can_ext_id, can_txdata, sizeof(can_txdata));
+    SendData(can_ext_id, can_txdata, sizeof(can_txdata));
 }
 
 /**
@@ -137,7 +130,7 @@ void Robstride::MotionControl(void)
 
     /* 扩展ID编码: bit24-28=通信类型1, bit8-23=扭矩前馈(16bit定点), bit0-7=电机CAN_ID */
     can_ext_id = kComTypeMotionControl << 24 | FloatToUint(torque_forward_, T_MIN, T_MAX, 16) << 8 | can_id_;
-    RobstrideSendData(can_ext_id, can_txdata, sizeof(can_txdata));
+    SendData(can_ext_id, can_txdata, sizeof(can_txdata));
 }
 
 /**
@@ -173,7 +166,7 @@ void Robstride::EnableMotor(void)
     uint8_t can_txdata[8] = {0};
 
     can_ext_id = kComTypeEnableMotor << 24 | Master_CAN_ID << 8 | can_id_;
-    RobstrideSendData(can_ext_id, can_txdata, sizeof(can_txdata));
+    SendData(can_ext_id, can_txdata, sizeof(can_txdata));
 }
 
 /**
@@ -189,7 +182,7 @@ void Robstride::DisableMotor(uint8_t do_clear_error)
 
     can_txdata[0] = do_clear_error;  // 清除错误位设置
     can_ext_id = kComTypeDisableMotor << 24 | Master_CAN_ID << 8 | can_id_;
-    RobstrideSendData(can_ext_id, can_txdata, sizeof(can_txdata));
+    SendData(can_ext_id, can_txdata, sizeof(can_txdata));
 }
 
 /**
@@ -205,7 +198,7 @@ void Robstride::SetMecPosZero(void)
 
     can_txdata[0] = 1;
     can_ext_id = kComTypeSetMechPosZero << 24 | Master_CAN_ID << 8 | can_id_;
-    RobstrideSendData(can_ext_id, can_txdata, sizeof(can_txdata));
+    SendData(can_ext_id, can_txdata, sizeof(can_txdata));
     EnableMotor();
 }
 
@@ -224,7 +217,7 @@ void Robstride::SetMotorCanID(uint8_t can_id)
     {
         can_ext_id = kComTypeSetMotorCanID << 24 | can_id << 16 | Master_CAN_ID << 8 | can_id;
         can_id_ = can_id;
-        RobstrideSendData(can_ext_id, can_txdata, sizeof(can_txdata));
+        SendData(can_ext_id, can_txdata, sizeof(can_txdata));
     }
 }
 
@@ -241,7 +234,7 @@ void Robstride::ReadSingleParamRequest(uint16_t param_index)
     can_ext_id = kComTypeReadSingleParam << 24 | Master_CAN_ID << 8 | can_id_;
     can_txdata[0] = param_index;       // 低8位
     can_txdata[1] = param_index >> 8;  // 高8位
-    RobstrideSendData(can_ext_id, can_txdata, sizeof(can_txdata));
+    SendData(can_ext_id, can_txdata, sizeof(can_txdata));
 }
 
 /**
@@ -394,7 +387,7 @@ void Robstride::SetSingleParam(uint16_t param_index, float value)
         can_txdata[6] = bytes[2];
         can_txdata[7] = bytes[3];
     }
-    RobstrideSendData(can_ext_id, can_txdata, sizeof(can_txdata));
+    SendData(can_ext_id, can_txdata, sizeof(can_txdata));
 }
 
 /**
@@ -420,7 +413,7 @@ void Robstride::StatusFeedbackRequest(void)
     uint8_t can_txdata[8] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
 
     can_ext_id = kComTypeStatusFeedbackReq << 24 | Master_CAN_ID << 8 | can_id_;
-    RobstrideSendData(can_ext_id, can_txdata, sizeof(can_txdata));
+    SendData(can_ext_id, can_txdata, sizeof(can_txdata));
 }
 
 /**
@@ -444,7 +437,7 @@ void Robstride::StatusFeedbackAutoRequest(bool do_enable)
     SetSingleParam(RobstrideParamIdx::EPScan_time, EPScan_time_);
     can_ext_id = kComTypeStatusFeedbackAuto << 24 | Master_CAN_ID << 8 | can_id_;
     can_txdata[6] = do_enable ? 0x01 : 0x00;
-    RobstrideSendData(can_ext_id, can_txdata, sizeof(can_txdata));
+    SendData(can_ext_id, can_txdata, sizeof(can_txdata));
 }
 
 /**

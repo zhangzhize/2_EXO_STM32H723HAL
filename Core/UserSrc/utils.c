@@ -88,6 +88,18 @@ uint32_t GetSysTimeMs(void)
     return HAL_GetTick();
 }
 
+float WrapPi(float angle_rad)
+{
+    while (angle_rad > _PI)
+    {
+        angle_rad -= _2PI;
+    }
+    while (angle_rad < -_PI)
+    {
+        angle_rad += _2PI;
+    }
+    return angle_rad;
+}
 
 /**
  * @brief 欧拉角 (弧度) 转四元数
@@ -158,7 +170,8 @@ void EulerDeg2Quaternion(float roll_deg, float pitch_deg, float yaw_deg, float *
 void Quaternion2EulerRad(float *q, float *roll_rad, float *pitch_rad, float *yaw_rad)
 {
     *roll_rad  = atan2f(q[0] * q[1] + q[2] * q[3], 0.5f - q[1] * q[1] - q[2] * q[2]);
-    *pitch_rad = asinf(-2.0f * (q[1] * q[3] - q[0] * q[2]));
+    const float sin_pitch = _constrain(-2.0f * (q[1] * q[3] - q[0] * q[2]), -1.0f, 1.0f);
+    *pitch_rad = asinf(sin_pitch);
     *yaw_rad   = atan2f(q[1] * q[2] + q[0] * q[3], 0.5f - q[2] * q[2] - q[3] * q[3]);
 }
 

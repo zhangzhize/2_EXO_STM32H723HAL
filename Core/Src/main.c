@@ -121,6 +121,7 @@ int main(void)
   MX_USART3_UART_Init();
   MX_FDCAN3_Init();
   MX_SPI3_Init();
+  MX_FDCAN2_Init();
   /* USER CODE BEGIN 2 */
     AltMainTask(NULL);
   /* USER CODE END 2 */

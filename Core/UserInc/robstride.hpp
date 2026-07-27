@@ -10,6 +10,7 @@
 #define ROBSTRIDE_HPP
 
 #include <cstdint>
+#include "fdcan.h"
 
 enum RobstrideParamIdx
 {
@@ -75,9 +76,14 @@ enum RobstridePattern : uint8_t
 class Robstride
 {
 public:
-    Robstride(uint8_t can_id) : can_id_(can_id) {};
+    Robstride(FDCAN_HandleTypeDef &hfdcan, uint8_t can_id) :
+        hfdcan_(hfdcan),
+        can_id_(can_id)
+    {
+    }
     ~Robstride () = default;
 
+    FDCAN_HandleTypeDef &hfdcan_;     /*!< 该电机固定使用的 FDCAN 外设 */
     uint8_t can_id_;                 /*!< 电机 CAN ID, 用于扩展帧低8位寻址和接收匹配 */
     uint8_t mcu_id_ = 0;             /*!< MCU唯一标识符[后8位，共64位], 由通信类型0获取 */
     uint8_t run_mode_ = kMotionMode; /*!< 电机当前运行模式, 切换前需先失能 */
@@ -146,7 +152,9 @@ public:
     void GoZeroPosMode(void);       /*!< 将当前位置设为机械零点(通过切换模式实现) */
     void CanRxCallBack(uint32_t can_ext_id, const uint8_t *can_rxdata); /*!< CAN接收回调, 根据通信类型分发到对应解析函数 */
     void SetMotorMode(void);        /*!< 通过 SetSingleParam 将 run_mode_ 同步到电机(需先失能电机) */
+
+private:
+    void SendData(uint32_t can_ext_id, uint8_t *data, uint32_t data_size);
 };
 
 #endif
-

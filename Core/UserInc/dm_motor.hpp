@@ -17,6 +17,7 @@
 #define DM_MOTOR_HPP
 
 #include <cstdint>
+#include "fdcan.h"
 
 /* 需要根据实际电机型号更改 */
 #define DM_KP_MIN   (0.0f)   /*!< MIT模式Kp最小值 */
@@ -201,7 +202,7 @@ typedef struct
 class DMMotor
 {
 public:
-    DMMotor(uint16_t can_id);
+    DMMotor(FDCAN_HandleTypeDef &hfdcan, uint16_t can_id);
     ~DMMotor() = default;
 
     void EnableMotor(void);             /** 电机使能, 发送 0xFF..FC 使能指令 */
@@ -225,6 +226,11 @@ public:
     DMInf inf_;                         /*!< 电机参数信息, 通过 ReadReg 填充 */
     DMFeedback feedback_;               /*!< 电机实时反馈数据 */
     DMCtrlParam ctrl_param_;            /*!< 电机控制参数(目标值) */
+
+private:
+    void SendData(uint32_t can_std_id, uint8_t *data, uint32_t data_size);
+
+    FDCAN_HandleTypeDef &hfdcan_;        /*!< 该电机固定使用的 FDCAN 外设 */
 };
 
 extern "C" {

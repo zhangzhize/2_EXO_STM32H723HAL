@@ -58,16 +58,9 @@ static float uint_to_float(int x_int, float x_min, float x_max, int bits)
 	return ((float)x_int)*span/((float)((1<<bits)-1)) + offset;
 }
 
-/**
-  * @brief          达妙电机数据发送函数
-  * @param[in]      can_ext_id:CAN标准ID
-  * @param[in]      data:待发送数据指针
-  * @param[in]      data_size:待发送数据长度
-  * @retval         无
-  */
-static void DMSendData(uint32_t can_std_id, uint8_t *data, uint32_t data_size)
+void DMMotor::SendData(uint32_t can_std_id, uint8_t *data, uint32_t data_size)
 {
-    FDCanSendData(&hfdcan1, can_std_id, FDCAN_STANDARD_ID, data, data_size);
+    FDCanSendData(&hfdcan_, can_std_id, FDCAN_STANDARD_ID, data, data_size);
 }
 
 /**
@@ -76,7 +69,8 @@ static void DMSendData(uint32_t can_std_id, uint8_t *data, uint32_t data_size)
  * @note    mst_id_ 按协议规则自动计算为 0xFF - can_id(互补关系), 用于接收反馈帧的 ID 匹配
  *          PMAX_/VMAX_/TMAX_ 初始化为默认值, 实际使用时应先 ReadReg 获取电机真实映射范围
  */
-DMMotor::DMMotor(uint16_t can_id)
+DMMotor::DMMotor(FDCAN_HandleTypeDef &hfdcan, uint16_t can_id) :
+    hfdcan_(hfdcan)
 {
     can_id_ = can_id;
     mst_id_ = 0xFF - can_id; /* 达妙协议: 接收帧 ID = 0xFF - 发送帧基址 */
@@ -99,28 +93,28 @@ void DMMotor::EnableMotor(void)
 {
     uint8_t data[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFC};
     uint16_t send_id = can_id_ + static_cast<uint16_t>(ctrl_param_.mode_id_);
-    DMSendData(send_id, data, 8);
+    SendData(send_id, data, 8);
 }
 
 void DMMotor::DisableMotor(void)
 {
     uint8_t data[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFD};
     uint16_t send_id = can_id_ + static_cast<uint16_t>(ctrl_param_.mode_id_);
-    DMSendData(send_id, data, 8);
+    SendData(send_id, data, 8);
 }
 
 void DMMotor::ClearError(void)
 {
     uint8_t data[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFB};
     uint16_t send_id = can_id_ + static_cast<uint16_t>(ctrl_param_.mode_id_);
-    DMSendData(send_id, data, 8);
+    SendData(send_id, data, 8);
 }
 
 void DMMotor::SetMecPosZero(void)
 {
     uint8_t data[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFE};
     uint16_t send_id = can_id_ + static_cast<uint16_t>(ctrl_param_.mode_id_);
-    DMSendData(send_id, data, 8);
+    SendData(send_id, data, 8);
 }
 
 void DMMotor::SetMotorMode(void)
@@ -185,7 +179,7 @@ void DMMotor::MitControl(void)
 	data[6] = ((kd_tmp&0xF)<<4)|(tor_tmp>>8);
 	data[7] = tor_tmp;
 
-    DMSendData(send_id, data, 8);
+    SendData(send_id, data, 8);
 }
 
 /**
@@ -208,7 +202,7 @@ void DMMotor::PosVelControl(void)
     memcpy(&data[0], &ctrl_param_.pos_set_rad_, 4);
 	memcpy(&data[4], &ctrl_param_.vel_set_radps_, 4);
 
-    DMSendData(send_id, data, 8);
+    SendData(send_id, data, 8);
 }
 
 /**
@@ -229,7 +223,7 @@ void DMMotor::VelControl(void)
 
     memcpy(&data[0], &ctrl_param_.vel_set_radps_, 4);
 
-    DMSendData(send_id, data, 4);
+    SendData(send_id, data, 4);
 }
 
 /**
@@ -258,7 +252,7 @@ void DMMotor::PosVelCurControl(void)
     memcpy(&data[4], vel_tmp, 2);
     memcpy(&data[6], cur_tmp, 2);
 
-    DMSendData(send_id, data, 8);
+    SendData(send_id, data, 8);
 }
 
 void DMMotor::ClearCtrlParam(void)
@@ -288,7 +282,7 @@ void DMMotor::ReadReg(DMMotorReg reg)
     uint8_t can_id_low = can_id_ & 0xFF;
     uint8_t can_id_high = (can_id_ >> 8) & 0x07;
     uint8_t data[4] = {can_id_low, can_id_high, 0x33, static_cast<uint8_t>(reg)};
-    DMSendData(0x7FF, data, 4);
+    SendData(0x7FF, data, 4);
 }
 
 /**
@@ -304,7 +298,7 @@ void DMMotor::WriteReg(DMMotorReg reg, uint8_t value[4])
     uint8_t can_id_high = (can_id_ >> 8) & 0x07;
 
     uint8_t data[8] = {can_id_low, can_id_high, 0x55, static_cast<uint8_t>(reg), value[0], value[1], value[2], value[3]};
-    DMSendData(0x7FF, data, 8);
+    SendData(0x7FF, data, 8);
 }
 
 /**
@@ -318,7 +312,7 @@ void DMMotor::ReadFeedback(void)
     uint8_t can_id_high = (can_id_ >> 8) & 0x07;
 
     uint8_t data[4] = {can_id_low, can_id_high, 0xCC, 0x00};
-    DMSendData(0x7FF, data, 4);
+    SendData(0x7FF, data, 4);
 }
 
 /**
@@ -332,7 +326,7 @@ void DMMotor::SaveToFlash(void)
     uint8_t can_id_high = (can_id_ >> 8) & 0x07; /* 电机地址高 3 位 */
 
 	uint8_t data[4] = {can_id_low, can_id_high, 0xAA, 0x01};
-    DMSendData(0x7FF, data, 4);
+    SendData(0x7FF, data, 4);
 }
 
 /**

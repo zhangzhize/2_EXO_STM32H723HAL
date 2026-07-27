@@ -19,6 +19,8 @@ static uint32_t exo_run_time_us = 0; /* 用于统计 Exo::Run() 的运行时间,
 
 void VofaCdcSendJustFloat(DmaUnionBuffer &buf, uint16_t float_count)
 {
+  if (float_count >= DMA_UNION_BUF_SIZE_FLOATS) return;
+
   uint16_t count = 4u * float_count;
   buf.u8_data[count++] = 0x00;
   buf.u8_data[count++] = 0x00;
@@ -82,7 +84,8 @@ void AnkleJoint::Calibrate()
   /* 运动学偏置: 有 IMU 即可 */
   if (ps_.shank_imu_.IsUsable() && ps_.foot_imu_.IsUsable() && !pj_.is_sagittal_pos_offset_valid_)
   {
-    pj_.sagittal_pos_offset_rad_ = ps_.foot_imu_.SagittalRawRad() - ps_.shank_imu_.SagittalRawRad();
+    pj_.sagittal_pos_offset_rad_ =
+      WrapPi(ps_.foot_imu_.SagittalRawRad() - ps_.shank_imu_.SagittalRawRad());
     pj_.is_sagittal_pos_offset_valid_ = true;
   }
 }
@@ -123,13 +126,13 @@ void AnkleJoint::Read()
   if (pj_.is_left_)
   {
     pj_.link_pos_rad_ = motor_.position_ - pj_.link_pos_offset_rad_;
-    pj_.link_vel_radps_ = motor_.speed_;
+    pj_.UpdateLinkVelocity(motor_.speed_);
     pj_.tor_output_Nm_ = motor_.torque_;
   }
   else
   {
     pj_.link_pos_rad_ = -motor_.position_ - pj_.link_pos_offset_rad_;
-    pj_.link_vel_radps_ = -motor_.speed_;
+    pj_.UpdateLinkVelocity(-motor_.speed_);
     pj_.tor_output_Nm_ = -motor_.torque_;
   }
 }
@@ -214,12 +217,24 @@ void KneeJoint::UpdateDivekarBiLegContext(KneeJoint &left_knee, KneeJoint &right
 
   bi_leg_ctx_.theta_k_abs_diff_rad = fabs(left_knee.divekar_state_.theta_k_rad - right_knee.divekar_state_.theta_k_rad);
   bi_leg_ctx_.gate_sts_knee_pos_sym = Sigmoid(bi_leg_ctx_.theta_k_abs_diff_rad, divekar_params_.m_sts_knee_pos_sym, divekar_params_.d_sts_knee_pos_sym);
-  bi_leg_ctx_.gate_sts_left_knee_raise_vel = SigmoidFromZero(left_knee.divekar_state_.theta_k_dot_sts_lpf_radps, divekar_params_.m_sts_knee_raise_vel, divekar_params_.d_sts_knee_raise_vel);
-  bi_leg_ctx_.gate_sts_right_knee_raise_vel = SigmoidFromZero(right_knee.divekar_state_.theta_k_dot_sts_lpf_radps, divekar_params_.m_sts_knee_raise_vel, divekar_params_.d_sts_knee_raise_vel);
-  bi_leg_ctx_.gate_sts_bilateral_knee_raise_vel = _min(bi_leg_ctx_.gate_sts_left_knee_raise_vel, bi_leg_ctx_.gate_sts_right_knee_raise_vel);
-  bi_leg_ctx_.gate_sts_left_knee_lower_vel = SigmoidFromZero(left_knee.divekar_state_.theta_k_dot_sts_lpf_radps, divekar_params_.m_sts_knee_lower_vel, divekar_params_.d_sts_knee_lower_vel);
-  bi_leg_ctx_.gate_sts_right_knee_lower_vel = SigmoidFromZero(right_knee.divekar_state_.theta_k_dot_sts_lpf_radps, divekar_params_.m_sts_knee_lower_vel, divekar_params_.d_sts_knee_lower_vel);
-  bi_leg_ctx_.gate_sts_bilateral_knee_lower_vel = _min(bi_leg_ctx_.gate_sts_left_knee_lower_vel, bi_leg_ctx_.gate_sts_right_knee_lower_vel);
+  bi_leg_ctx_.gate_sts_left_knee_raise_vel = Sigmoid(left_knee.divekar_state_.theta_k_dot_radps, divekar_params_.m_sts_knee_raise_vel, divekar_params_.d_sts_knee_raise_vel);
+  bi_leg_ctx_.gate_sts_right_knee_raise_vel = Sigmoid(right_knee.divekar_state_.theta_k_dot_radps, divekar_params_.m_sts_knee_raise_vel, divekar_params_.d_sts_knee_raise_vel);
+  bi_leg_ctx_.gate_sts_bilateral_knee_raise_vel = sqrtf(bi_leg_ctx_.gate_sts_left_knee_raise_vel * bi_leg_ctx_.gate_sts_right_knee_raise_vel);
+  bi_leg_ctx_.gate_sts_left_knee_lower_vel = Sigmoid(left_knee.divekar_state_.theta_k_dot_radps, divekar_params_.m_sts_knee_lower_vel, divekar_params_.d_sts_knee_lower_vel);
+  bi_leg_ctx_.gate_sts_right_knee_lower_vel = Sigmoid(right_knee.divekar_state_.theta_k_dot_radps, divekar_params_.m_sts_knee_lower_vel, divekar_params_.d_sts_knee_lower_vel);
+  bi_leg_ctx_.gate_sts_bilateral_knee_lower_vel = sqrtf(bi_leg_ctx_.gate_sts_left_knee_lower_vel * bi_leg_ctx_.gate_sts_right_knee_lower_vel);
+  const float left_lower_vel_radps = _max(left_knee.divekar_state_.theta_k_dot_radps, 0.0f);
+  const float right_lower_vel_radps = _max(right_knee.divekar_state_.theta_k_dot_radps, 0.0f);
+  bi_leg_ctx_.bilateral_lower_vel_radps = sqrtf(left_lower_vel_radps * right_lower_vel_radps);
+  const float theta_k_mean_rad =
+    0.5f * (left_knee.divekar_state_.theta_k_rad + right_knee.divekar_state_.theta_k_rad);
+  bi_leg_ctx_.gate_sts_deep_flex_decay =
+    Sigmoid(theta_k_mean_rad,
+            divekar_params_.m_sts_deep_flex_decay,
+            divekar_params_.d_sts_deep_flex_decay);
+  bi_leg_ctx_.gate_sts_left_thigh_flex = Sigmoid(left_knee.divekar_state_.theta_th_rad, divekar_params_.m_sts_thigh_flex, divekar_params_.d_sts_thigh_flex);
+  bi_leg_ctx_.gate_sts_right_thigh_flex = Sigmoid(right_knee.divekar_state_.theta_th_rad, divekar_params_.m_sts_thigh_flex, divekar_params_.d_sts_thigh_flex);
+  bi_leg_ctx_.gate_sts_bilateral_thigh_flex = _min(bi_leg_ctx_.gate_sts_left_thigh_flex, bi_leg_ctx_.gate_sts_right_thigh_flex);
 
   const float body_weight_N = _max(pe.user_info_.weight_kg_, 1.0f) * 10.0f;
   const FsrGaitData &left_fsr = pe.left_side_.fsr_gait_data_;
@@ -245,10 +260,10 @@ void KneeJoint::UpdateDivekarBiLegContext(KneeJoint &left_knee, KneeJoint &right
     bi_leg_ctx_.right_grf_BW = 0.0f;
     bi_leg_ctx_.right_heel_BW = 0.0f;
   }
-  bi_leg_ctx_.gate_F_heel_left = Sigmoid(bi_leg_ctx_.left_heel_BW, divekar_params_.m_F, divekar_params_.d_F);
-  bi_leg_ctx_.gate_F_heel_right = Sigmoid(bi_leg_ctx_.right_heel_BW, divekar_params_.m_F, divekar_params_.d_F);
-  bi_leg_ctx_.gate_F_grf_inv_left = Sigmoid(bi_leg_ctx_.left_grf_BW, -divekar_params_.m_F, divekar_params_.d_F);
-  bi_leg_ctx_.gate_F_grf_inv_right = Sigmoid(bi_leg_ctx_.right_grf_BW, -divekar_params_.m_F, divekar_params_.d_F);
+  bi_leg_ctx_.gate_F_heel_left = Sigmoid(bi_leg_ctx_.left_heel_BW, divekar_params_.m_heel, divekar_params_.d_heel);
+  bi_leg_ctx_.gate_F_heel_right = Sigmoid(bi_leg_ctx_.right_heel_BW, divekar_params_.m_heel, divekar_params_.d_heel);
+  bi_leg_ctx_.gate_F_grf_inv_left = Sigmoid(bi_leg_ctx_.left_grf_BW, -divekar_params_.m_grf_unloaded, divekar_params_.d_grf_unloaded);
+  bi_leg_ctx_.gate_F_grf_inv_right = Sigmoid(bi_leg_ctx_.right_grf_BW, -divekar_params_.m_grf_unloaded, divekar_params_.d_grf_unloaded);
 
   bi_leg_ctx_.gate_sts_left_foot_loaded = Sigmoid(bi_leg_ctx_.left_grf_BW, divekar_params_.m_sts_foot_loaded, divekar_params_.d_sts_foot_loaded);
   bi_leg_ctx_.gate_sts_right_foot_loaded = Sigmoid(bi_leg_ctx_.right_grf_BW, divekar_params_.m_sts_foot_loaded, divekar_params_.d_sts_foot_loaded);
@@ -257,17 +272,17 @@ void KneeJoint::UpdateDivekarBiLegContext(KneeJoint &left_knee, KneeJoint &right
 
 void KneeJoint::LatchDivekarLeadingLeg(KneeJoint &left_knee, KneeJoint &right_knee, bool left_fs, bool right_fs)
 {
-  static constexpr float kSeatedThighFlexionThresholdRad = 1.0f;
-  const bool both_thighs_flexed =
-    left_knee.divekar_state_.theta_th_rad > kSeatedThighFlexionThresholdRad &&
-    right_knee.divekar_state_.theta_th_rad > kSeatedThighFlexionThresholdRad;
-  if (both_thighs_flexed)
+  bi_leg_ctx_.left_fs_accepted = false;
+  bi_leg_ctx_.right_fs_accepted = false;
+
+  if (left_fs == right_fs)
   {
     return;
   }
 
-  if (left_fs && !right_fs)
+  if (left_fs)
   {
+    bi_leg_ctx_.left_fs_accepted = true;
     left_knee.divekar_state_.delta_ajc_y_fs_cm = bi_leg_ctx_.delta_ajc_y_l_minus_r_cm;
     left_knee.divekar_state_.gate_delta_ajc_y_a_fs = Sigmoid(left_knee.divekar_state_.delta_ajc_y_fs_cm, divekar_params_.m_ajc_y_a, divekar_params_.d_ajc_y_a);
     left_knee.divekar_state_.gate_delta_ajc_y_na_fs = Sigmoid(left_knee.divekar_state_.delta_ajc_y_fs_cm, divekar_params_.m_ajc_y_na, divekar_params_.d_ajc_y_na);
@@ -275,12 +290,11 @@ void KneeJoint::LatchDivekarLeadingLeg(KneeJoint &left_knee, KneeJoint &right_kn
     bi_leg_ctx_.delta_ajc_dist_fs_cm = bi_leg_ctx_.delta_ajc_dist_cm;
     bi_leg_ctx_.gate_delta_ajc_dist_fs = bi_leg_ctx_.gate_delta_ajc_dist;
 
-    left_knee.divekar_state_.is_leading_leg = true;
-    right_knee.divekar_state_.is_leading_leg = false;
-    bi_leg_ctx_.is_leading_left = true;
+    bi_leg_ctx_.leading_leg = LeadingLeg::kLeft;
   }
-  else if (!left_fs && right_fs)
+  else
   {
+    bi_leg_ctx_.right_fs_accepted = true;
     right_knee.divekar_state_.delta_ajc_y_fs_cm = -bi_leg_ctx_.delta_ajc_y_l_minus_r_cm;
     right_knee.divekar_state_.gate_delta_ajc_y_a_fs = Sigmoid(right_knee.divekar_state_.delta_ajc_y_fs_cm, divekar_params_.m_ajc_y_a, divekar_params_.d_ajc_y_a);
     right_knee.divekar_state_.gate_delta_ajc_y_na_fs = Sigmoid(right_knee.divekar_state_.delta_ajc_y_fs_cm, divekar_params_.m_ajc_y_na, divekar_params_.d_ajc_y_na);
@@ -288,9 +302,7 @@ void KneeJoint::LatchDivekarLeadingLeg(KneeJoint &left_knee, KneeJoint &right_kn
     bi_leg_ctx_.delta_ajc_dist_fs_cm = bi_leg_ctx_.delta_ajc_dist_cm;
     bi_leg_ctx_.gate_delta_ajc_dist_fs = bi_leg_ctx_.gate_delta_ajc_dist;
 
-    right_knee.divekar_state_.is_leading_leg = true;
-    left_knee.divekar_state_.is_leading_leg = false;
-    bi_leg_ctx_.is_leading_left = false;
+    bi_leg_ctx_.leading_leg = LeadingLeg::kRight;
   }
 }
 
@@ -299,10 +311,6 @@ void KneeJoint::DivekarReset()
   divekar_state_ = DivekarState{};
   divekar_output_ = DivekarOutput{};
 
-  const float initial_velocity_radps = divekar_params_.use_thigh_imu_and_link_feedback ?
-                                         pj_.link_vel_radps_ :
-                                         pj_.sagittal_vel_radps_;
-  divekar_state_.theta_k_dot_sts_lpf_radps = initial_velocity_radps;
   UpdateDivekarFeedbackKinematics();
   divekar_state_.theta_k_hs_rad = divekar_state_.theta_k_rad;
   divekar_state_.theta_k_dot_prev_radps = divekar_state_.theta_k_dot_radps;
@@ -322,27 +330,23 @@ void KneeJoint::UpdateDivekarFeedbackKinematics()
   if (divekar_params_.use_thigh_imu_and_link_feedback)
   {
     divekar_state_.theta_k_rad = pj_.link_pos_rad_;
-    divekar_state_.theta_k_dot_radps = pj_.link_vel_radps_;
+    divekar_state_.theta_k_dot_radps = pj_.link_vel_lpf_radps_;
     divekar_state_.theta_sh_rad = divekar_state_.theta_th_rad - divekar_state_.theta_k_rad;
   }
   else
   {
     divekar_state_.theta_k_rad = pj_.sagittal_pos_rad_;
-    divekar_state_.theta_k_dot_radps = pj_.sagittal_vel_radps_;
+    divekar_state_.theta_k_dot_radps = pj_.sagittal_vel_lpf_radps_;
     divekar_state_.theta_sh_rad = ps_.shank_imu_.SagittalFromStandRefRad();
   }
-
-  divekar_state_.theta_k_dot_sts_lpf_radps +=
-    divekar_params_.kStsVelocityLpfAlpha *
-    (divekar_state_.theta_k_dot_radps - divekar_state_.theta_k_dot_sts_lpf_radps);
 
   divekar_state_.theta_trunk_rad = pe_.body_imu_.SagittalFromStandRefRad();
 }
 
 void KneeJoint::DivekarUpdate()
 {
-  divekar_state_.own_foot_strike_event = ps_.fsr_gait_data_.event_fs_;
-  if (divekar_state_.own_foot_strike_event)
+  bool own_foot_strike_event = ps_.is_left_ ? bi_leg_ctx_.left_fs_accepted : bi_leg_ctx_.right_fs_accepted;
+  if (own_foot_strike_event)
   {
     divekar_state_.theta_k_hs_rad = divekar_state_.theta_k_rad;
     divekar_state_.theta_kd_max_rad = 0.0f;
@@ -362,10 +366,50 @@ void KneeJoint::DivekarUpdate()
   const float gate_delta_ajc_dist_inv_fs = 1.0f - bi_leg_ctx_.gate_delta_ajc_dist_fs;
 
   /* Task sensitization variables */
-  const float xi = divekar_state_.is_leading_leg ? 1.0f : 0.0f;
+  const bool is_leading = ps_.is_left_ ?
+                            bi_leg_ctx_.leading_leg == LeadingLeg::kLeft :
+                            bi_leg_ctx_.leading_leg == LeadingLeg::kRight;
+  const float xi = is_leading ? 1.0f : 0.0f;
 
   const float dt_s = _constrain(bi_leg_ctx_.dt_s, 1.0e-5f, 0.1f);
-  const float theta_k_ddot_lpf_radps2 = GetThetaKddotLpf(divekar_state_.theta_k_dot_radps, dt_s);
+  divekar_state_.theta_k_dot_sample_elapsed_s =
+    _constrain(divekar_state_.theta_k_dot_sample_elapsed_s + dt_s, 1.0e-5f, 0.1f);
+  uint32_t theta_k_dot_sample_id = 0u;
+  float theta_k_ddot_lpf_alpha = divekar_params_.theta_k_ddot_lpf_alpha;
+
+  if (divekar_params_.use_thigh_imu_and_link_feedback)
+  {
+    theta_k_dot_sample_id = motor_.status_feedback_cnt_;
+  }
+  else
+  {
+    /* A human-knee velocity sample is complete only after both IMUs advance. */
+    const uint32_t thigh_sample_ms = ps_.thigh_imu_.last_update_ms_;
+    const uint32_t shank_sample_ms = ps_.shank_imu_.last_update_ms_;
+    if (thigh_sample_ms > 0u && shank_sample_ms > 0u)
+    {
+      theta_k_dot_sample_id = _min(thigh_sample_ms, shank_sample_ms);
+    }
+
+    theta_k_ddot_lpf_alpha = divekar_params_.theta_k_ddot_lpf_alpha_imu;
+  }
+
+  const bool has_new_theta_k_dot_sample =
+    theta_k_dot_sample_id != divekar_state_.theta_k_dot_sample_id;
+  if (has_new_theta_k_dot_sample)
+  {
+    divekar_state_.theta_k_dot_sample_id = theta_k_dot_sample_id;
+  }
+
+  const float theta_k_ddot_lpf_radps2 =
+    GetThetaKddotLpf(divekar_state_.theta_k_dot_radps,
+                     divekar_state_.theta_k_dot_sample_elapsed_s,
+                     has_new_theta_k_dot_sample,
+                     theta_k_ddot_lpf_alpha);
+  if (has_new_theta_k_dot_sample)
+  {
+    divekar_state_.theta_k_dot_sample_elapsed_s = 0.0f;
+  }
 
   divekar_state_.gate_theta_la = Sigmoid(divekar_state_.theta_la_rad, divekar_params_.m_theta_la, divekar_params_.d_theta_la);
   divekar_state_.gate_theta_kd_max = Sigmoid(divekar_state_.theta_kd_max_rad, divekar_params_.m_na, divekar_params_.d_na);
@@ -401,14 +445,14 @@ void KneeJoint::DivekarUpdate()
     divekar_params_.g_st *
     sinf(divekar_state_.theta_th_rad) *
     f_grf_ipsi_BW *
-    Step(divekar_state_.theta_th_rad);
+    Step(divekar_state_.theta_th_rad);  /* TODO: CHECK */
 
   /* -------------------------- Task sensitization --------------------------- */
-  divekar_state_.gate_F_heel_contra_inv = 1.0f - gate_F_heel_contra;
-  divekar_state_.gate_delta_ajc_dist_plus_F_grf = _min(bi_leg_ctx_.gate_delta_ajc_dist_fs + gate_F_grf_contra_inv, 1.0f);
+  float gate_F_heel_contra_inv = 1.0f - gate_F_heel_contra;
+  float gate_delta_ajc_dist_plus_F_grf = _min(bi_leg_ctx_.gate_delta_ajc_dist_fs + gate_F_grf_contra_inv, 1.0f);
   divekar_state_.gate_theta_k_dot_sw = Sigmoid(divekar_state_.theta_k_dot_radps, divekar_params_.m_grav_sw, divekar_params_.d_grav_sw);
-
   divekar_state_.gate_F_grf_u = Sigmoid(f_grf_ipsi_BW, divekar_params_.m_grf_u, divekar_params_.d_grf_u);
+
   /* LL spring */
   divekar_output_.tau_LL_mod_Nm =
     divekar_output_.tau_LL_Nm *
@@ -426,50 +470,17 @@ void KneeJoint::DivekarUpdate()
   divekar_output_.tau_na_mod_Nm =
     divekar_output_.tau_na_Nm *
     divekar_state_.gate_delta_ajc_y_na_fs *
-    divekar_state_.gate_F_heel_contra_inv *
-    divekar_state_.gate_delta_ajc_dist_plus_F_grf;
+    gate_F_heel_contra_inv *
+    gate_delta_ajc_dist_plus_F_grf;
 
   /* partial gravity compensation in stance */
   divekar_output_.tau_grav_st_mod_Nm =
     divekar_output_.tau_grav_st_Nm *
     bi_leg_ctx_.gate_delta_ajc_dist_fs *
-    divekar_state_.gate_F_heel_contra_inv;
-
-  /* ZZZ: STS */
-  const float gate_sts_knee_raise_vel = is_left ?
-                                          bi_leg_ctx_.gate_sts_left_knee_raise_vel :
-                                          bi_leg_ctx_.gate_sts_right_knee_raise_vel;
-  const float gate_sts_knee_lower_vel = is_left ?
-                                          bi_leg_ctx_.gate_sts_left_knee_lower_vel :
-                                          bi_leg_ctx_.gate_sts_right_knee_lower_vel;
-  divekar_state_.gate_sts_knee_lower_vel = gate_sts_knee_lower_vel;
-  divekar_state_.gate_sts_stand2sit =
-    gate_sts_knee_lower_vel *
-    bi_leg_ctx_.gate_sts_both_foot_loaded;
-  divekar_state_.gate_sts_sit2stand =
-    gate_sts_knee_raise_vel *
-    bi_leg_ctx_.gate_sts_both_foot_loaded *
-    (1.0f - divekar_state_.gate_sts_stand2sit);
-  divekar_output_.tau_sit2stand_Nm =
-    divekar_state_.gate_sts_sit2stand *
-    divekar_params_.k_sts *
-    divekar_state_.theta_k_rad *
-    Step(divekar_state_.theta_k_rad);
-  divekar_output_.tau_stand2sit_Nm =
-    divekar_state_.gate_sts_stand2sit *
-    divekar_params_.c_sts *
-    divekar_state_.theta_k_dot_sts_lpf_radps;
-  divekar_output_.tau_sts_Nm = divekar_output_.tau_sit2stand_Nm + divekar_output_.tau_stand2sit_Nm;
-
-  divekar_state_.gate_sts_ctx =
-    (1.0f - bi_leg_ctx_.gate_delta_ajc_dist) *
-    bi_leg_ctx_.gate_sts_knee_pos_sym;
-  divekar_output_.tau_sts_mod_Nm = divekar_state_.gate_sts_ctx * divekar_output_.tau_sts_Nm;
+    gate_F_heel_contra_inv;
 
   /* -------------------------- final assistive stance torque  ------------------------- */
   divekar_output_.tau_st_Nm =
-    // divekar_output_.tau_LL_mod_Nm +
-    divekar_output_.tau_sts_mod_Nm +
     divekar_output_.tau_a_mod_Nm +
     divekar_output_.tau_na_mod_Nm +
     divekar_output_.tau_grav_st_mod_Nm;
@@ -501,21 +512,175 @@ void KneeJoint::DivekarUpdate()
   /* final assistive swing torque */
   divekar_output_.tau_sw_Nm = divekar_output_.tau_grav_sw_Nm + divekar_output_.tau_inertial_sw_Nm + divekar_output_.tau_sd_sw_Nm;
 
-  /* ------------------------- Stance/swing blending ------------------------- */
-  divekar_output_.tau_divekar_Nm =
+  /* ZZZ: STS */
+  divekar_state_.gate_sts_stand2sit =
+    bi_leg_ctx_.gate_sts_bilateral_knee_lower_vel *
+    bi_leg_ctx_.gate_sts_both_foot_loaded;
+  divekar_state_.gate_sts_sit2stand =
+    bi_leg_ctx_.gate_sts_bilateral_knee_raise_vel *
+    bi_leg_ctx_.gate_sts_both_foot_loaded;
+  divekar_output_.tau_sit2stand_Nm =
+    divekar_state_.gate_sts_sit2stand *
+    divekar_params_.k_sts *
+    divekar_state_.theta_k_rad *
+    Step(divekar_state_.theta_k_rad);
+  divekar_output_.tau_stand2sit_Nm =
+    divekar_state_.gate_sts_stand2sit *
+    (divekar_params_.k_stand2sit *
+       bi_leg_ctx_.gate_sts_deep_flex_decay *
+       divekar_state_.theta_k_rad *
+       Step(divekar_state_.theta_k_rad) +
+     divekar_params_.c_sts *
+       bi_leg_ctx_.bilateral_lower_vel_radps);
+  divekar_output_.tau_sts_Nm = divekar_output_.tau_sit2stand_Nm + divekar_output_.tau_stand2sit_Nm;
+  divekar_state_.gate_sts_ctx =
+    (1.0f - bi_leg_ctx_.gate_delta_ajc_dist) *
+    bi_leg_ctx_.gate_sts_knee_pos_sym *
+    bi_leg_ctx_.gate_sts_bilateral_thigh_flex;
+  divekar_output_.tau_sts_mod_Nm = divekar_state_.gate_sts_ctx * divekar_output_.tau_sts_Nm;
+
+  /* ------------------------- Stance/swing/sts blending ------------------------- */
+  const float tau_gait_Nm =
     divekar_state_.gate_F_grf_u * divekar_output_.tau_st_Nm +
     (1.0f - divekar_state_.gate_F_grf_u) * divekar_output_.tau_sw_Nm;
+
+  divekar_output_.tau_divekar_Nm =
+    (1.0f - divekar_state_.gate_sts_ctx) * tau_gait_Nm +
+    divekar_output_.tau_sts_mod_Nm;
   divekar_output_.tau_divekar_lpf_Nm = GetTorqueLpf(divekar_output_.tau_divekar_Nm);
-  divekar_output_.tau_divekar_lpf_limited_Nm = ApplySafetyLimits(divekar_output_.tau_divekar_lpf_Nm, dt_s);
+
+  UpdateDivekarMotionControlOutput();
 }
 
-float KneeJoint::GetThetaKddotLpf(float theta_k_dot_radps, float dt_s)
+void KneeJoint::UpdateDivekarMotionControlOutput()
 {
+  /* TODO: After the feedforward arbitration is finalized, update this
+     equivalent MotionControl derivation to match the gait/STS blending. */
+  const bool is_left = ps_.is_left_;
+  const bool is_leading = is_left ?
+                            bi_leg_ctx_.leading_leg == LeadingLeg::kLeft :
+                            bi_leg_ctx_.leading_leg == LeadingLeg::kRight;
+  const float xi = is_leading ? 1.0f : 0.0f;
+  const float gate_F_heel_contra = is_left ?
+                                     bi_leg_ctx_.gate_F_heel_right :
+                                     bi_leg_ctx_.gate_F_heel_left;
+  const float gate_F_grf_contra_inv = is_left ?
+                                        bi_leg_ctx_.gate_F_grf_inv_right :
+                                        bi_leg_ctx_.gate_F_grf_inv_left;
+  const float gate_F_heel_contra_inv = 1.0f - gate_F_heel_contra;
+  const float gate_delta_ajc_dist_plus_F_grf =
+    _min(bi_leg_ctx_.gate_delta_ajc_dist_fs + gate_F_grf_contra_inv, 1.0f);
+
+  const float stance_blend = divekar_state_.gate_F_grf_u;
+  const float swing_blend = 1.0f - stance_blend;
+  const float ascent_gate =
+    Step(divekar_state_.theta_k_rad) *
+    divekar_state_.gate_theta_la *
+    xi *
+    divekar_state_.gate_delta_ajc_y_a_fs *
+    bi_leg_ctx_.gate_delta_ajc_dist_fs;
+  const float non_ascent_gate =
+    Step(divekar_state_.theta_kd_rad) *
+    divekar_state_.gate_theta_la *
+    xi *
+    divekar_state_.gate_delta_ajc_y_na_fs *
+    gate_F_heel_contra_inv *
+    gate_delta_ajc_dist_plus_F_grf;
+  const float sts_spring_gate =
+    divekar_state_.gate_sts_sit2stand *
+    divekar_state_.gate_sts_ctx *
+    Step(divekar_state_.theta_k_rad);
+  const float sts_damping_gate =
+    divekar_state_.gate_sts_stand2sit *
+    divekar_state_.gate_sts_ctx;
+
+  const float k_na_eff =
+    divekar_params_.k_na * divekar_state_.gate_theta_kd_max;
+  const float stiffness_ascent = divekar_params_.k_a * ascent_gate;
+  const float stiffness_non_ascent = k_na_eff * non_ascent_gate;
+  const float stiffness_sts = divekar_params_.k_sts * sts_spring_gate;
+  const float damping_non_ascent =
+    divekar_params_.c_na *
+    Step(divekar_state_.theta_k_dot_radps) *
+    non_ascent_gate;
+  const float damping_sts = divekar_params_.c_sts * sts_damping_gate;
+
+  const float stance_stiffness =
+    stiffness_ascent + stiffness_non_ascent + stiffness_sts;
+  const float stance_damping = damping_non_ascent + damping_sts;
+  const float stance_spring_torque_Nm =
+    stiffness_ascent * (0.0f - divekar_state_.theta_k_rad) +
+    stiffness_non_ascent *
+      (divekar_state_.theta_k_hs_rad - divekar_state_.theta_k_rad) +
+    stiffness_sts * (0.0f - divekar_state_.theta_k_rad);
+  const float stance_damping_torque_Nm =
+    damping_non_ascent * (0.0f - divekar_state_.theta_k_dot_radps) +
+    damping_sts * (0.0f - divekar_state_.theta_k_dot_radps);
+
+  const float swing_active =
+    Step(divekar_params_.theta_k_eq - divekar_state_.theta_k_rad);
+  const float swing_damping =
+    divekar_params_.c_sw *
+    Step(-divekar_state_.theta_k_dot_radps) *
+    swing_active;
+  const float swing_damping_torque_Nm =
+    swing_damping * (0.0f - divekar_state_.theta_k_dot_radps);
+  const float exp_arg =
+    _constrain(divekar_params_.x4 *
+                 (divekar_state_.theta_k_rad - divekar_params_.theta_k_eq),
+               -8.0f,
+               8.0f);
+  const float swing_nonlinear_spring_Nm =
+    -divekar_params_.k_sw * expf(exp_arg) * swing_active;
+
+  divekar_output_.mc_stiffness_Nm_per_rad =
+    stance_blend * stance_stiffness;
+  divekar_output_.mc_damping_Nm_s_per_rad =
+    stance_blend * stance_damping + swing_blend * swing_damping;
+
+  const float spring_torque_Nm =
+    stance_blend * stance_spring_torque_Nm;
+  const float damping_torque_Nm =
+    stance_blend * stance_damping_torque_Nm +
+    swing_blend * swing_damping_torque_Nm;
+  const float feedforward_divekar_Nm =
+    stance_blend * divekar_output_.tau_grav_st_mod_Nm +
+    swing_blend * (divekar_output_.tau_grav_sw_Nm +
+                   divekar_output_.tau_inertial_sw_Nm +
+                   swing_nonlinear_spring_Nm);
+
+  divekar_output_.mc_position_ref_rad = pj_.link_pos_rad_;
+  if (divekar_output_.mc_stiffness_Nm_per_rad > 1.0e-5f)
+  {
+    divekar_output_.mc_position_ref_rad +=
+      spring_torque_Nm / divekar_output_.mc_stiffness_Nm_per_rad;
+  }
+
+  divekar_output_.mc_velocity_ref_radps = pj_.link_vel_radps_;
+  if (divekar_output_.mc_damping_Nm_s_per_rad > 1.0e-5f)
+  {
+    divekar_output_.mc_velocity_ref_radps +=
+      damping_torque_Nm / divekar_output_.mc_damping_Nm_s_per_rad;
+  }
+
+  /* Divekar-positive torque assists extension; joint flexion is positive. */
+  divekar_output_.mc_torque_feedforward_Nm = -feedforward_divekar_Nm;
+}
+
+float KneeJoint::GetThetaKddotLpf(float theta_k_dot_radps, float dt_s, bool has_new_sample, float alpha)
+{
+  if (!has_new_sample)
+  {
+    return divekar_state_.theta_k_ddot_lpf_radps2;
+  }
+
   dt_s = _constrain(dt_s, 1.0e-5f, 0.1f);
   const float raw_ddot = divekar_state_.theta_k_dot_history_valid ? ((theta_k_dot_radps - divekar_state_.theta_k_dot_prev_radps) / dt_s) : 0.0f;
   divekar_state_.theta_k_dot_prev_radps = theta_k_dot_radps;
   divekar_state_.theta_k_dot_history_valid = true;
-  divekar_state_.theta_k_ddot_lpf_radps2 += divekar_params_.theta_k_ddot_lpf_alpha * (raw_ddot - divekar_state_.theta_k_ddot_lpf_radps2);
+  divekar_state_.theta_k_ddot_lpf_radps2 +=
+    _constrain(alpha, 0.0f, 1.0f) *
+    (raw_ddot - divekar_state_.theta_k_ddot_lpf_radps2);
   return divekar_state_.theta_k_ddot_lpf_radps2;
 }
 
@@ -560,7 +725,8 @@ void KneeJoint::Calibrate()
   /* 运动学偏置: 有 IMU 即可 */
   if (ps_.thigh_imu_.IsUsable() && ps_.shank_imu_.IsUsable() && !pj_.is_sagittal_pos_offset_valid_)
   {
-    pj_.sagittal_pos_offset_rad_ = ps_.thigh_imu_.SagittalRawRad() - ps_.shank_imu_.SagittalRawRad();
+    pj_.sagittal_pos_offset_rad_ =
+      WrapPi(ps_.thigh_imu_.SagittalRawRad() - ps_.shank_imu_.SagittalRawRad());
     pj_.is_sagittal_pos_offset_valid_ = true;
   }
 }
@@ -610,7 +776,7 @@ void KneeJoint::Read()
 
   const float sign = pj_.motor_to_joint_sign_;
   pj_.link_pos_rad_ = sign * (motor_.position_ - pj_.link_pos_offset_rad_);
-  pj_.link_vel_radps_ = sign * motor_.speed_;
+  pj_.UpdateLinkVelocity(sign * motor_.speed_);
   pj_.tor_output_Nm_ = sign * motor_.torque_;
 }
 
@@ -681,20 +847,84 @@ void KneeJoint::Assist()
     force_ramp_ms_ += 1;
 }
 
-void KneeJoint::ApplyDivekarFeedforward(float torque_scale)
+void KneeJoint::ApplyDivekarControl()
 {
   if (!pj_.is_actuator_enabled_) return;
 
-  torque_scale = _constrain(torque_scale, 0.0f, 1.0f);
+  float assistance_scale = _constrain(divekar_params_.assistance_scale, 0.0f, 1.0f);
+  const float dt_s = _constrain(bi_leg_ctx_.dt_s, 1.0e-5f, 0.1f);
 
-  /* Knee angle is flexion-positive, while positive Divekar torque assists
-     extension. Convert first to the joint coordinate, then to motor direction. */
-  pj_.tor_output_ref_Nm_ = -torque_scale * divekar_output_.tau_divekar_lpf_limited_Nm;
-  motor_.torque_forward_ = pj_.motor_to_joint_sign_ * pj_.tor_output_ref_Nm_;
-  motor_.position_ref_ = 0.0f;
-  motor_.speed_ref_ = 0.0f;
-  motor_.motion_mode_kp_ = 0.0f;
-  motor_.motion_mode_kd_ = 0.0f;
+  if (!divekar_params_.use_motion_control_impedance_output)
+  {
+    divekar_output_.tau_divekar_lpf_limited_Nm =
+      ApplySafetyLimits(divekar_output_.tau_divekar_lpf_Nm, dt_s);
+
+    /* Knee flexion is positive; positive Divekar torque assists extension. */
+    pj_.tor_output_ref_Nm_ = -assistance_scale * divekar_output_.tau_divekar_lpf_limited_Nm;
+    motor_.torque_forward_ = pj_.motor_to_joint_sign_ * pj_.tor_output_ref_Nm_;
+    motor_.position_ref_ = 0.0f;
+    motor_.speed_ref_ = 0.0f;
+    motor_.motion_mode_kp_ = 0.0f;
+    motor_.motion_mode_kd_ = 0.0f;
+    motor_.MotionControl();
+    return;
+  }
+
+  static constexpr float kMotorPositionLimitRad = 12.5f;
+  static constexpr float kMotorVelocityLimitRadps = 44.0f;
+  static constexpr float kMotorKpMax = 500.0f;
+  static constexpr float kMotorKdMax = 5.0f;
+  static constexpr float kMotorTorqueLimitNm = 17.0f;
+
+  const float sign = pj_.motor_to_joint_sign_;
+  const float joint_kp = _constrain(assistance_scale * divekar_output_.mc_stiffness_Nm_per_rad,
+                                    0.0f,
+                                    kMotorKpMax);
+  const float joint_kd = _constrain(assistance_scale * divekar_output_.mc_damping_Nm_s_per_rad,
+                                    0.0f,
+                                    kMotorKdMax);
+  const float joint_torque_feedforward_target_Nm =
+    _constrain(assistance_scale * divekar_output_.mc_torque_feedforward_Nm,
+               -kMotorTorqueLimitNm,
+               kMotorTorqueLimitNm);
+
+  const float motor_position_ref =
+    _constrain(pj_.link_pos_offset_rad_ + sign * divekar_output_.mc_position_ref_rad,
+               -kMotorPositionLimitRad,
+               kMotorPositionLimitRad);
+  const float motor_velocity_ref =
+    _constrain(sign * divekar_output_.mc_velocity_ref_radps,
+               -kMotorVelocityLimitRadps,
+               kMotorVelocityLimitRadps);
+
+  const float applied_joint_position_ref_rad =
+    sign * (motor_position_ref - pj_.link_pos_offset_rad_);
+  const float applied_joint_velocity_ref_radps = sign * motor_velocity_ref;
+  const float joint_impedance_torque_Nm =
+    joint_kp * (applied_joint_position_ref_rad - pj_.link_pos_rad_) +
+    joint_kd * (applied_joint_velocity_ref_radps - pj_.link_vel_radps_);
+  const float joint_torque_target_Nm =
+    joint_impedance_torque_Nm + joint_torque_feedforward_target_Nm;
+
+  /* ApplySafetyLimits uses Divekar-positive extension torque, whereas the
+     joint coordinate is flexion-positive. Only extension-torque rise is
+     rate-limited; torque removal remains immediate. */
+  const float divekar_torque_limited_Nm =
+    ApplySafetyLimits(-joint_torque_target_Nm, dt_s);
+  divekar_output_.tau_divekar_lpf_limited_Nm = divekar_torque_limited_Nm;
+  const float joint_torque_limited_Nm = -divekar_torque_limited_Nm;
+  const float joint_torque_feedforward_applied_Nm =
+    _constrain(joint_torque_limited_Nm - joint_impedance_torque_Nm,
+               -kMotorTorqueLimitNm,
+               kMotorTorqueLimitNm);
+
+  motor_.position_ref_ = motor_position_ref;
+  motor_.speed_ref_ = motor_velocity_ref;
+  motor_.motion_mode_kp_ = joint_kp;
+  motor_.motion_mode_kd_ = joint_kd;
+  motor_.torque_forward_ = sign * joint_torque_feedforward_applied_Nm;
+  pj_.tor_output_ref_Nm_ =
+    joint_impedance_torque_Nm + joint_torque_feedforward_applied_Nm;
   motor_.MotionControl();
 }
 
@@ -737,269 +967,6 @@ void KneeJoint::OpenLoopTorqueControl()
   motor_.EnableMotor();
 }
 
-void KneeSeaJoint::Calibrate()
-{
-  /* 电机标定 */
-  if (pj_.is_actuator_enabled_ && !pj_.is_link_pos_offset_valid_)
-  {
-    if (pj_.pos_linear_encoder_mm_ < 0) return;
-    pj_.pos_slider_offset_mm_ = pj_.pos_slider_mm_ - pj_.pos_linear_encoder_mm_;
-    pj_.is_link_pos_offset_valid_ = true;
-  }
-
-  /* SEA 膝关节不需要人体关节角度偏置 */
-}
-
-void KneeSeaJoint::Read()
-{
-  if (!pj_.is_actuator_enabled_) return;
-
-  /* 滑块位移 = 电机输出转动角度 * 螺母导程 - 偏置 */
-  pj_.pos_slider_mm_ = pj_.screw_lead_rad2mm_ * motor_.shaft_pos_feedback_rad_ - pj_.pos_slider_offset_mm_;
-  pj_.vel_slider_mmps_ = pj_.screw_lead_rad2mm_ * motor_.shaft_speed_feedback_radps_;
-
-  /* SEA 输出位移 = 磁栅尺反馈位置 - 偏置 */
-  pj_.pos_linear_encoder_mm_ = mag_encoder_.absolute_position_mm_ - pj_.pos_linear_encoder_offset_mm_;
-  pj_.vel_linear_encoder_mmps_ = 0.0f; /** #HACK 暂时不需要 */
-
-  /* 弹簧力 = 2 * 刚度 * 压缩长度 */
-  pj_.pos_bias_mm_ = pj_.pos_slider_mm_ - pj_.pos_linear_encoder_mm_;
-  pj_.force_spring_N_ = pj_.spring_stiffness_Npmm_ * pj_.pos_bias_mm_;
-
-  /* 连杆/机构角由磁栅尺换算; 人体膝角在 Exo::UpdateHumanJointKinematics() 中由 IMU 更新 */
-  pj_.link_pos_rad_ = (pj_.pos_linear_encoder_mm_) / (pj_.max_pos_linear_encoder_mm_ - pj_.pos_linear_encoder_offset_mm_) * _PI_2;
-  pj_.link_vel_radps_ = 0.0f;
-
-  mag_encoder_.SendRequest();
-}
-
-bool KneeSeaJoint::IsMotorConnect()
-{
-  if (!pj_.is_actuator_enabled_) return true;
-
-  return true; /** 无需主动连接通信 */
-}
-
-void KneeSeaJoint::Shutdown()
-{
-  motor_.DisableMotor();
-}
-
-void KneeSeaJoint::Standby()
-{
-  if (!pj_.is_actuator_enabled_ || !pj_.is_link_pos_offset_valid_) return;
-
-  float force_profile = 0.0f;
-  /* SEA椹卞姩宸﹀彸鍚屽悜 */
-  // force_profile = pj_.is_left_ ? force_profile : -force_profile;
-
-  /* 寮圭哀闆跺姏鎺у埗 */
-  pj_.force_spring_ref_N_ = force_profile * pe_.user_info_.weight_kg_;
-  SpringForceControl();
-}
-
-void KneeSeaJoint::Assist()
-{
-  if (!pj_.is_actuator_enabled_) return;
-
-  float force_profile = 0.0f;
-
-  const FsrGaitData &fsr = pj_.is_left_ ? pe_.left_side_.fsr_gait_data_ : pe_.right_side_.fsr_gait_data_;
-
-  /* #HACK 先走几步再助力 */
-  if (fsr.is_phase_valid_)
-  {
-    force_profile = force_profile_generator_.GetForceProfile(fsr.percent_gait_, pj_.sagittal_pos_rad_, pj_.sagittal_vel_radps_);
-  }
-
-  pj_.force_spring_ref_N_ = force_profile * pe_.user_info_.weight_kg_;
-
-  SpringForceControl();
-  // Standby();
-}
-
-void KneeSeaJoint::JointPosControl()
-{
-  if (ctrl_mode_ != CtrlMode::kPosition)
-  {
-    joint_pos_pid_.ResetError();
-    spring_force_pid_.ResetError();
-    ctrl_mode_ = CtrlMode::kPosition;
-  }
-
-  float pos_err_rad = pj_.link_pos_ctrlref_rad_ - pj_.link_pos_rad_;
-  motor_.rotor_iq_reference_amp_ = joint_pos_pid_(pos_err_rad);
-
-  motor_.CurrentControl();
-}
-
-void KneeSeaJoint::SpringForceControl()
-{
-  if (ctrl_mode_ != CtrlMode::kSpringForce)
-  {
-    joint_pos_pid_.ResetError();
-    spring_force_pid_.ResetError();
-    ctrl_mode_ = CtrlMode::kSpringForce;
-  }
-
-  float force_err_N = pj_.force_spring_ref_N_ - pj_.force_spring_N_;
-  motor_.rotor_iq_reference_amp_ = spring_force_pid_(force_err_N);
-
-  motor_.CurrentControl();
-}
-
-void HipJoint::Calibrate()
-{
-  /* 连杆角度标定: 仅电机启用时执行 */
-  if (pj_.is_actuator_enabled_ && !pj_.is_link_pos_offset_valid_)
-  {
-    pj_.link_pos_offset_rad_ = pj_.link_pos_rad_;
-    pj_.is_link_pos_offset_valid_ = true;
-  }
-
-  /* 运动学偏置: 有 IMU 即可 */
-  if (pe_.body_imu_.IsUsable() && ps_.thigh_imu_.IsUsable() && !pj_.is_sagittal_pos_offset_valid_)
-  {
-    pj_.sagittal_pos_offset_rad_ = ps_.thigh_imu_.SagittalRawRad() - pe_.body_imu_.SagittalRawRad();
-    pj_.is_sagittal_pos_offset_valid_ = true;
-  }
-}
-
-void HipJoint::Read()
-{
-  if (!pj_.is_actuator_enabled_) return;
-
-  if (pj_.is_left_)
-  {
-    pj_.link_pos_rad_ = motor_.feedback_.pos_rad_ - pj_.link_pos_offset_rad_;
-    pj_.link_vel_radps_ = motor_.feedback_.vel_radps_;
-    pj_.tor_output_Nm_ = motor_.feedback_.tor_output_Nm_;
-  }
-  else
-  {
-    pj_.link_pos_rad_ = -motor_.feedback_.pos_rad_ - pj_.link_pos_offset_rad_;
-    pj_.link_vel_radps_ = -motor_.feedback_.vel_radps_;
-    pj_.tor_output_Nm_ = -motor_.feedback_.tor_output_Nm_;
-  }
-}
-
-bool HipJoint::IsMotorConnect()
-{
-  if (!pj_.is_actuator_enabled_) return true;
-
-  // motor_.ctrl_param_.mode_id_ = DMMotorModeID::kMIT;
-  // motor_.SetMotorMode();
-  motor_.EnableMotor();
-  if (motor_.feedback_.flag_ > 0)
-  {
-    return true;
-  }
-
-  return false;
-}
-
-void HipJoint::Shutdown()
-{
-  motor_.DisableMotor();
-}
-
-void HipJoint::Standby()
-{
-  if (!pj_.is_actuator_enabled_) return;
-
-  motor_.ctrl_param_.mode_id_ = DMMotorModeID::kMIT;
-  motor_.ctrl_param_.kp_set_ = 0.0f;
-  motor_.ctrl_param_.kd_set_ = 0.0f;
-  motor_.ctrl_param_.pos_set_rad_ = 0.0f;
-  motor_.ctrl_param_.vel_set_radps_ = 0.0f;
-  motor_.ctrl_param_.tor_set_Nm_ = 0.0f;
-  motor_.MitControl();
-}
-
-namespace
-{
-struct HipFFShared
-{
-  static constexpr int kHistSize = 128;
-  static constexpr int kDelaySamples = 35;  // delay 35*5ms
-  static constexpr float kLambda = 0.01f;
-  static constexpr float kK = 7.0f;
-
-  float posL[kHistSize] = {0.0f};
-  float posR[kHistSize] = {0.0f};
-  float lastL = 0.0f;
-  float lastR = 0.0f;
-  int idx = 0;
-  bool inited = false;
-
-  uint32_t last_tick_ms = 0;
-
-  float tau_left = 0.0f;
-  float tau_right = 0.0f;
-
-  void UpdateAndCompute(uint32_t now_ms, float posL_now, float posR_now)
-  {
-    if (last_tick_ms == now_ms) return;
-    last_tick_ms = now_ms;
-
-    if (!inited)
-    {
-      lastL = posL_now;
-      lastR = posR_now;
-      for (int i = 0; i < kHistSize; ++i)
-      {
-        posL[i] = posL_now;
-        posR[i] = posR_now;
-      }
-      inited = true;
-    }
-
-    posL[idx] = kLambda * posL_now + (1.0f - kLambda) * lastL;
-    posR[idx] = kLambda * posR_now + (1.0f - kLambda) * lastR;
-    lastL = posL[idx];
-    lastR = posR[idx];
-
-    int past = idx - kDelaySamples;
-    if (past < 0) past += kHistSize;
-
-    const float posL_d = posL[past];
-    const float posR_d = posR[past];
-
-    const float tau = kK * (arm_sin_f32(posR_d) - arm_sin_f32(posL_d));
-    tau_left = tau;
-    // tau_right = -tau;
-    tau_right = tau;
-
-    idx = (idx + 1) % kHistSize;
-  }
-};
-static HipFFShared g_hip_ff;
-}  // namespace
-
-void HipJoint::Assist()
-{
-  if (!pj_.is_actuator_enabled_) return;
-
-  const float posL_now = pe_.left_side_.hip_joint_.sagittal_pos_rad_;
-  const float posR_now = pe_.right_side_.hip_joint_.sagittal_pos_rad_;
-  const uint32_t now_ms = GetSysTimeMs();
-
-  if (pj_.is_left_)
-  {
-    g_hip_ff.UpdateAndCompute(now_ms, posL_now, posR_now);
-  }
-  const float tau_me = pj_.is_left_ ? g_hip_ff.tau_left : g_hip_ff.tau_right;
-
-  motor_.ctrl_param_.mode_id_ = DMMotorModeID::kMIT;
-  motor_.ctrl_param_.kp_set_ = 0.0f;
-  motor_.ctrl_param_.kd_set_ = 0.0f;
-  motor_.ctrl_param_.pos_set_rad_ = 0.0f;
-  motor_.ctrl_param_.vel_set_radps_ = 0.0f;
-  motor_.ctrl_param_.tor_set_Nm_ = tau_me;
-  motor_.MitControl();
-  // motor_.EnableMotor();
-}
-
 void FsrGaitEstimator::PrepareUpdate(uint32_t now_ms)
 {
   ClearCycleEvents();
@@ -1007,6 +974,9 @@ void FsrGaitEstimator::PrepareUpdate(uint32_t now_ms)
   if (!gait_data_.is_enabled_) return;
 
   if (!gait_data_.is_data_fresh_) return;
+
+  if (gait_data_.last_update_ms_ == last_contact_sample_ms_) return;
+  last_contact_sample_ms_ = gait_data_.last_update_ms_;
 
   const bool was_contact_inited = gait_data_.heel_.contact_inited && gait_data_.toe_.contact_inited;
   const bool allow_baseline_update = was_contact_inited &&
@@ -1042,7 +1012,6 @@ void FsrGaitEstimator::FinalizeUpdate(uint32_t now_ms)
 {
   if (!gait_data_.is_enabled_ || !gait_data_.is_data_fresh_) return;
 
-  DetectOppositeFsrEvents();
   ApplyEventGuards(now_ms);
   UpdateEventTimings(now_ms);
   ResolvePhase();
@@ -1067,8 +1036,6 @@ void FsrGaitEstimator::ClearCycleEvents()
   gait_data_.event_fo_ = false;
   gait_data_.event_ho_ = false;
   gait_data_.event_to_ = false;
-  gait_data_.event_opposite_fs_ = false;
-  gait_data_.event_opposite_fo_ = false;
   gait_data_.phase_changed_ = false;
 }
 
@@ -1082,21 +1049,6 @@ void FsrGaitEstimator::DetectOwnFsrEvents()
   gait_data_.event_to_ = (!gait_data_.toe_contact_state_ && gait_data_.prev_toe_contact_state_);
 }
 
-void FsrGaitEstimator::DetectOppositeFsrEvents()
-{
-  FsrGaitData &opposite_fsr = gait_data_.is_left_ ? pe_.right_side_.fsr_gait_data_ : pe_.left_side_.fsr_gait_data_;
-  if (!IsOppositeFsrUsable()) return;
-
-  gait_data_.event_opposite_fs_ = opposite_fsr.event_fs_;
-  gait_data_.event_opposite_fo_ = opposite_fsr.event_fo_;
-}
-
-bool FsrGaitEstimator::IsOppositeFsrUsable()
-{
-  FsrGaitData &opposite_fsr = gait_data_.is_left_ ? pe_.right_side_.fsr_gait_data_ : pe_.left_side_.fsr_gait_data_;
-  return opposite_fsr.IsContactReady();
-}
-
 void FsrGaitEstimator::ApplyEventGuards(uint32_t now_ms)
 {
   const bool can_enter_stance = (gait_data_.current_phase_ == GaitPhase::kSwing ||
@@ -1104,48 +1056,9 @@ void FsrGaitEstimator::ApplyEventGuards(uint32_t now_ms)
   const bool can_enter_swing = (gait_data_.current_phase_ == GaitPhase::kStance ||
                                 gait_data_.current_phase_ == GaitPhase::kUnknown);
 
-  const bool request_fs = gait_data_.event_fs_ ||
-                          (gait_data_.foot_contact_state_ && can_enter_stance);
-  const bool request_fo = gait_data_.event_fo_ ||
-                          (!gait_data_.foot_contact_state_ && can_enter_swing);
-
-  gait_data_.event_fs_ = false;
-  gait_data_.event_fo_ = false;
-
-  if (request_fs)
-  {
-    bool accept = can_enter_stance;
-
-    if (accept && gait_data_.event_ts_ms_[kFO] > 0u &&
-        (now_ms - gait_data_.event_ts_ms_[kFO]) < kMinSwingDurationMs)
-    {
-      accept = false;
-    }
-
-    if (accept && gait_data_.event_ts_ms_[kFS] > 0u)
-    {
-      const uint32_t step_time = now_ms - gait_data_.event_ts_ms_[kFS];
-      if (step_time < kMinStepDurationMs)
-      {
-        accept = false;
-      }
-    }
-
-    gait_data_.event_fs_ = accept;
-  }
-
-  if (request_fo)
-  {
-    bool accept = can_enter_swing;
-
-    if (accept && gait_data_.event_ts_ms_[kFS] > 0u &&
-        (now_ms - gait_data_.event_ts_ms_[kFS]) < kMinStanceDurationMs)
-    {
-      accept = false;
-    }
-
-    gait_data_.event_fo_ = accept;
-  }
+  /* Contact hysteresis/debounce validates edges; duration limits only filter statistics. */
+  gait_data_.event_fs_ = gait_data_.event_fs_ && can_enter_stance;
+  gait_data_.event_fo_ = gait_data_.event_fo_ && can_enter_swing;
 
   auto gate_local_event = [&](bool &event_flag, uint8_t event_idx)
   {
@@ -1285,9 +1198,13 @@ void FsrGaitEstimator::UpdateEventTimings(uint32_t now_ms)
   {
     if (gait_data_.event_ts_ms_[kFO] > 0u)
     {
-      UpdateExpectedDuration(now_ms - gait_data_.event_ts_ms_[kFO],
-                             gait_data_.swing_duration_window_ms_,
-                             gait_data_.expected_swing_duration_ms_);
+      const uint32_t swing_time = now_ms - gait_data_.event_ts_ms_[kFO];
+      if (swing_time >= kMinSwingDurationMs && swing_time <= kMaxStepDurationMs)
+      {
+        UpdateExpectedDuration(swing_time,
+                               gait_data_.swing_duration_window_ms_,
+                               gait_data_.expected_swing_duration_ms_);
+      }
     }
 
     if (gait_data_.event_ts_ms_[kFS] > 0u)
@@ -1308,9 +1225,13 @@ void FsrGaitEstimator::UpdateEventTimings(uint32_t now_ms)
   {
     if (gait_data_.event_ts_ms_[kFS] > 0u)
     {
-      UpdateExpectedDuration(now_ms - gait_data_.event_ts_ms_[kFS],
-                             gait_data_.stance_duration_window_ms_,
-                             gait_data_.expected_stance_duration_ms_);
+      const uint32_t stance_time = now_ms - gait_data_.event_ts_ms_[kFS];
+      if (stance_time >= kMinStanceDurationMs && stance_time <= kMaxStepDurationMs)
+      {
+        UpdateExpectedDuration(stance_time,
+                               gait_data_.stance_duration_window_ms_,
+                               gait_data_.expected_stance_duration_ms_);
+      }
     }
     RecordEventTimestamp(kFO, now_ms);
   }
@@ -1379,6 +1300,8 @@ void FsrGaitEstimator::RecordEventTimestamp(uint8_t ev_idx, uint32_t now_ms)
  */
 void FsrGaitEstimator::Reset()
 {
+  last_contact_sample_ms_ = 0u;
+
   for (uint8_t ev = 0; ev < kNumGaitEvents; ev++)
   {
     gait_data_.event_ts_ms_[ev] = 0;
@@ -1413,6 +1336,7 @@ void FsrGaitEstimator::Reset()
 
 void FsrGaitEstimator::ResetContact()
 {
+  last_contact_sample_ms_ = 0u;
   ResetSensorContactState(gait_data_.heel_);
   ResetSensorContactState(gait_data_.toe_);
 }
@@ -1464,8 +1388,7 @@ void FsrGaitEstimator::UpdateContactAdaptive(FsrSensorData &sensor, bool allow_b
       sensor.contact_norm = (sensor.raw_reading - sensor.contact_baseline) / init_range;
       sensor.contact_norm = _constrain(sensor.contact_norm, 0.0f, 1.5f);
 
-      const float init_th_on = sensor.contact_baseline + sensor.contact_on_ratio * init_range;
-      sensor.ground_contact = (sensor.raw_reading > init_th_on);
+      sensor.ground_contact = sensor.contact_norm >= sensor.contact_on_ratio;
       if (sensor.ground_contact && sensor.raw_reading > sensor.contact_peak_step)
       {
         sensor.contact_peak_step = sensor.raw_reading;
@@ -1480,8 +1403,10 @@ void FsrGaitEstimator::UpdateContactAdaptive(FsrSensorData &sensor, bool allow_b
     range = sensor.contact_min_range;
   }
 
-  const float raw_contact_norm = (sensor.raw_reading - sensor.contact_baseline) / range;
-  const bool contact_candidate = sensor.ground_contact || (raw_contact_norm >= sensor.contact_on_ratio);
+  sensor.contact_norm = (sensor.raw_reading - sensor.contact_baseline) / range;
+  sensor.contact_norm = _constrain(sensor.contact_norm, 0.0f, 1.5f);
+  const bool contact_candidate = sensor.ground_contact ||
+                                 sensor.contact_norm >= sensor.contact_on_ratio;
 
   if (allow_baseline_update && !contact_candidate)
   {
@@ -1502,12 +1427,9 @@ void FsrGaitEstimator::UpdateContactAdaptive(FsrSensorData &sensor, bool allow_b
   sensor.contact_norm = (sensor.raw_reading - sensor.contact_baseline) / range;
   sensor.contact_norm = _constrain(sensor.contact_norm, 0.0f, 1.5f);
 
-  const float th_on = sensor.contact_baseline + sensor.contact_on_ratio * range;
-  const float th_off = sensor.contact_baseline + sensor.contact_off_ratio * range;
-
   if (!sensor.ground_contact)
   {
-    if (sensor.raw_reading > th_on)
+    if (sensor.contact_norm >= sensor.contact_on_ratio)
     {
       if (sensor.contact_on_count < 255u)
       {
@@ -1534,7 +1456,7 @@ void FsrGaitEstimator::UpdateContactAdaptive(FsrSensorData &sensor, bool allow_b
       sensor.contact_peak_step = sensor.raw_reading;
     }
 
-    if (sensor.raw_reading < th_off)
+    if (sensor.contact_norm <= sensor.contact_off_ratio)
     {
       if (sensor.contact_off_count < 255u)
       {
@@ -1707,7 +1629,9 @@ void StairPhaseEstimator::Update()
   bool knee_ok = false;
   float knee_angle = 0.0f;
   float knee_vel = 0.0f;
-  if (ps_.knee_joint_.is_sagittal_pos_offset_valid_)
+  if (ps_.thigh_imu_.IsUsable() &&
+      ps_.shank_imu_.IsUsable() &&
+      ps_.knee_joint_.is_sagittal_pos_offset_valid_)
   {
     knee_angle = ps_.knee_joint_.sagittal_pos_rad_ * RAD_TO_DEG;
     knee_vel = ps_.knee_joint_.sagittal_vel_radps_ * RAD_TO_DEG;
@@ -1999,7 +1923,7 @@ void StsPhaseEstimator::TransitionTo(StsPhase next_phase)
 
 bool AdaptiveOscillator::IsAoImuUsable(const ImuData &imu)
 {
-  return imu.is_enabled_;
+  return imu.IsUsable() && imu.is_stand_posture_valid_;
 }
 
 bool AdaptiveOscillator::IsAoFsrUsable(const FsrGaitData &fsr)
@@ -2363,6 +2287,7 @@ ExoShell::ExoShell(UART_HandleTypeDef &huart, Exo &exo) :
   RegisterRwParam("cableten", &exo_.left_side_.ankle_joint_.cable_tensioned_position_);
   RegisterRwParam("torkp", &exo_.right_side_.knee_joint_.joint_tor_pid_.kp_);
   RegisterRwParam("torki", &exo_.right_side_.knee_joint_.joint_tor_pid_.ki_);
+  RegisterRwParam("divekarscale", &KneeJoint::divekar_params_.assistance_scale, 0.0f, 1.0f);
 }
 
 void ExoShell::OnCmdSetLocoMode(int argc, char **argv)
@@ -2499,6 +2424,7 @@ void BodyImu::Read()
   mahony_filter_.GetQuaternion(body_imu_.q_);
   mahony_filter_.GetEulerAnglesRad(body_imu_.roll_rad_, body_imu_.pitch_rad_, body_imu_.yaw_rad_);
   body_imu_.UpdateSagittalKinematics();
+  body_imu_.MarkKinematicsUpdated(GetSysTimeMs());
 }
 
 void DaMiaoImuHub::CanRxCallback(uint32_t can_id, const uint8_t *data, uint32_t dlc)
@@ -2540,10 +2466,11 @@ void DaMiaoImuHub::CanRxCallback(uint32_t can_id, const uint8_t *data, uint32_t 
     imu.is_quat_updated_ = false; /* Euler 直接写入, 无需延迟转换 */
     EulerRad2Quaternion(imu.roll_rad_, imu.pitch_rad_, imu.yaw_rad_, imu.q_);
     imu.UpdateSagittalKinematics();
+    imu.MarkKinematicsUpdated(GetSysTimeMs());
     break;
 
   case 0x04:
-    w = data[1] << 6 | ((data[2] & 0xF8) >> 2);
+    w = data[1] << 6 | ((data[2] & 0xFC) >> 2);
     x = (data[2] & 0x03) << 12 | (data[3] << 4) | ((data[4] & 0xF0) >> 4);
     y = (data[4] & 0x0F) << 10 | (data[5] << 2) | (data[6] & 0xC0) >> 6;
     z = (data[6] & 0x3F) << 8 | data[7];
@@ -2584,7 +2511,6 @@ void HiPnucImuHub::CanRxCallback(uint32_t can_id, const uint8_t *data, uint32_t 
       imu.gyro_radps_[0] = (float)unpack_i16(&data[0]) * kGyro01DpsToRps;
       imu.gyro_radps_[1] = (float)unpack_i16(&data[2]) * kGyro01DpsToRps;
       imu.gyro_radps_[2] = (float)unpack_i16(&data[4]) * kGyro01DpsToRps;
-      imu.UpdateSagittalKinematics();
     }
     break;
 
@@ -2597,6 +2523,7 @@ void HiPnucImuHub::CanRxCallback(uint32_t can_id, const uint8_t *data, uint32_t 
       imu.yaw_rad_ = (float)unpack_i16(&data[4]) * kEuler001DegToRad;
       EulerRad2Quaternion(imu.roll_rad_, imu.pitch_rad_, imu.yaw_rad_, imu.q_);
       imu.UpdateSagittalKinematics();
+      imu.MarkKinematicsUpdated(GetSysTimeMs());
     }
     break;
 
@@ -3157,7 +3084,12 @@ void IntentionRecognizer::UpdateGaitSvmRouter()
       svm_done_this_step = false;
     }
 
-    bool sensors_ok = fsr.is_data_fresh_ && thigh.is_enabled_ && shank.is_enabled_;
+    bool sensors_ok =
+      fsr.is_data_fresh_ &&
+      thigh.IsUsable() &&
+      thigh.is_stand_posture_valid_ &&
+      shank.IsUsable() &&
+      shank.is_stand_posture_valid_;
     bool in_swing = (!fsr.heel_contact_state_ && !fsr.toe_contact_state_);
     if (!sensors_ok || !in_swing)
     {
@@ -3244,8 +3176,8 @@ void Exo::Initialize()
   pe_.right_side_.thigh_imu_.is_enabled_ = true;
 
   /* 启用FSR */
-  pe_.left_side_.fsr_gait_data_.is_enabled_ = true;
-  pe_.right_side_.fsr_gait_data_.is_enabled_ = true;
+  pe_.left_side_.fsr_gait_data_.is_enabled_ = false;
+  pe_.right_side_.fsr_gait_data_.is_enabled_ = false;
   /* contact_min_range 的单位与映射后的 raw_reading 一致, 当前为 pF。 */
   pe_.left_side_.fsr_gait_data_.heel_.contact_min_range = 30.0f;
   pe_.right_side_.fsr_gait_data_.heel_.contact_min_range = 30.0f;
@@ -3270,7 +3202,6 @@ void Exo::Initialize()
   pe_.ao_data_.is_enabled_ = false;
   pe_.sts_phase_data_.is_enabled_ = false;
   pe_.intention_data_.is_enabled_ = true;
-  KneeJoint::divekar_params_.use_thigh_imu_and_link_feedback = true;
 
   /* 重置标定和估计器运行态。 */
   ResetCalibration();
@@ -3470,7 +3401,7 @@ void Exo::Run()
   const uint32_t now_ms = GetSysTimeMs(); /* 整帧复用, 避免多次调用 */
   if (shell_.ProcessPendingCommand())
   {
-    // pe_.telemetry_config_.pause_until_ms = now_ms + 100U; // HACK
+    pe_.telemetry_config_.pause_until_ms = now_ms + 100U; // HACK
   }
 
   /* 处理命令后需要反馈给上位机; 为避免反馈被遥测覆盖, 延时一段时间再发数据 */
@@ -3560,14 +3491,22 @@ void Exo::Read()
   left_side_.Read();
   right_side_.Read();
 
-  pe_.left_side_.shank_imu_.ApplyPendingQuaternion();
-  pe_.left_side_.thigh_imu_.ApplyPendingQuaternion();
-  pe_.right_side_.shank_imu_.ApplyPendingQuaternion();
-  pe_.right_side_.thigh_imu_.ApplyPendingQuaternion();
+  uint32_t now_ms = GetSysTimeMs();
+  pe_.left_side_.shank_imu_.ApplyPendingQuaternion(now_ms);
+  pe_.left_side_.thigh_imu_.ApplyPendingQuaternion(now_ms);
+  pe_.right_side_.shank_imu_.ApplyPendingQuaternion(now_ms);
+  pe_.right_side_.thigh_imu_.ApplyPendingQuaternion(now_ms);
+
+  pe_.body_imu_.UpdateFreshness(now_ms);
+  pe_.left_side_.foot_imu_.UpdateFreshness(now_ms);
+  pe_.left_side_.shank_imu_.UpdateFreshness(now_ms);
+  pe_.left_side_.thigh_imu_.UpdateFreshness(now_ms);
+  pe_.right_side_.foot_imu_.UpdateFreshness(now_ms);
+  pe_.right_side_.shank_imu_.UpdateFreshness(now_ms);
+  pe_.right_side_.thigh_imu_.UpdateFreshness(now_ms);
 
   UpdateHumanJointKinematics();
 
-  uint32_t now_ms = GetSysTimeMs();
   left_side_.fsr_gait_estimator_.CheckDataFreshness(now_ms);
   right_side_.fsr_gait_estimator_.CheckDataFreshness(now_ms);
 }
@@ -3582,9 +3521,15 @@ void Exo::UpdateHumanJointKinematics()
       side.hip_joint_.is_sagittal_pos_offset_valid_;
     if (hip_pos_ok)
     {
-      const float hip_raw_rad = side.thigh_imu_.SagittalRawRad() - pe_.body_imu_.SagittalRawRad();
-      side.hip_joint_.sagittal_pos_rad_ = hip_raw_rad - side.hip_joint_.sagittal_pos_offset_rad_;
-      side.hip_joint_.sagittal_vel_radps_ = side.thigh_imu_.SagittalGyroRadps() - pe_.body_imu_.SagittalGyroRadps();
+      const float hip_raw_rad =
+        WrapPi(side.thigh_imu_.SagittalRawRad() - pe_.body_imu_.SagittalRawRad());
+      side.hip_joint_.sagittal_pos_rad_ =
+        WrapPi(hip_raw_rad - side.hip_joint_.sagittal_pos_offset_rad_);
+      const uint32_t hip_sample_ms = _min(side.thigh_imu_.last_update_ms_,
+                                          pe_.body_imu_.last_update_ms_);
+      side.hip_joint_.UpdateSagittalVelocity(
+        side.thigh_imu_.SagittalGyroRawRadps() - pe_.body_imu_.SagittalGyroRawRadps(),
+        hip_sample_ms);
     }
 
     const bool knee_pos_ok =
@@ -3593,9 +3538,15 @@ void Exo::UpdateHumanJointKinematics()
       side.knee_joint_.is_sagittal_pos_offset_valid_;
     if (knee_pos_ok)
     {
-      float knee_raw_rad = side.thigh_imu_.SagittalRawRad() - side.shank_imu_.SagittalRawRad();
-      side.knee_joint_.sagittal_pos_rad_ = knee_raw_rad - side.knee_joint_.sagittal_pos_offset_rad_;
-      side.knee_joint_.sagittal_vel_radps_ = side.thigh_imu_.SagittalGyroRadps() - side.shank_imu_.SagittalGyroRadps();
+      const float knee_raw_rad =
+        WrapPi(side.thigh_imu_.SagittalRawRad() - side.shank_imu_.SagittalRawRad());
+      side.knee_joint_.sagittal_pos_rad_ =
+        WrapPi(knee_raw_rad - side.knee_joint_.sagittal_pos_offset_rad_);
+      const uint32_t knee_sample_ms = _min(side.thigh_imu_.last_update_ms_,
+                                           side.shank_imu_.last_update_ms_);
+      side.knee_joint_.UpdateSagittalVelocity(
+        side.thigh_imu_.SagittalGyroRawRadps() - side.shank_imu_.SagittalGyroRawRadps(),
+        knee_sample_ms);
     }
 
     const bool ankle_pos_ok =
@@ -3604,9 +3555,15 @@ void Exo::UpdateHumanJointKinematics()
       side.ankle_joint_.is_sagittal_pos_offset_valid_;
     if (ankle_pos_ok)
     {
-      float ankle_raw_rad = side.foot_imu_.SagittalRawRad() - side.shank_imu_.SagittalRawRad();
-      side.ankle_joint_.sagittal_pos_rad_ = ankle_raw_rad - side.ankle_joint_.sagittal_pos_offset_rad_;
-      side.ankle_joint_.sagittal_vel_radps_ = side.foot_imu_.SagittalGyroRadps() - side.shank_imu_.SagittalGyroRadps();
+      const float ankle_raw_rad =
+        WrapPi(side.foot_imu_.SagittalRawRad() - side.shank_imu_.SagittalRawRad());
+      side.ankle_joint_.sagittal_pos_rad_ =
+        WrapPi(ankle_raw_rad - side.ankle_joint_.sagittal_pos_offset_rad_);
+      const uint32_t ankle_sample_ms = _min(side.foot_imu_.last_update_ms_,
+                                            side.shank_imu_.last_update_ms_);
+      side.ankle_joint_.UpdateSagittalVelocity(
+        side.foot_imu_.SagittalGyroRawRadps() - side.shank_imu_.SagittalGyroRawRadps(),
+        ankle_sample_ms);
     }
   };
 
@@ -3683,32 +3640,34 @@ void Exo::Estimate()
   /* FSR 传感器预处理: 所有模式都需要 fresh contact state */
   left_side_.fsr_gait_estimator_.PrepareUpdate(now_ms);
   right_side_.fsr_gait_estimator_.PrepareUpdate(now_ms);
+  left_side_.fsr_gait_estimator_.FinalizeUpdate(now_ms);
+  right_side_.fsr_gait_estimator_.FinalizeUpdate(now_ms);
 
   /* 模式特定相位估计 */
-  switch (pe_.intention_data_.current_mode_)
-  {
-  case LocoMode::kWalking:
-  case LocoMode::kRampAscent:
-  case LocoMode::kRampDescent:
-    left_side_.fsr_gait_estimator_.FinalizeUpdate(now_ms);
-    right_side_.fsr_gait_estimator_.FinalizeUpdate(now_ms);
-    ao_.Update();
-    break;
-  case LocoMode::kStairAscent:
-  case LocoMode::kStairDescent:
-    left_side_.stair_phase_estimator_.Update();
-    right_side_.stair_phase_estimator_.Update();
-    break;
-  case LocoMode::kSitToStand:
-  case LocoMode::kStandToSit:
-    sts_phase_estimator_.Update();
-    break;
-  case LocoMode::kSitting:
-  case LocoMode::kStanding:
-    break;
-  default:
-    break;
-  }
+  // switch (pe_.intention_data_.current_mode_)
+  // {
+  // case LocoMode::kWalking:
+  // case LocoMode::kRampAscent:
+  // case LocoMode::kRampDescent:
+  //   left_side_.fsr_gait_estimator_.FinalizeUpdate(now_ms);
+  //   right_side_.fsr_gait_estimator_.FinalizeUpdate(now_ms);
+  //   ao_.Update();
+  //   break;
+  // case LocoMode::kStairAscent:
+  // case LocoMode::kStairDescent:
+  //   left_side_.stair_phase_estimator_.Update();
+  //   right_side_.stair_phase_estimator_.Update();
+  //   break;
+  // case LocoMode::kSitToStand:
+  // case LocoMode::kStandToSit:
+  //   sts_phase_estimator_.Update();
+  //   break;
+  // case LocoMode::kSitting:
+  // case LocoMode::kStanding:
+  //   break;
+  // default:
+  //   break;
+  // }
 
   KneeJoint::UpdateDivekarBiLegContext(left_side_.knee_joint_, right_side_.knee_joint_, pe_);
   KneeJoint::LatchDivekarLeadingLeg(left_side_.knee_joint_,
@@ -3739,9 +3698,8 @@ void Exo::Standby()
 void Exo::Assist()
 {
 #if 1
-  static constexpr float kDivekarExperimentTorqueScale = 0.2f;
-  left_side_.knee_joint_.ApplyDivekarFeedforward(kDivekarExperimentTorqueScale);
-  right_side_.knee_joint_.ApplyDivekarFeedforward(kDivekarExperimentTorqueScale);
+  left_side_.knee_joint_.ApplyDivekarControl();
+  right_side_.knee_joint_.ApplyDivekarControl();
 #else
   left_side_.Assist();
   right_side_.Assist();
@@ -3814,93 +3772,177 @@ uint8_t BuildFsrEventMask(const FsrGaitData &fsr)
  * @note  通过 kVofaDownsample 控制下采样率; kVofaDownsample = 1 时 1kHz 全量发送。
  *        可在不同分支间切换平地/坡道、楼梯完整调试或楼梯输入采集。
  */
+extern uint32_t g_exo_run_us;
 void Exo::VofaSendTelemetry()
 {
-  static constexpr uint8_t kVofaDownsample = 2;
   static uint8_t downsample_cnt = 1;
-
-  if (downsample_cnt++ < kVofaDownsample) return;
-  downsample_cnt = 1;
-
   uint16_t idx = 0;
 
 #if 1
+  if (downsample_cnt++ < 1) return;
+  downsample_cnt = 1;
+
   DmaUnionBuffer buf = {0};
 
-  SideData *sides[2] = {&pe_.left_side_, &pe_.right_side_};
-  KneeJoint *knee_joints[2] = {&left_side_.knee_joint_, &right_side_.knee_joint_};
+  /* I0-I3: frame metadata and Divekar configuration. */
+  buf.f_data[idx++] = static_cast<float>(GetSysTimeMs()); // I0
+  buf.f_data[idx++] = pe_.intention_data_.label_is_valid_ ? 1.0f : 0.0f; // I1
+  buf.f_data[idx++] = static_cast<float>(pe_.intention_data_.label_mode_); // I2
+  buf.f_data[idx++] = pe_.intention_data_.label_slope_deg_; // I3
 
-  /* I0-I23: bilateral FSR and shared Divekar context. */
-  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.heel_.raw_reading; // I0
-  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.toe_.raw_reading; // I1
-  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.heel_.raw_reading; // I2
-  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.toe_.raw_reading; // I3
-  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.vgrf_N_; // I4
-  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.vgrf_N_; // I5
-  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.left_grf_BW; // I6
-  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.right_grf_BW; // I7
-  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.left_heel_BW; // I8
-  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.right_heel_BW; // I9
-  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_left_foot_loaded; // I10
-  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_right_foot_loaded; // I11
-  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_both_foot_loaded; // I12
-  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.is_data_fresh_ ? 1.0f : 0.0f; // I13
-  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.is_data_fresh_ ? 1.0f : 0.0f; // I14
-  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.IsContactReady() ? 1.0f : 0.0f; // I15
-  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.IsContactReady() ? 1.0f : 0.0f; // I16
-  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.foot_contact_state_ ? 1.0f : 0.0f; // I17
-  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.foot_contact_state_ ? 1.0f : 0.0f; // I18
-  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.delta_ajc_y_l_minus_r_cm; // I19
-  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.delta_ajc_dist_cm; // I20
-  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_delta_ajc_dist; // I21
-  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.theta_k_abs_diff_rad; // I22
-  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_knee_pos_sym; // I23
+  /* I4-I17: left FSR input, adaptive state, contact state and event state. */
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.heel_.raw_reading; // I4
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.toe_.raw_reading; // I5
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.heel_.contact_norm; // I6
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.toe_.contact_norm; // I7
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.heel_.contact_baseline; // I8
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.toe_.contact_baseline; // I9
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.heel_.contact_peak_ref; // I10
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.toe_.contact_peak_ref; // I11
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.heel_contact_state_ ? 1.0f : 0.0f; // I12
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.toe_contact_state_ ? 1.0f : 0.0f; // I13
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.foot_contact_state_ ? 1.0f : 0.0f; // I14
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.event_fs_ ? 1.0f : 0.0f; // I15
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.percent_gait_; // I16
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.IsContactReady() ? 1.0f : 0.0f; // I17
 
-  /* I24-I51: left knee; I52-I79: right knee, identical field order. */
-  for (uint8_t i = 0; i < 2; ++i)
-  {
-    KneeJoint &knee = *knee_joints[i];
-    const bool is_left = sides[i]->is_left_;
-    const float gate_raise = is_left ? KneeJoint::bi_leg_ctx_.gate_sts_left_knee_raise_vel : KneeJoint::bi_leg_ctx_.gate_sts_right_knee_raise_vel;
-    const float gate_lower = is_left ? KneeJoint::bi_leg_ctx_.gate_sts_left_knee_lower_vel : KneeJoint::bi_leg_ctx_.gate_sts_right_knee_lower_vel;
+  /* I18-I31: right FSR input, adaptive state, contact state and event state. */
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.heel_.raw_reading; // I18
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.toe_.raw_reading; // I19
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.heel_.contact_norm; // I20
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.toe_.contact_norm; // I21
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.heel_.contact_baseline; // I22
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.toe_.contact_baseline; // I23
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.heel_.contact_peak_ref; // I24
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.toe_.contact_peak_ref; // I25
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.heel_contact_state_ ? 1.0f : 0.0f; // I26
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.toe_contact_state_ ? 1.0f : 0.0f; // I27
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.foot_contact_state_ ? 1.0f : 0.0f; // I28
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.event_fs_ ? 1.0f : 0.0f; // I29
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.percent_gait_; // I30
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.IsContactReady() ? 1.0f : 0.0f; // I31
 
-    buf.f_data[idx++] = knee.divekar_state_.is_leading_leg ? 1.0f : 0.0f; // +0
-    buf.f_data[idx++] = knee.divekar_state_.theta_k_rad; // +1, rad
-    buf.f_data[idx++] = knee.divekar_state_.theta_k_dot_radps; // +2, rad/s
-    buf.f_data[idx++] = knee.divekar_state_.theta_k_dot_sts_lpf_radps; // +3, rad/s
-    buf.f_data[idx++] = knee.divekar_state_.theta_th_rad; // +4, rad
-    buf.f_data[idx++] = knee.divekar_state_.theta_sh_rad; // +5, rad
-    buf.f_data[idx++] = knee.divekar_state_.theta_la_rad; // +6, rad
-    buf.f_data[idx++] = knee.divekar_state_.theta_kd_rad; // +7, rad
-    buf.f_data[idx++] = knee.divekar_state_.theta_k_ddot_lpf_radps2; // +8, rad/s2
-    buf.f_data[idx++] = knee.divekar_state_.gate_F_grf_u; // +9
-    buf.f_data[idx++] = gate_raise; // +10
-    buf.f_data[idx++] = gate_lower; // +11
-    buf.f_data[idx++] = knee.divekar_state_.gate_sts_stand2sit; // +12
-    buf.f_data[idx++] = knee.divekar_state_.gate_sts_sit2stand; // +13
-    buf.f_data[idx++] = knee.divekar_state_.gate_sts_ctx; // +14
-    buf.f_data[idx++] = knee.divekar_output_.tau_stand2sit_Nm; // +15, Nm
-    buf.f_data[idx++] = knee.divekar_output_.tau_sit2stand_Nm; // +16, Nm
-    buf.f_data[idx++] = knee.divekar_output_.tau_sts_mod_Nm; // +17, Nm
-    buf.f_data[idx++] = knee.divekar_output_.tau_st_Nm; // +18, Nm
-    buf.f_data[idx++] = knee.divekar_output_.tau_sw_Nm; // +19, Nm
-    buf.f_data[idx++] = knee.divekar_output_.tau_divekar_Nm; // +20, Nm
-    buf.f_data[idx++] = knee.divekar_output_.tau_divekar_lpf_Nm; // +21, Nm
-    buf.f_data[idx++] = knee.divekar_output_.tau_divekar_lpf_limited_Nm; // +22, Nm
-    buf.f_data[idx++] = knee.pj_.tor_output_ref_Nm_; // +23, Nm, flexion-positive joint coordinate
-    buf.f_data[idx++] = knee.motor_.torque_forward_; // +24, Nm, motor coordinate
-    buf.f_data[idx++] = knee.pj_.tor_output_Nm_; // +25, Nm, measured joint-coordinate torque
-    buf.f_data[idx++] = knee.pj_.link_pos_rad_; // +26, rad
-    buf.f_data[idx++] = knee.pj_.link_vel_radps_; // +27, rad/s
-  }
+  /* I32-I61: bilateral Divekar context and shared gates. */
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.delta_ajc_y_l_minus_r_cm; // I32
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.delta_ajc_dist_cm; // I33
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_delta_ajc_dist; // I34
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.left_fs_accepted ? 1.0f : 0.0f; // I35
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.right_fs_accepted ? 1.0f : 0.0f; // I36
+  buf.f_data[idx++] = static_cast<float>(KneeJoint::bi_leg_ctx_.leading_leg); // I37
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.left_grf_BW; // I38
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.left_heel_BW; // I39
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.right_grf_BW; // I40
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.right_heel_BW; // I41
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_F_heel_left; // I42
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_F_heel_right; // I43
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_F_grf_inv_left; // I44
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_F_grf_inv_right; // I45
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.theta_k_abs_diff_rad; // I46
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_knee_pos_sym; // I47
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_left_foot_loaded; // I48
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_right_foot_loaded; // I49
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_both_foot_loaded; // I50
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_left_knee_raise_vel; // I51
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_left_knee_lower_vel; // I52
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_right_knee_raise_vel; // I53
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_right_knee_lower_vel; // I54
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_bilateral_knee_raise_vel; // I55
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_bilateral_knee_lower_vel; // I56
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.bilateral_lower_vel_radps; // I57
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_deep_flex_decay; // I58
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_left_thigh_flex; // I59
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_right_thigh_flex; // I60
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.gate_sts_bilateral_thigh_flex; // I61
 
+  /* I62-I99: left knee state, gates, torque components and control output. */
+  buf.f_data[idx++] = left_side_.knee_joint_.pj_.tor_output_ref_Nm_; // I62
+  buf.f_data[idx++] = left_side_.knee_joint_.pj_.tor_output_Nm_; // I63
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.theta_th_rad; // I64
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.theta_sh_rad; // I65
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.theta_la_rad; // I66
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.theta_k_rad; // I67
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.theta_k_dot_radps; // I68
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.theta_k_ddot_lpf_radps2; // I69
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.theta_kd_rad; // I70
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.theta_kd_max_rad; // I71
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.delta_ajc_y_fs_cm; // I72
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.gate_theta_la; // I73
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.gate_theta_kd_max; // I74
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.gate_delta_ajc_y_a_fs; // I75
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.gate_delta_ajc_y_na_fs; // I76
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.gate_theta_k_dot_sw; // I77
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.gate_F_grf_u; // I78
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.gate_sts_stand2sit; // I79
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.gate_sts_sit2stand; // I80
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.gate_sts_ctx; // I81
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.tau_a_mod_Nm; // I82
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.tau_na_mod_Nm; // I83
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.tau_grav_st_mod_Nm; // I84
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.tau_st_Nm; // I85
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.tau_grav_sw_Nm; // I86
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.tau_sd_sw_Nm; // I87
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.tau_sw_Nm; // I88
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.tau_stand2sit_Nm; // I89
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.tau_sit2stand_Nm; // I90
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.tau_sts_mod_Nm; // I91
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.tau_divekar_Nm; // I92
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.tau_divekar_lpf_Nm; // I93
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.tau_divekar_lpf_limited_Nm; // I94
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.mc_stiffness_Nm_per_rad; // I95
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.mc_damping_Nm_s_per_rad; // I96
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.mc_position_ref_rad; // I97
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.mc_velocity_ref_radps; // I98
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.mc_torque_feedforward_Nm; // I99
+
+  /* I100-I137: right knee state, gates, torque components and control output. */
+  buf.f_data[idx++] = right_side_.knee_joint_.pj_.tor_output_ref_Nm_; // I100
+  buf.f_data[idx++] = right_side_.knee_joint_.pj_.tor_output_Nm_; // I101
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.theta_th_rad; // I102
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.theta_sh_rad; // I103
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.theta_la_rad; // I104
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.theta_k_rad; // I105
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.theta_k_dot_radps; // I106
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.theta_k_ddot_lpf_radps2; // I107
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.theta_kd_rad; // I108
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.theta_kd_max_rad; // I109
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.delta_ajc_y_fs_cm; // I110
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.gate_theta_la; // I111
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.gate_theta_kd_max; // I112
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.gate_delta_ajc_y_a_fs; // I113
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.gate_delta_ajc_y_na_fs; // I114
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.gate_theta_k_dot_sw; // I115
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.gate_F_grf_u; // I116
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.gate_sts_stand2sit; // I117
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.gate_sts_sit2stand; // I118
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.gate_sts_ctx; // I119
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.tau_a_mod_Nm; // I120
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.tau_na_mod_Nm; // I121
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.tau_grav_st_mod_Nm; // I122
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.tau_st_Nm; // I123
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.tau_grav_sw_Nm; // I124
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.tau_sd_sw_Nm; // I125
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.tau_sw_Nm; // I126
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.tau_stand2sit_Nm; // I127
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.tau_sit2stand_Nm; // I128
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.tau_sts_mod_Nm; // I129
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.tau_divekar_Nm; // I130
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.tau_divekar_lpf_Nm; // I131
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.tau_divekar_lpf_limited_Nm; // I132
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.mc_stiffness_Nm_per_rad; // I133
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.mc_damping_Nm_s_per_rad; // I134
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.mc_position_ref_rad; // I135
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.mc_velocity_ref_radps; // I136
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.mc_torque_feedforward_Nm; // I137
   VofaCdcSendJustFloat(buf, idx);
+  return;
 
-#elif 0
+#elif 0 /* 用于检查传感器反馈 */
+  if (downsample_cnt++ < 1) return;
+  downsample_cnt = 1;
+
   DmaUnionBuffer buf = {0};
 
   ImuData &body = pe_.body_imu_;
-
   ImuData &left_thigh = pe_.left_side_.thigh_imu_;
   ImuData &right_thigh = pe_.right_side_.thigh_imu_;
   ImuData &left_shank = pe_.left_side_.shank_imu_;
@@ -3950,9 +3992,12 @@ void Exo::VofaSendTelemetry()
   buf.f_data[idx++] = right_ankle.is_sagittal_pos_offset_valid_;
 
   VofaCdcSendJustFloat(buf, idx);
+  return;
 
-#elif 0
-  /* replay 时, 由 shell 通过蓝牙发送数据 */
+#elif 0    /* 无线发送方式 */
+  if (downsample_cnt++ < 5) return;
+  downsample_cnt = 1;
+
   const SideData &left_side = pe_.left_side_;
   const FsrGaitData &left_fsr = left_side.fsr_gait_data_;
   const StairPhaseData &left_stair = left_side.stair_phase_data_;
@@ -4021,11 +4066,8 @@ void Exo::VofaSendSensorTelemetry(uint32_t now_ms, uint32_t loop_cnt)
     SideData &side = *sides[i];
     const FsrGaitData &fsr = side.fsr_gait_data_;
     const ImuData &foot_imu = side.foot_imu_;
-    ImuData &shank_imu = side.shank_imu_;
-    ImuData &thigh_imu = side.thigh_imu_;
-
-    shank_imu.UpdateEulerFromQuaternion();
-    thigh_imu.UpdateEulerFromQuaternion();
+    const ImuData &shank_imu = side.shank_imu_;
+    const ImuData &thigh_imu = side.thigh_imu_;
 
     buf.f_data[idx++] = fsr.heel_.raw_reading;  // 14 L / 37 R
     buf.f_data[idx++] = fsr.toe_.raw_reading;  // 15 L / 38 R
@@ -4083,11 +4125,8 @@ void Exo::VofaSendStairTelemetry(uint32_t now_ms, uint32_t loop_cnt)
     const StairPhaseData &stair = side.stair_phase_data_;
     const JointData &knee = side.knee_joint_;
     const ImuData &foot_imu = side.foot_imu_;
-    ImuData &thigh_imu = side.thigh_imu_;
-    ImuData &shank_imu = side.shank_imu_;
-
-    thigh_imu.UpdateEulerFromQuaternion();
-    shank_imu.UpdateEulerFromQuaternion();
+    const ImuData &thigh_imu = side.thigh_imu_;
+    const ImuData &shank_imu = side.shank_imu_;
 
     uint8_t sensor_mask = 0;
     if (fsr.IsContactReady()) sensor_mask |= 1u << 0;
@@ -4200,22 +4239,26 @@ void Exo::SensorUartRxCallback(const uint8_t *data, uint16_t data_size)
 /**
  * @brief CAN 鎬荤嚎鎺ユ敹鍥炶皟鍒嗗彂
  * @note  根据 CAN 外设句柄分发到对应总线:
- *        motor_can -> 髋/膝/踝电机 + DJI ESC
+ *        motor_can1 -> 左侧髋/膝/踝电机 + DJI ESC
+ *        motor_can2 -> 右侧髋/膝/踝电机
  *        sensor_can -> 达妙四肢 IMU
  */
 void Exo::CanRxCallback(FDCAN_HandleTypeDef *hfdcan, uint32_t can_id, const uint8_t *data, uint32_t dlc)
 {
-  if (hfdcan == &hw_.motor_can && dlc == 8)
+  if (hfdcan == &hw_.motor_can1 && dlc == 8)
   {
     left_side_.hip_joint_.motor_.CanRxCallBack(can_id, data);
-    right_side_.hip_joint_.motor_.CanRxCallBack(can_id, data);
     left_side_.knee_joint_.motor_.CanRxCallBack(can_id, data);
-    right_side_.knee_joint_.motor_.CanRxCallBack(can_id, data);
     left_side_.ankle_joint_.motor_.CanRxCallBack(can_id, data);
-    right_side_.ankle_joint_.motor_.CanRxCallBack(can_id, data);
     dji_esc_hub_.CanRxCallBack(can_id, data);
   }
-  else if (hfdcan == &hw_.sensor_can)
+  if (hfdcan == &hw_.motor_can2 && dlc == 8)
+  {
+    right_side_.hip_joint_.motor_.CanRxCallBack(can_id, data);
+    right_side_.knee_joint_.motor_.CanRxCallBack(can_id, data);
+    right_side_.ankle_joint_.motor_.CanRxCallBack(can_id, data);
+  }
+  if (hfdcan == &hw_.sensor_can)
   {
     if (can_id < 0x100)
       dm_imu_hub_.CanRxCallback(can_id, data, dlc);
@@ -4336,11 +4379,12 @@ void Exo::ProcessSpiData()
     pe_.left_side_.foot_imu_.q_[2] = packet->left_foot.quatJ;
     pe_.left_side_.foot_imu_.q_[3] = packet->left_foot.quatK;
     pe_.left_side_.foot_imu_.q_[0] = packet->left_foot.quatReal;
-    Quaternion2EulerRad(pe_.left_side_.foot_imu_.q_,
-                        &pe_.left_side_.foot_imu_.roll_rad_,
-                        &pe_.left_side_.foot_imu_.pitch_rad_,
-                        &pe_.left_side_.foot_imu_.yaw_rad_);
-    pe_.left_side_.foot_imu_.UpdateSagittalKinematics();
+    const bool left_foot_imu_valid =
+      pe_.left_side_.foot_imu_.UpdateEulerFromQuaternion();
+    if (left_foot_imu_valid)
+    {
+      pe_.left_side_.foot_imu_.UpdateSagittalKinematics();
+    }
 
     const float right_heel_raw_reading = packet->right_foot.heel_raw_reading;
     const float right_toe_raw_reading = packet->right_foot.toe_raw_reading;
@@ -4354,8 +4398,11 @@ void Exo::ProcessSpiData()
     const float right_force_heel_N = _max(right_heel_mapped_pf - kHeelBaselinePf, 0.0f) * kHeelNPerPf;
     const float right_force_toe_N = _max(right_toe_mapped_pf - kToeBaselinePf, 0.0f) * kToeNPerPf;
 
-    pe_.right_side_.fsr_gait_data_.heel_.raw_reading = right_heel_mapped_pf;
-    pe_.right_side_.fsr_gait_data_.toe_.raw_reading = right_toe_mapped_pf;
+    // pe_.right_side_.fsr_gait_data_.heel_.raw_reading = right_heel_mapped_pf;
+    // pe_.right_side_.fsr_gait_data_.toe_.raw_reading = right_toe_mapped_pf;
+    /* HACK: just for debug */
+    pe_.right_side_.fsr_gait_data_.heel_.raw_reading = packet->right_foot.heel_raw_reading;
+    pe_.right_side_.fsr_gait_data_.toe_.raw_reading = packet->right_foot.toe_raw_reading;
     pe_.right_side_.fsr_gait_data_.heel_.force_N = right_force_heel_N;
     pe_.right_side_.fsr_gait_data_.toe_.force_N = right_force_toe_N;
     pe_.right_side_.fsr_gait_data_.cop_x_mm_ = packet->right_foot.cop_x_mm;
@@ -4366,13 +4413,22 @@ void Exo::ProcessSpiData()
     pe_.right_side_.foot_imu_.q_[2] = packet->right_foot.quatJ;
     pe_.right_side_.foot_imu_.q_[3] = packet->right_foot.quatK;
     pe_.right_side_.foot_imu_.q_[0] = packet->right_foot.quatReal;
-    Quaternion2EulerRad(pe_.right_side_.foot_imu_.q_,
-                        &pe_.right_side_.foot_imu_.roll_rad_,
-                        &pe_.right_side_.foot_imu_.pitch_rad_,
-                        &pe_.right_side_.foot_imu_.yaw_rad_);
-    pe_.right_side_.foot_imu_.UpdateSagittalKinematics();
+    const bool right_foot_imu_valid =
+      pe_.right_side_.foot_imu_.UpdateEulerFromQuaternion();
+    if (right_foot_imu_valid)
+    {
+      pe_.right_side_.foot_imu_.UpdateSagittalKinematics();
+    }
 
     uint32_t t_now = GetSysTimeMs();
+    if (left_foot_imu_valid)
+    {
+      pe_.left_side_.foot_imu_.MarkKinematicsUpdated(t_now);
+    }
+    if (right_foot_imu_valid)
+    {
+      pe_.right_side_.foot_imu_.MarkKinematicsUpdated(t_now);
+    }
     pe_.left_side_.fsr_gait_data_.last_update_ms_ = t_now;
     pe_.right_side_.fsr_gait_data_.last_update_ms_ = t_now;
     pe_.left_side_.fsr_gait_data_.is_data_fresh_ = true;
