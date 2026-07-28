@@ -236,12 +236,13 @@ void KneeJoint::UpdateDivekarBiLegContext(KneeJoint &left_knee, KneeJoint &right
   bi_leg_ctx_.gate_sts_right_thigh_flex = Sigmoid(right_knee.divekar_state_.theta_th_rad, divekar_params_.m_sts_thigh_flex, divekar_params_.d_sts_thigh_flex);
   bi_leg_ctx_.gate_sts_bilateral_thigh_flex = _min(bi_leg_ctx_.gate_sts_left_thigh_flex, bi_leg_ctx_.gate_sts_right_thigh_flex);
 
-  const float body_weight_N = _max(pe.user_info_.weight_kg_, 1.0f) * 10.0f;
+  static constexpr float kGravityMps2 = 9.80665f;
+  const float body_weight_N = _max(pe.user_info_.weight_kg_, 1.0f) * kGravityMps2;
   const FsrGaitData &left_fsr = pe.left_side_.fsr_gait_data_;
   const FsrGaitData &right_fsr = pe.right_side_.fsr_gait_data_;
   if (left_fsr.IsContactReady())
   {
-    bi_leg_ctx_.left_grf_BW = _constrain(left_fsr.vgrf_N_ / body_weight_N, 0.0f, 2.5f);
+    bi_leg_ctx_.left_grf_BW = left_fsr.vgrf_BW_;
     bi_leg_ctx_.left_heel_BW = _constrain(left_fsr.heel_.force_N / body_weight_N, 0.0f, 2.5f);
   }
   else
@@ -252,7 +253,7 @@ void KneeJoint::UpdateDivekarBiLegContext(KneeJoint &left_knee, KneeJoint &right
 
   if (right_fsr.IsContactReady())
   {
-    bi_leg_ctx_.right_grf_BW = _constrain(right_fsr.vgrf_N_ / body_weight_N, 0.0f, 2.5f);
+    bi_leg_ctx_.right_grf_BW = right_fsr.vgrf_BW_;
     bi_leg_ctx_.right_heel_BW = _constrain(right_fsr.heel_.force_N / body_weight_N, 0.0f, 2.5f);
   }
   else
@@ -548,6 +549,11 @@ void KneeJoint::DivekarUpdate()
     (1.0f - divekar_state_.gate_sts_ctx) * tau_gait_Nm +
     divekar_output_.tau_sts_mod_Nm;
   divekar_output_.tau_divekar_lpf_Nm = GetTorqueLpf(divekar_output_.tau_divekar_Nm);
+  if (!divekar_params_.use_motion_control_impedance_output)
+  {
+    divekar_output_.tau_divekar_lpf_limited_Nm =
+      ApplySafetyLimits(divekar_output_.tau_divekar_lpf_Nm, dt_s);
+  }
 
   UpdateDivekarMotionControlOutput();
 }
@@ -766,8 +772,7 @@ void KneeJoint::Standby()
   motor_.speed_ref_ = 0.0f;
   motor_.motion_mode_kp_ = 0.0f;
   motor_.motion_mode_kd_ = 0.0f;
-  motor_.MotionControl();
-  // motor_.EnableMotor();
+  motor_.DisableMotor(0);
 }
 
 void KneeJoint::Read()
@@ -856,9 +861,6 @@ void KneeJoint::ApplyDivekarControl()
 
   if (!divekar_params_.use_motion_control_impedance_output)
   {
-    divekar_output_.tau_divekar_lpf_limited_Nm =
-      ApplySafetyLimits(divekar_output_.tau_divekar_lpf_Nm, dt_s);
-
     /* Knee flexion is positive; positive Divekar torque assists extension. */
     pj_.tor_output_ref_Nm_ = -assistance_scale * divekar_output_.tau_divekar_lpf_limited_Nm;
     motor_.torque_forward_ = pj_.motor_to_joint_sign_ * pj_.tor_output_ref_Nm_;
@@ -975,37 +977,72 @@ void FsrGaitEstimator::PrepareUpdate(uint32_t now_ms)
 
   if (!gait_data_.is_data_fresh_) return;
 
-  if (gait_data_.last_update_ms_ == last_contact_sample_ms_) return;
-  last_contact_sample_ms_ = gait_data_.last_update_ms_;
+  if (gait_data_.last_update_ms_ == last_processed_fsr_sample_ms_) return;
+  last_processed_fsr_sample_ms_ = gait_data_.last_update_ms_;
 
-  const bool was_contact_inited = gait_data_.heel_.contact_inited && gait_data_.toe_.contact_inited;
-  const bool allow_baseline_update = was_contact_inited &&
-                                     !gait_data_.prev_foot_contact_state_;
+  const bool was_contact_inited =
+    gait_data_.heel_.contact_inited &&
+    gait_data_.toe_.contact_inited &&
+    gait_data_.vgrf_contact_.contact_inited;
+  const bool should_sync_contact_state = contact_state_sync_pending_ || !was_contact_inited;
+  const bool prev_fsr_or_contact =
+    gait_data_.prev_heel_contact_state_ ||
+    gait_data_.prev_toe_contact_state_;
+  const bool allow_fsr_baseline_rise =
+    !should_sync_contact_state && !prev_fsr_or_contact;
+  const bool allow_vgrf_baseline_rise =
+    !should_sync_contact_state && !gait_data_.prev_vgrf_contact_state_;
 
-  UpdateContactAdaptive(gait_data_.heel_, allow_baseline_update);
-  UpdateContactAdaptive(gait_data_.toe_, allow_baseline_update);
+  const bool heel_falling = UpdateContactAdaptive(
+    gait_data_.heel_,
+    gait_data_.heel_.raw_reading,
+    allow_fsr_baseline_rise);
+  const bool toe_falling = UpdateContactAdaptive(
+    gait_data_.toe_,
+    gait_data_.toe_.raw_reading,
+    allow_fsr_baseline_rise);
+  const bool vgrf_falling = UpdateContactAdaptive(
+    gait_data_.vgrf_contact_,
+    gait_data_.vgrf_BW_,
+    allow_vgrf_baseline_rise);
+
+  if (heel_falling)
+  {
+    CommitContactPeak(gait_data_.heel_);
+  }
+  if (toe_falling)
+  {
+    CommitContactPeak(gait_data_.toe_);
+  }
+  if (vgrf_falling)
+  {
+    CommitContactPeak(gait_data_.vgrf_contact_);
+  }
+
   gait_data_.heel_contact_state_ = gait_data_.heel_.ground_contact;
   gait_data_.toe_contact_state_ = gait_data_.toe_.ground_contact;
-  gait_data_.foot_contact_state_ = gait_data_.heel_contact_state_ || gait_data_.toe_contact_state_;
+  gait_data_.vgrf_contact_state_ = gait_data_.vgrf_contact_.ground_contact;
+  const bool fsr_or_contact =
+    gait_data_.heel_contact_state_ ||
+    gait_data_.toe_contact_state_;
+  gait_data_.foot_contact_state_ =
+    gait_data_.use_vgrf_for_foot_contact_ ?
+      gait_data_.vgrf_contact_state_ :
+      fsr_or_contact;
 
-  if (!was_contact_inited)
+  if (should_sync_contact_state)
   {
     gait_data_.current_phase_ = gait_data_.foot_contact_state_ ? GaitPhase::kStance : GaitPhase::kSwing;
     gait_data_.prev_phase_ = gait_data_.current_phase_;
     gait_data_.prev_foot_contact_state_ = gait_data_.foot_contact_state_;
     gait_data_.prev_toe_contact_state_ = gait_data_.toe_contact_state_;
     gait_data_.prev_heel_contact_state_ = gait_data_.heel_contact_state_;
+    gait_data_.prev_vgrf_contact_state_ = gait_data_.vgrf_contact_state_;
+    contact_state_sync_pending_ = false;
     return;
   }
 
-  const bool stance_end = (!gait_data_.foot_contact_state_) && gait_data_.prev_foot_contact_state_;
-  if (stance_end)
-  {
-    FinalizeStepPeak(gait_data_.heel_);
-    FinalizeStepPeak(gait_data_.toe_);
-  }
-
-  DetectOwnFsrEvents();
+  DetectFsrEvents();
 }
 
 void FsrGaitEstimator::FinalizeUpdate(uint32_t now_ms)
@@ -1026,6 +1063,7 @@ void FsrGaitEstimator::CommitUpdate()
   gait_data_.prev_foot_contact_state_ = gait_data_.foot_contact_state_;
   gait_data_.prev_toe_contact_state_ = gait_data_.toe_contact_state_;
   gait_data_.prev_heel_contact_state_ = gait_data_.heel_contact_state_;
+  gait_data_.prev_vgrf_contact_state_ = gait_data_.vgrf_contact_state_;
 }
 
 void FsrGaitEstimator::ClearCycleEvents()
@@ -1039,7 +1077,7 @@ void FsrGaitEstimator::ClearCycleEvents()
   gait_data_.phase_changed_ = false;
 }
 
-void FsrGaitEstimator::DetectOwnFsrEvents()
+void FsrGaitEstimator::DetectFsrEvents()
 {
   gait_data_.event_fs_ = (gait_data_.foot_contact_state_ && !gait_data_.prev_foot_contact_state_);
   gait_data_.event_fo_ = (!gait_data_.foot_contact_state_ && gait_data_.prev_foot_contact_state_);
@@ -1078,24 +1116,23 @@ void FsrGaitEstimator::ApplyEventGuards(uint32_t now_ms)
 
 void FsrGaitEstimator::CheckDataFreshness(uint32_t now_ms)
 {
-  if (gait_data_.last_update_ms_ == 0u)
+  if (gait_data_.IsFresh(now_ms))
   {
-    gait_data_.is_data_fresh_ = false;
-    gait_data_.percent_gait_ = -1.0f;
-    gait_data_.percent_stance_ = -1.0f;
-    gait_data_.percent_swing_ = -1.0f;
+    gait_data_.is_data_fresh_ = true;
     return;
   }
 
-  if (!gait_data_.IsFresh(now_ms))
+  const bool needs_reset =
+    gait_data_.is_data_fresh_ ||
+    gait_data_.heel_.contact_inited ||
+    gait_data_.toe_.contact_inited ||
+    gait_data_.current_phase_ != GaitPhase::kUnknown;
+
+  gait_data_.is_data_fresh_ = false;
+  if (needs_reset)
   {
-    gait_data_.is_data_fresh_ = false;
-    gait_data_.percent_gait_ = -1.0f;
-    gait_data_.percent_stance_ = -1.0f;
-    gait_data_.percent_swing_ = -1.0f;
-    Reset();
-    ResetSensorContactState(gait_data_.heel_);
-    ResetSensorContactState(gait_data_.toe_);
+    ResetPhaseEstimation();
+    ResetContactReference();
   }
 }
 
@@ -1122,6 +1159,14 @@ void FsrGaitEstimator::ResolvePhase()
 void FsrGaitEstimator::UpdatePercentages(uint32_t now_ms)
 {
   const float expected_gait = gait_data_.expected_gait_duration_ms_;
+  if (gait_data_.event_ts_ms_[kFS] > 0u &&
+      (now_ms - gait_data_.event_ts_ms_[kFS]) > kMaxStepDurationMs)
+  {
+    gait_data_.percent_gait_ = -1.0f;
+    gait_data_.percent_stance_ = -1.0f;
+    gait_data_.percent_swing_ = -1.0f;
+    return;
+  }
 
   if (expected_gait > 0.0f && gait_data_.event_ts_ms_[kFS] > 0u)
   {
@@ -1180,13 +1225,28 @@ void FsrGaitEstimator::UpdatePercentages(uint32_t now_ms)
 
 void FsrGaitEstimator::UpdateValidity()
 {
+  const uint32_t current_fs_ms = gait_data_.event_ts_ms_[kFS];
+  const uint32_t previous_fs_ms = gait_data_.prev_event_ts_ms_[kFS];
+  const uint32_t foot_off_ms = gait_data_.event_ts_ms_[kFO];
+  const uint32_t previous_foot_off_ms = gait_data_.prev_event_ts_ms_[kFO];
+  const uint32_t gait_duration_ms = current_fs_ms - previous_fs_ms;
+  const bool has_foot_off_between_strikes =
+    (foot_off_ms > previous_fs_ms && foot_off_ms < current_fs_ms) ||
+    (previous_foot_off_ms > previous_fs_ms &&
+     previous_foot_off_ms < current_fs_ms);
+  const bool has_complete_gait_cycle =
+    previous_fs_ms > 0u &&
+    current_fs_ms > previous_fs_ms &&
+    has_foot_off_between_strikes &&
+    gait_duration_ms >= kMinStepDurationMs &&
+    gait_duration_ms <= kMaxStepDurationMs;
+
   gait_data_.is_phase_valid_ =
     gait_data_.is_enabled_ &&
     gait_data_.is_data_fresh_ &&
     gait_data_.heel_.contact_inited &&
     gait_data_.toe_.contact_inited &&
-    gait_data_.event_ts_ms_[kFS] > 0u &&
-    gait_data_.event_ts_ms_[kFO] > 0u &&
+    has_complete_gait_cycle &&
     gait_data_.expected_gait_duration_ms_ > 0.0f &&
     gait_data_.percent_gait_ >= 0.0f &&
     gait_data_.percent_gait_ <= 100.0f;
@@ -1296,11 +1356,12 @@ void FsrGaitEstimator::RecordEventTimestamp(uint8_t ev_idx, uint32_t now_ms)
 }
 
 /**
- * @brief 重置步态估计器状态
+ * @brief 重置步态事件、相位和时间统计, 保留自适应接触检测状态
  */
-void FsrGaitEstimator::Reset()
+void FsrGaitEstimator::ResetPhaseEstimation()
 {
-  last_contact_sample_ms_ = 0u;
+  last_processed_fsr_sample_ms_ = 0u;
+  contact_state_sync_pending_ = true;
 
   for (uint8_t ev = 0; ev < kNumGaitEvents; ev++)
   {
@@ -1327,164 +1388,207 @@ void FsrGaitEstimator::Reset()
   gait_data_.percent_swing_ = -1.0f;
   gait_data_.heel_contact_state_ = false;
   gait_data_.toe_contact_state_ = false;
+  gait_data_.vgrf_contact_state_ = false;
   gait_data_.foot_contact_state_ = false;
   gait_data_.prev_heel_contact_state_ = false;
   gait_data_.prev_toe_contact_state_ = false;
+  gait_data_.prev_vgrf_contact_state_ = false;
   gait_data_.prev_foot_contact_state_ = false;
   ClearCycleEvents();
 }
 
-void FsrGaitEstimator::ResetContact()
+void FsrGaitEstimator::ResetContactReference()
 {
-  last_contact_sample_ms_ = 0u;
-  ResetSensorContactState(gait_data_.heel_);
-  ResetSensorContactState(gait_data_.toe_);
+  last_processed_fsr_sample_ms_ = 0u;
+  contact_state_sync_pending_ = true;
+  ResetAdaptiveContactState(gait_data_.heel_);
+  ResetAdaptiveContactState(gait_data_.toe_);
+  ResetAdaptiveContactState(gait_data_.vgrf_contact_);
 }
 
-void FsrGaitEstimator::ResetSensorContactState(FsrSensorData &sensor)
+void FsrGaitEstimator::ResetAdaptiveContactState(FsrAdaptiveContactData &contact)
 {
-  sensor.contact_norm = 0.0f;
-  sensor.ground_contact = false;
-  sensor.contact_baseline = 0.0f;
-  sensor.contact_peak_ref = 1.0f;
-  sensor.contact_peak_step = 0.0f;
-  sensor.contact_on_count = 0;
-  sensor.contact_off_count = 0;
-  sensor.contact_inited = false;
+  contact.contact_norm = 0.0f;
+  contact.ground_contact = false;
+  contact.contact_baseline = 0.0f;
+  contact.contact_peak_ref = 1.0f;
+  contact.contact_peak_step = 0.0f;
+  contact.contact_on_count = 0;
+  contact.contact_off_count = 0;
+  contact.contact_inited = false;
 }
 
-void FsrGaitEstimator::UpdateContactAdaptive(FsrSensorData &sensor, bool allow_baseline_update)
+bool FsrGaitEstimator::UpdateContactAdaptive(FsrAdaptiveContactData &contact,
+                                             float raw_reading,
+                                             bool allow_baseline_rise)
 {
-  if (!sensor.contact_inited)
+  if (!contact.contact_inited)
   {
-    const bool seed_valid = sensor.contact_seed_enabled &&
-                            sensor.contact_seed_peak_ref > sensor.contact_seed_baseline;
+    const bool seed_valid =
+      contact.contact_seed_enabled &&
+      contact.contact_seed_peak_ref > contact.contact_seed_baseline;
 
     if (seed_valid)
     {
-      sensor.contact_baseline = sensor.contact_seed_baseline;
-      sensor.contact_peak_ref = sensor.contact_seed_peak_ref;
+      contact.contact_baseline = contact.contact_seed_baseline;
+      contact.contact_peak_ref = contact.contact_seed_peak_ref;
     }
     else
     {
-      sensor.contact_baseline = sensor.raw_reading;
-      sensor.contact_peak_ref = sensor.raw_reading + sensor.contact_min_range;
+      contact.contact_baseline = raw_reading;
+      contact.contact_peak_ref = raw_reading + contact.contact_min_range;
     }
 
-    sensor.contact_peak_step = sensor.raw_reading;
-    sensor.contact_norm = 0.0f;
-    sensor.ground_contact = false;
-    sensor.contact_on_count = 0;
-    sensor.contact_off_count = 0;
-    sensor.contact_inited = true;
+    contact.contact_peak_step = raw_reading;
+    contact.contact_norm = 0.0f;
+    contact.ground_contact = false;
+    contact.contact_on_count = 0;
+    contact.contact_off_count = 0;
+    contact.contact_inited = true;
 
     if (seed_valid)
     {
-      float init_range = sensor.contact_peak_ref - sensor.contact_baseline;
-      if (init_range < sensor.contact_min_range)
+      float init_range =
+        contact.contact_peak_ref - contact.contact_baseline;
+      if (init_range < contact.contact_min_range)
       {
-        init_range = sensor.contact_min_range;
+        init_range = contact.contact_min_range;
       }
-      sensor.contact_norm = (sensor.raw_reading - sensor.contact_baseline) / init_range;
-      sensor.contact_norm = _constrain(sensor.contact_norm, 0.0f, 1.5f);
+      contact.contact_norm =
+        (raw_reading - contact.contact_baseline) / init_range;
+      contact.contact_norm =
+        _constrain(contact.contact_norm, 0.0f, 1.5f);
 
-      sensor.ground_contact = sensor.contact_norm >= sensor.contact_on_ratio;
-      if (sensor.ground_contact && sensor.raw_reading > sensor.contact_peak_step)
+      contact.ground_contact =
+        contact.contact_norm >= contact.contact_on_ratio;
+      if (contact.ground_contact &&
+          raw_reading > contact.contact_peak_step)
       {
-        sensor.contact_peak_step = sensor.raw_reading;
+        contact.contact_peak_step = raw_reading;
       }
     }
-    return;
+    return false;
   }
 
-  float range = sensor.contact_peak_ref - sensor.contact_baseline;
-  if (range < sensor.contact_min_range)
+  float reference_range =
+    contact.contact_peak_ref - contact.contact_baseline;
+  if (reference_range < contact.contact_min_range)
   {
-    range = sensor.contact_min_range;
+    reference_range = contact.contact_min_range;
   }
 
-  sensor.contact_norm = (sensor.raw_reading - sensor.contact_baseline) / range;
-  sensor.contact_norm = _constrain(sensor.contact_norm, 0.0f, 1.5f);
-  const bool contact_candidate = sensor.ground_contact ||
-                                 sensor.contact_norm >= sensor.contact_on_ratio;
+  float on_norm =
+    (raw_reading - contact.contact_baseline) / reference_range;
+  on_norm = _constrain(on_norm, 0.0f, 1.5f);
 
-  if (allow_baseline_update && !contact_candidate)
+  if (!contact.ground_contact && on_norm < contact.contact_on_ratio)
   {
-    float alpha = sensor.contact_baseline_alpha;
-    if (sensor.raw_reading < sensor.contact_baseline)
+    float baseline_alpha = 0.0f;
+    if (raw_reading < contact.contact_baseline)
     {
-      alpha *= 10.0f;
+      baseline_alpha = contact.contact_baseline_alpha_down;
     }
-    sensor.contact_baseline += alpha * (sensor.raw_reading - sensor.contact_baseline);
-
-    range = sensor.contact_peak_ref - sensor.contact_baseline;
-    if (range < sensor.contact_min_range)
+    else if (allow_baseline_rise)
     {
-      range = sensor.contact_min_range;
+      baseline_alpha = contact.contact_baseline_alpha_up;
     }
-  }
 
-  sensor.contact_norm = (sensor.raw_reading - sensor.contact_baseline) / range;
-  sensor.contact_norm = _constrain(sensor.contact_norm, 0.0f, 1.5f);
-
-  if (!sensor.ground_contact)
-  {
-    if (sensor.contact_norm >= sensor.contact_on_ratio)
+    if (baseline_alpha > 0.0f)
     {
-      if (sensor.contact_on_count < 255u)
+      contact.contact_baseline +=
+        baseline_alpha * (raw_reading - contact.contact_baseline);
+      reference_range =
+        contact.contact_peak_ref - contact.contact_baseline;
+      if (reference_range < contact.contact_min_range)
       {
-        sensor.contact_on_count++;
+        reference_range = contact.contact_min_range;
+      }
+      on_norm =
+        (raw_reading - contact.contact_baseline) / reference_range;
+      on_norm = _constrain(on_norm, 0.0f, 1.5f);
+    }
+  }
+
+  if (!contact.ground_contact)
+  {
+    contact.contact_norm = on_norm;
+    if (on_norm >= contact.contact_on_ratio)
+    {
+      if (contact.contact_on_count < 255u)
+      {
+        contact.contact_on_count++;
       }
     }
     else
     {
-      sensor.contact_on_count = 0;
+      contact.contact_on_count = 0;
     }
 
-    if (sensor.contact_on_count >= sensor.contact_on_count_threshold)
+    if (contact.contact_on_count >= contact.contact_on_count_threshold)
     {
-      sensor.ground_contact = true;
-      sensor.contact_peak_step = sensor.raw_reading;
-      sensor.contact_on_count = 0;
-      sensor.contact_off_count = 0;
+      contact.ground_contact = true;
+      contact.contact_peak_step = raw_reading;
+      contact.contact_on_count = 0;
+      contact.contact_off_count = 0;
     }
   }
   else
   {
-    if (sensor.raw_reading > sensor.contact_peak_step)
+    if (raw_reading > contact.contact_peak_step)
     {
-      sensor.contact_peak_step = sensor.raw_reading;
+      contact.contact_peak_step = raw_reading;
     }
 
-    if (sensor.contact_norm <= sensor.contact_off_ratio)
+    float step_range =
+      contact.contact_peak_step - contact.contact_baseline;
+    if (step_range < contact.contact_min_range)
     {
-      if (sensor.contact_off_count < 255u)
+      step_range = contact.contact_min_range;
+    }
+    const float release_range = _max(reference_range, step_range);
+    float release_norm =
+      (raw_reading - contact.contact_baseline) / release_range;
+    release_norm = _constrain(release_norm, 0.0f, 1.5f);
+    contact.contact_norm = release_norm;
+
+    if (release_norm <= contact.contact_off_ratio)
+    {
+      if (contact.contact_off_count < 255u)
       {
-        sensor.contact_off_count++;
+        contact.contact_off_count++;
       }
     }
     else
     {
-      sensor.contact_off_count = 0;
+      contact.contact_off_count = 0;
     }
 
-    if (sensor.contact_off_count >= sensor.contact_off_count_threshold)
+    if (contact.contact_off_count >= contact.contact_off_count_threshold)
     {
-      sensor.ground_contact = false;
-      sensor.contact_off_count = 0;
-      sensor.contact_on_count = 0;
+      contact.ground_contact = false;
+      contact.contact_off_count = 0;
+      contact.contact_on_count = 0;
+      return true;
     }
   }
+
+  return false;
 }
 
-void FsrGaitEstimator::FinalizeStepPeak(FsrSensorData &sensor)
+void FsrGaitEstimator::CommitContactPeak(FsrAdaptiveContactData &contact)
 {
-  if (sensor.contact_peak_step > sensor.contact_baseline + sensor.contact_min_range)
+  if (contact.contact_peak_step > contact.contact_baseline)
   {
-    sensor.contact_peak_ref += sensor.contact_peak_alpha * (sensor.contact_peak_step - sensor.contact_peak_ref);
+    const float peak_alpha =
+      contact.contact_peak_step >= contact.contact_peak_ref ?
+        contact.contact_peak_alpha_up :
+        contact.contact_peak_alpha_down;
+    contact.contact_peak_ref +=
+      peak_alpha *
+      (contact.contact_peak_step - contact.contact_peak_ref);
   }
 
-  sensor.contact_peak_step = sensor.contact_baseline;
+  contact.contact_peak_step = contact.contact_baseline;
 }
 
 void Side::CaptureStandPosture()
@@ -1612,7 +1716,7 @@ void Side::Shutdown()
   ankle_joint_.Shutdown();
   knee_sea_joint_.Shutdown();
 
-  fsr_gait_estimator_.Reset();
+  fsr_gait_estimator_.ResetPhaseEstimation();
   stair_phase_estimator_.Reset();
 }
 
@@ -3085,7 +3189,7 @@ void IntentionRecognizer::UpdateGaitSvmRouter()
     }
 
     bool sensors_ok =
-      fsr.is_data_fresh_ &&
+      fsr.IsContactReady() &&
       thigh.IsUsable() &&
       thigh.is_stand_posture_valid_ &&
       shank.IsUsable() &&
@@ -3176,13 +3280,17 @@ void Exo::Initialize()
   pe_.right_side_.thigh_imu_.is_enabled_ = true;
 
   /* 启用FSR */
-  pe_.left_side_.fsr_gait_data_.is_enabled_ = false;
-  pe_.right_side_.fsr_gait_data_.is_enabled_ = false;
-  /* contact_min_range 的单位与映射后的 raw_reading 一致, 当前为 pF。 */
-  pe_.left_side_.fsr_gait_data_.heel_.contact_min_range = 30.0f;
-  pe_.right_side_.fsr_gait_data_.heel_.contact_min_range = 30.0f;
-  pe_.left_side_.fsr_gait_data_.toe_.contact_min_range = 20.0f;
-  pe_.right_side_.fsr_gait_data_.toe_.contact_min_range = 20.0f;
+  pe_.left_side_.fsr_gait_data_.is_enabled_ = true;
+  pe_.right_side_.fsr_gait_data_.is_enabled_ = true;
+  /* contact_min_range uses raw capacitance units (pF). */
+  pe_.left_side_.fsr_gait_data_.heel_.contact_min_range = 60.0f;
+  pe_.right_side_.fsr_gait_data_.heel_.contact_min_range = 60.0f;
+  pe_.left_side_.fsr_gait_data_.toe_.contact_min_range = 35.0f;
+  pe_.right_side_.fsr_gait_data_.toe_.contact_min_range = 35.0f;
+  pe_.left_side_.fsr_gait_data_.vgrf_contact_.contact_min_range = 0.30f;
+  pe_.right_side_.fsr_gait_data_.vgrf_contact_.contact_min_range = 0.30f;
+  pe_.left_side_.fsr_gait_data_.use_vgrf_for_foot_contact_ = true;
+  pe_.right_side_.fsr_gait_data_.use_vgrf_for_foot_contact_ = true;
 
   /* 启用关节 */
   pe_.left_side_.hip_joint_.is_actuator_enabled_ = false;
@@ -3417,7 +3525,7 @@ void Exo::Run()
 }
 
 /**
- * @brief 标定双侧外骨骼: 关节零位 + FSR 踩踏力范围
+ * @brief 标定双侧外骨骼的站立姿态与关节参考
  */
 void Exo::Calibrate()
 {
@@ -3441,16 +3549,15 @@ void Exo::CaptureStandPosture()
 }
 
 /**
- * @brief 重置所有标定标志位, 准备重新标定
- * @note  顶层只重置各模块标定状态; FSR 内部标定细节由 FsrGaitEstimator 负责。
+ * @brief 重置站立姿态参考和 FSR 接触自适应状态, 准备重新标定
  */
 void Exo::ResetCalibration()
 {
   /* 复位站立姿态参考 */
   ClearStandPosture();
-  /* fsr */
-  left_side_.fsr_gait_estimator_.ResetContact();
-  right_side_.fsr_gait_estimator_.ResetContact();
+  /* FSR 接触检测重新从首个有效样本初始化。 */
+  left_side_.fsr_gait_estimator_.ResetContactReference();
+  right_side_.fsr_gait_estimator_.ResetContactReference();
 
   /* 更新标定状态 */
   left_side_.UpdateCalibrationStatus();
@@ -3459,8 +3566,8 @@ void Exo::ResetCalibration()
 
 void Exo::ResetEstimations()
 {
-  left_side_.fsr_gait_estimator_.Reset();
-  right_side_.fsr_gait_estimator_.Reset();
+  left_side_.fsr_gait_estimator_.ResetPhaseEstimation();
+  right_side_.fsr_gait_estimator_.ResetPhaseEstimation();
   left_side_.stair_phase_estimator_.Reset();
   right_side_.stair_phase_estimator_.Reset();
   sts_phase_estimator_.Reset();
@@ -3608,18 +3715,6 @@ void Exo::Estimate()
   bool now_stair = is_stair_mode(pe_.intention_data_.current_mode_);
   bool was_sts = is_sts_mode(pe_.intention_data_.prev_mode_);
   bool now_sts = is_sts_mode(pe_.intention_data_.current_mode_);
-  bool was_fsr_contact_mode = was_fsr_gait_phase || was_stair;
-  bool now_fsr_contact_mode = now_fsr_gait_phase || now_stair;
-
-  if (mode_changed &&
-      (was_fsr_contact_mode != now_fsr_contact_mode ||
-       was_fsr_gait_phase != now_fsr_gait_phase ||
-       was_stair != now_stair))
-  {
-    left_side_.fsr_gait_estimator_.Reset();
-    right_side_.fsr_gait_estimator_.Reset();
-  }
-
   /* AO 只在 walking/ramp 链路中更新; 进入/退出该链路时清理旧振荡器状态。 */
   if (mode_changed && (was_fsr_gait_phase != now_fsr_gait_phase))
   {
@@ -3933,6 +4028,18 @@ void Exo::VofaSendTelemetry()
   buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.mc_position_ref_rad; // I135
   buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.mc_velocity_ref_radps; // I136
   buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.mc_torque_feedforward_Nm; // I137
+
+  /* I138-I148: adaptive vGRF contact diagnostics. */
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.vgrf_BW_; // I138
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.vgrf_contact_.contact_norm; // I139
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.vgrf_contact_.contact_baseline; // I140
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.vgrf_contact_.contact_peak_ref; // I141
+  buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.vgrf_contact_state_ ? 1.0f : 0.0f; // I142
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.vgrf_BW_; // I143
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.vgrf_contact_.contact_norm; // I144
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.vgrf_contact_.contact_baseline; // I145
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.vgrf_contact_.contact_peak_ref; // I146
+  buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.vgrf_contact_state_ ? 1.0f : 0.0f; // I147
   VofaCdcSendJustFloat(buf, idx);
   return;
 
@@ -4352,28 +4459,65 @@ void Exo::ProcessSpiData()
   {
     const exo_sensor_packet_v2_t *packet = reinterpret_cast<const exo_sensor_packet_v2_t *>(data);
 
-    /* Common heel/toe mapping identified from capgrf.csv after aligning the
-       right sensors to their left-side equivalents. The mean robust gait peak
-       is normalized to approximately 1 BW. */
-    static constexpr float kHeelBaselinePf = 88.856218f;
-    static constexpr float kToeBaselinePf = 41.462096f;
-    static constexpr float kHeelNPerPf = 0.004944110f * 600.0f;
-    static constexpr float kToeNPerPf = 0.010395912f * 600.0f;
+    /* 15 Hz first-order LPF at the measured 250 Hz FSR update rate. */
+    static constexpr float kFsrRawLpfAlpha = 0.3140778f;
+    static constexpr float kLeftHeelBaselinePf = 86.783874f;
+    static constexpr float kLeftHeelRangePf = 131.279709f;
+    static constexpr float kLeftToeBaselinePf = 42.552052f;
+    static constexpr float kLeftToeRangePf = 65.527679f;
+    static constexpr float kRightHeelBaselinePf = 100.436928f;
+    static constexpr float kRightHeelRangePf = 119.393379f;
+    static constexpr float kRightToeBaselinePf = 39.643608f;
+    static constexpr float kRightToeRangePf = 74.180283f;
+    static constexpr float kHeelForceScaleN = 317.819183f;
+    static constexpr float kToeForceScaleN = 490.645996f;
+    static constexpr float kGravityMps2 = 9.80665f;
+    const float body_weight_N =
+      _max(pe_.user_info_.weight_kg_, 1.0f) * kGravityMps2;
 
-    const float left_heel_raw_reading = packet->left_foot.heel_raw_reading;
-    const float left_toe_raw_reading = packet->left_foot.toe_raw_reading;
-    const float left_heel_mapped_pf = left_heel_raw_reading;
-    const float left_toe_mapped_pf = left_toe_raw_reading;
-    const float left_force_heel_N = _max(left_heel_mapped_pf - kHeelBaselinePf, 0.0f) * kHeelNPerPf;
-    const float left_force_toe_N = _max(left_toe_mapped_pf - kToeBaselinePf, 0.0f) * kToeNPerPf;
+    FsrSensorData &left_heel = pe_.left_side_.fsr_gait_data_.heel_;
+    FsrSensorData &left_toe = pe_.left_side_.fsr_gait_data_.toe_;
+    FsrSensorData &right_heel = pe_.right_side_.fsr_gait_data_.heel_;
+    FsrSensorData &right_toe = pe_.right_side_.fsr_gait_data_.toe_;
 
-    pe_.left_side_.fsr_gait_data_.heel_.raw_reading = left_heel_mapped_pf;
-    pe_.left_side_.fsr_gait_data_.toe_.raw_reading = left_toe_mapped_pf;
-    pe_.left_side_.fsr_gait_data_.heel_.force_N = left_force_heel_N;
-    pe_.left_side_.fsr_gait_data_.toe_.force_N = left_force_toe_N;
+    left_heel.raw_reading = packet->left_foot.heel_raw_reading;
+    left_toe.raw_reading = packet->left_foot.toe_raw_reading;
+    if (!left_heel.raw_reading_lpf_inited)
+    {
+      left_heel.raw_reading_lpf = left_heel.raw_reading;
+      left_heel.raw_reading_lpf_inited = true;
+    }
+    else
+    {
+      left_heel.raw_reading_lpf += kFsrRawLpfAlpha *
+                                   (left_heel.raw_reading - left_heel.raw_reading_lpf);
+    }
+    if (!left_toe.raw_reading_lpf_inited)
+    {
+      left_toe.raw_reading_lpf = left_toe.raw_reading;
+      left_toe.raw_reading_lpf_inited = true;
+    }
+    else
+    {
+      left_toe.raw_reading_lpf += kFsrRawLpfAlpha *
+                                  (left_toe.raw_reading - left_toe.raw_reading_lpf);
+    }
+    left_heel.force_N = kHeelForceScaleN *
+                        _max((left_heel.raw_reading_lpf - kLeftHeelBaselinePf) /
+                               kLeftHeelRangePf,
+                             0.0f);
+    left_toe.force_N = kToeForceScaleN *
+                       _max((left_toe.raw_reading_lpf - kLeftToeBaselinePf) /
+                              kLeftToeRangePf,
+                            0.0f);
+
     pe_.left_side_.fsr_gait_data_.cop_x_mm_ = packet->left_foot.cop_x_mm;
     pe_.left_side_.fsr_gait_data_.cop_y_mm_ = packet->left_foot.cop_y_mm;
-    pe_.left_side_.fsr_gait_data_.vgrf_N_ = left_force_heel_N + left_force_toe_N;
+    pe_.left_side_.fsr_gait_data_.vgrf_N_ = left_heel.force_N + left_toe.force_N;
+    pe_.left_side_.fsr_gait_data_.vgrf_BW_ =
+      _constrain(pe_.left_side_.fsr_gait_data_.vgrf_N_ / body_weight_N,
+                 0.0f,
+                 2.5f);
 
     pe_.left_side_.foot_imu_.q_[1] = packet->left_foot.quatI;
     pe_.left_side_.foot_imu_.q_[2] = packet->left_foot.quatJ;
@@ -4386,35 +4530,50 @@ void Exo::ProcessSpiData()
       pe_.left_side_.foot_imu_.UpdateSagittalKinematics();
     }
 
-    const float right_heel_raw_reading = packet->right_foot.heel_raw_reading;
-    const float right_toe_raw_reading = packet->right_foot.toe_raw_reading;
-    const float right_heel_mapped_pf =
-      0.001209486957f * right_heel_raw_reading * right_heel_raw_reading +
-      0.55743072f * right_heel_raw_reading +
-      14.949217f;
-    const float right_toe_mapped_pf =
-      1.09803407f * right_toe_raw_reading -
-      2.364295f;
-    const float right_force_heel_N = _max(right_heel_mapped_pf - kHeelBaselinePf, 0.0f) * kHeelNPerPf;
-    const float right_force_toe_N = _max(right_toe_mapped_pf - kToeBaselinePf, 0.0f) * kToeNPerPf;
+    right_heel.raw_reading = packet->right_foot.heel_raw_reading;
+    right_toe.raw_reading = packet->right_foot.toe_raw_reading;
+    if (!right_heel.raw_reading_lpf_inited)
+    {
+      right_heel.raw_reading_lpf = right_heel.raw_reading;
+      right_heel.raw_reading_lpf_inited = true;
+    }
+    else
+    {
+      right_heel.raw_reading_lpf += kFsrRawLpfAlpha *
+                                    (right_heel.raw_reading - right_heel.raw_reading_lpf);
+    }
+    if (!right_toe.raw_reading_lpf_inited)
+    {
+      right_toe.raw_reading_lpf = right_toe.raw_reading;
+      right_toe.raw_reading_lpf_inited = true;
+    }
+    else
+    {
+      right_toe.raw_reading_lpf += kFsrRawLpfAlpha *
+                                   (right_toe.raw_reading - right_toe.raw_reading_lpf);
+    }
+    right_heel.force_N = kHeelForceScaleN *
+                         _max((right_heel.raw_reading_lpf - kRightHeelBaselinePf) /
+                                kRightHeelRangePf,
+                              0.0f);
+    right_toe.force_N = kToeForceScaleN *
+                        _max((right_toe.raw_reading_lpf - kRightToeBaselinePf) /
+                               kRightToeRangePf,
+                             0.0f);
 
-    // pe_.right_side_.fsr_gait_data_.heel_.raw_reading = right_heel_mapped_pf;
-    // pe_.right_side_.fsr_gait_data_.toe_.raw_reading = right_toe_mapped_pf;
-    /* HACK: just for debug */
-    pe_.right_side_.fsr_gait_data_.heel_.raw_reading = packet->right_foot.heel_raw_reading;
-    pe_.right_side_.fsr_gait_data_.toe_.raw_reading = packet->right_foot.toe_raw_reading;
-    pe_.right_side_.fsr_gait_data_.heel_.force_N = right_force_heel_N;
-    pe_.right_side_.fsr_gait_data_.toe_.force_N = right_force_toe_N;
     pe_.right_side_.fsr_gait_data_.cop_x_mm_ = packet->right_foot.cop_x_mm;
     pe_.right_side_.fsr_gait_data_.cop_y_mm_ = packet->right_foot.cop_y_mm;
-    pe_.right_side_.fsr_gait_data_.vgrf_N_ = right_force_heel_N + right_force_toe_N;
+    pe_.right_side_.fsr_gait_data_.vgrf_N_ = right_heel.force_N + right_toe.force_N;
+    pe_.right_side_.fsr_gait_data_.vgrf_BW_ =
+      _constrain(pe_.right_side_.fsr_gait_data_.vgrf_N_ / body_weight_N,
+                 0.0f,
+                 2.5f);
 
     pe_.right_side_.foot_imu_.q_[1] = packet->right_foot.quatI;
     pe_.right_side_.foot_imu_.q_[2] = packet->right_foot.quatJ;
     pe_.right_side_.foot_imu_.q_[3] = packet->right_foot.quatK;
     pe_.right_side_.foot_imu_.q_[0] = packet->right_foot.quatReal;
-    const bool right_foot_imu_valid =
-      pe_.right_side_.foot_imu_.UpdateEulerFromQuaternion();
+    const bool right_foot_imu_valid = pe_.right_side_.foot_imu_.UpdateEulerFromQuaternion();
     if (right_foot_imu_valid)
     {
       pe_.right_side_.foot_imu_.UpdateSagittalKinematics();

@@ -123,7 +123,8 @@ class Exo;
  *       3. sagittal_gyro_radps_ 及其低通值表示对应矢状轴角速度,
  *          不减去站立参考.
  *       4. 期望正方向为: 躯干前倾, 大腿前摆, 小腿前摆, 足尖向上;
- *          实际方向由安装方式, sagittal_source_ 和 sagittal_direction_sign_ 共同决定.
+ *          实际方向由安装方式, sagittal_source_ 和
+ *          is_sagittal_direction_reversed_ 共同决定.
  */
 class ImuData
 {
@@ -137,11 +138,11 @@ public:
   };
 
   explicit ImuData(bool is_left = true,
-                   float sagittal_direction_sign = 1.0f,
+                   bool is_sagittal_direction_reversed = false,
                    SagittalSource sagittal_source = SagittalSource::kEulerPitch,
                    float sample_rate_hz = 200.0f) :
     is_left_(is_left),
-    sagittal_direction_sign_(sagittal_direction_sign >= 0.0f ? 1.0f : -1.0f),
+    is_sagittal_direction_reversed_(is_sagittal_direction_reversed),
     sagittal_source_(sagittal_source),
     sagittal_gyro_lpf_alpha_(ComputeLpfAlpha(sample_rate_hz))
   {
@@ -175,8 +176,8 @@ public:
   bool is_left_;
   bool is_enabled_ = false;
   bool is_data_fresh_ = false;
-  bool is_quat_updated_ = false;
-  float sagittal_direction_sign_ = 1.0f;
+  volatile bool is_quat_updated_ = false;
+  bool is_sagittal_direction_reversed_ = false;
   SagittalSource sagittal_source_;
 
   bool IsUsable() const
@@ -186,7 +187,7 @@ public:
 
   bool IsFresh(uint32_t now_ms) const
   {
-    return last_update_ms_ > 0u && (now_ms - last_update_ms_) <= kDataTimeoutMs;
+    return last_update_ms_ > 0u && (now_ms - last_update_ms_) <= kDataFreshTimeoutMs;
   }
 
   void MarkKinematicsUpdated(uint32_t now_ms)
@@ -318,8 +319,12 @@ public:
       break;
     }
 
-    sagittal_raw_rad_ = WrapPi(sagittal_direction_sign_ * sagittal_raw_rad_);
-    sagittal_gyro_radps_ *= sagittal_direction_sign_;
+    if (is_sagittal_direction_reversed_)
+    {
+      sagittal_raw_rad_ = -sagittal_raw_rad_;
+      sagittal_gyro_radps_ = -sagittal_gyro_radps_;
+    }
+    sagittal_raw_rad_ = WrapPi(sagittal_raw_rad_);
     sagittal_pos_rad_ = is_stand_posture_valid_ ?
                           WrapPi(sagittal_raw_rad_ - sagittal_stand_ref_rad_) :
                           0.0f;
@@ -346,7 +351,7 @@ private:
 
   float sagittal_gyro_lpf_alpha_ = 1.0f;
   bool is_sagittal_gyro_lpf_inited_ = false;
-  static constexpr uint32_t kDataTimeoutMs = 200u;
+  static constexpr uint32_t kDataFreshTimeoutMs = 200u;
 };
 
 /**
@@ -496,10 +501,8 @@ public:
  * 4. Gait / Stair / STS / AO Data
  * ========================================================================== */
 
-struct FsrSensorData
+struct FsrAdaptiveContactData
 {
-  float raw_reading = 0.0f; /*!< 原始读数 */
-  float force_N = 0.0f;
   bool ground_contact = false; /*!< 当前着地状态 (施密特触发器输出) */
   float contact_norm = 0.0f; /*!< 归一化接触读数 [0, 1.5], = (raw - baseline) / range */
 
@@ -510,16 +513,26 @@ struct FsrSensorData
   bool contact_seed_enabled = false; /*!< 使用经验 baseline/peak_ref 初始化接触检测 */
   float contact_seed_baseline = 50.0f;
   float contact_seed_peak_ref = 600.0f;
-  float contact_on_ratio = 0.30f;
-  float contact_off_ratio = 0.12f;
-  float contact_baseline_alpha = 0.005f;
-  float contact_peak_alpha = 0.20f;
+  float contact_on_ratio = 0.25f;
+  float contact_off_ratio = 0.18f;
+  float contact_baseline_alpha_up = 0.01f;
+  float contact_baseline_alpha_down = 0.05f;
+  float contact_peak_alpha_up = 0.60f;
+  float contact_peak_alpha_down = 0.70f;
   uint8_t contact_on_count = 0;
   uint8_t contact_off_count = 0;
   uint8_t contact_on_count_threshold = 2;
   uint8_t contact_off_count_threshold = 4;
   bool contact_inited = false;
-  float contact_min_range = 150.0f;
+  float contact_min_range = 30.0f;
+};
+
+struct FsrSensorData : public FsrAdaptiveContactData
+{
+  float raw_reading = 0.0f; /*!< 原始读数 */
+  float raw_reading_lpf = 0.0f; /*!< Low-pass-filtered raw capacitance */
+  float force_N = 0.0f;
+  bool raw_reading_lpf_inited = false;
 };
 
 /**
@@ -574,7 +587,11 @@ public:
 
   bool IsContactReady() const
   {
-    return is_enabled_ && is_data_fresh_ && heel_.contact_inited && toe_.contact_inited;
+    return is_enabled_ &&
+           is_data_fresh_ &&
+           heel_.contact_inited &&
+           toe_.contact_inited &&
+           vgrf_contact_.contact_inited;
   }
 
   static constexpr uint8_t kNumStepsAvg = 3; /*!< 步态周期滑动平均窗口大小 */
@@ -585,6 +602,8 @@ public:
   float cop_x_mm_ = 0.0f;
   float cop_y_mm_ = 0.0f;
   float vgrf_N_ = 0.0f;
+  float vgrf_BW_ = 0.0f;
+  FsrAdaptiveContactData vgrf_contact_;
   uint32_t last_update_ms_ = 0;
 
   /* 步态事件时间戳与相位时长窗口 */
@@ -614,9 +633,11 @@ public:
   /* FSR 着地状态与边沿检测 */
   bool heel_contact_state_ = false; /*!< 足跟当前着地状态 */
   bool toe_contact_state_ = false; /*!< 足尖当前着地状态 */
+  bool vgrf_contact_state_ = false;
   bool foot_contact_state_ = false;
   bool prev_heel_contact_state_ = false; /*!< 足跟上周期着地状态 */
   bool prev_toe_contact_state_ = false; /*!< 足尖上周期着地状态 */
+  bool prev_vgrf_contact_state_ = false;
   bool prev_foot_contact_state_ = false;
 
   /* 本周期检测到的步态事件标志 */
@@ -629,6 +650,7 @@ public:
 
   bool is_left_; /*!< 是否为左侧 */
   bool is_enabled_ = false; /*!< 是否启用步态估计 */
+  bool use_vgrf_for_foot_contact_ = false; /*!< false: heel OR toe; true: adaptive vGRF */
 };
 
 enum class StairPhase : uint8_t
@@ -738,9 +760,9 @@ public:
     ankle_joint_(is_left),
     fsr_gait_data_(is_left),
     stair_phase_data_(is_left),
-    foot_imu_(is_left, is_left ? 1.0f : -1.0f, ImuData::SagittalSource::kEulerPitch),
-    shank_imu_(is_left, 1.0f, ImuData::SagittalSource::kEulerRoll),
-    thigh_imu_(is_left, 1.0f, ImuData::SagittalSource::kEulerRoll),
+    foot_imu_(is_left, !is_left, ImuData::SagittalSource::kEulerPitch),
+    shank_imu_(is_left, false, ImuData::SagittalSource::kEulerRoll),
+    thigh_imu_(is_left, false, ImuData::SagittalSource::kEulerRoll),
     is_left_(is_left)
   {
   }
@@ -940,7 +962,7 @@ public:
   SideData right_side_; /*!< 右侧数据 (is_left = false) */
   AoData ao_data_; /*!< 自适应振荡器输出数据 */
   StsPhaseData sts_phase_data_; /*!< 坐立转换相位数据 */
-  ImuData body_imu_{true, 1.0f, ImuData::SagittalSource::kGravityXz, 1000.0f}; /*!< 躯干 IMU 数据 (BMI088 + Mahony 滤波器) */
+  ImuData body_imu_{true, false, ImuData::SagittalSource::kGravityXz, 1000.0f}; /*!< 躯干 IMU 数据 (BMI088 + Mahony 滤波器) */
   IntentionData intention_data_; /*!< 意图识别/运动模式识别层数据 */
 
   State state_ = State::kSleep; /*!< 当前系统状态 */
@@ -1124,18 +1146,18 @@ public:
 
     /* ZZZ: STS */
     float k_sts = 20.0f; /*!< Nm/rad */
-    float k_stand2sit = 5.0f; /*!< Nm/rad */
-    float c_sts = 6.0f; /*!< Nm*s/rad */
+    float k_stand2sit = 8.0f; /*!< Nm/rad */
+    float c_sts = 1.0f; /*!< Nm*s/rad */
     float m_sts_foot_loaded = 50.0f;
-    float d_sts_foot_loaded = 0.48f; /*!< BW */
-    float m_sts_knee_raise_vel = -60.0f;
+    float d_sts_foot_loaded = 0.48f; /*!< BW; should be tuned: m=60.0f, d=0.825f */
+    float m_sts_knee_raise_vel = -60.0f; 
     float d_sts_knee_raise_vel = -0.225f; /*!< rad/s, knee extension is negative */
     float m_sts_knee_lower_vel = 60.0f;
     float d_sts_knee_lower_vel = 0.175f; /*!< rad/s, knee flexion is positive */
     float m_sts_knee_pos_sym = -50.0f;
     float d_sts_knee_pos_sym = 0.3f; /*!< rad */
     float m_sts_thigh_flex = 60.0f;
-    float d_sts_thigh_flex = 0.25f; /*!< rad */
+    float d_sts_thigh_flex = 0.175f; /*!< rad */
     float m_sts_deep_flex_decay = -10.0f;
     float d_sts_deep_flex_decay = 1.50f; /*!< rad */
 
@@ -1365,19 +1387,21 @@ public:
   virtual ~FsrGaitEstimator() = default;
 
   void PrepareUpdate(uint32_t now_ms);
-  void CheckDataFreshness(uint32_t now_ms); /*!< 每周期检查数据超时, 直接更新 is_data_fresh_ */
+  void CheckDataFreshness(uint32_t now_ms);
   void FinalizeUpdate(uint32_t now_ms);
   void CommitUpdate();
-  void Reset();
-  void ResetContact(); /*!< 重置自适应接触检测状态 */
+  void ResetPhaseEstimation(); /*!< 重置事件、相位和时长统计, 保留接触自适应参数 */
+  void ResetContactReference(); /*!< 重置 heel/toe/vGRF 接触检测及其 baseline/peak 自适应状态 */
 
 private:
-  void UpdateContactAdaptive(FsrSensorData &sensor, bool allow_baseline_update);
-  void FinalizeStepPeak(FsrSensorData &sensor);
-  static void ResetSensorContactState(FsrSensorData &sensor);
+  static bool UpdateContactAdaptive(FsrAdaptiveContactData &contact,
+                                    float raw_reading,
+                                    bool allow_baseline_rise);
+  static void CommitContactPeak(FsrAdaptiveContactData &contact);
+  static void ResetAdaptiveContactState(FsrAdaptiveContactData &contact);
 
   void ClearCycleEvents();
-  void DetectOwnFsrEvents();
+  void DetectFsrEvents();
   void ApplyEventGuards(uint32_t now_ms);
   void UpdateEventTimings(uint32_t now_ms);
   void ResolvePhase();
@@ -1386,7 +1410,8 @@ private:
   void UpdateExpectedDuration(uint32_t duration_ms, uint32_t duration_window_ms[], float &expected_duration_ms);
   void RecordEventTimestamp(uint8_t ev_idx, uint32_t now_ms);
 
-  uint32_t last_contact_sample_ms_ = 0u; /*!< 最近处理的 FSR 样本时间戳 */
+  uint32_t last_processed_fsr_sample_ms_ = 0u; /*!< 最近已处理的 gait_data_.last_update_ms_ */
+  bool contact_state_sync_pending_ = true; /*!< 下一份有效样本仅同步接触状态, 不产生边沿事件 */
 
   static constexpr uint32_t kMinStanceDurationMs = 150u;
   static constexpr uint32_t kMinSwingDurationMs = 150u;
