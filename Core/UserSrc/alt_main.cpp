@@ -31,7 +31,7 @@
 uint8_t cdc_rx_buffer[512] = {0}; /*!< CDC 接收缓冲区 */
 float cdc_rx_floats[128] = {0.0f}; /*!< CDC 接收的浮点数数据 (512字节 / 4字节每float = 128) */
 volatile uint16_t cdc_rx_len = 0; /*!< CDC 最近一次接收长度 */
-volatile uint8_t cdc_rx_flag = 0; /*!< CDC 数据就绪标志 (非0表示有新数据) */
+volatile uint8_t cdc_rx_flag = 0; /*!< CDC 数据就绪标志 */
 
 /* 本地复制缓冲区：放到文件作用域以避免在任务栈上分配大数组 */
 static uint8_t rx_copy[512] = {0};
@@ -73,27 +73,19 @@ void AltMainTask(void *argument)
 
   /*----------------------------------------------------------------------
    * 启动 ADC1 + DMA 三通道连续采样
-   * 通道：PC4 (电池电压), PA2 (肌电右), PA0 (肌电左)
+   * 通道：PC4 (电池电压), PA2, PA0
    * 触发源：TIM2 溢出事件，每 1ms 自动触发一轮转换
    * 转换结果由 DMA 自动搬运至 g_adc_data[3]
    *----------------------------------------------------------------------*/
   HAL_ADCEx_Calibration_Start(&hadc1, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED);
   HAL_ADC_Start_DMA(&hadc1, (uint32_t *)g_adc_data, 3);
 
-  /*----------------------------------------------------------------------
-   * 初始化三路 FDCAN
-   * hfdcan1: 左侧电机 CAN 总线
-   * hfdcan2: 右侧电机 CAN 总线
-   * hfdcan3: IMU 传感器 CAN 总线 (躯干姿态传感器)
-   *----------------------------------------------------------------------*/
+  /* 初始化三路 FDCAN */
   BspCanInit(&hfdcan1);
   BspCanInit(&hfdcan2);
   BspCanInit(&hfdcan3);
 
-  /*----------------------------------------------------------------------
-   * 初始化 BMI088 六轴 IMU (躯干姿态传感器)
-   * 阻塞等待直至初始化成功，IMU 是姿态估计的关键传感器，必须就绪
-   *----------------------------------------------------------------------*/
+  /* 阻塞等待初始化 BMI088 六轴 IMU (躯干姿态传感器) */
   while (BMI088_init())
     ;
 
@@ -101,7 +93,7 @@ void AltMainTask(void *argument)
    * 构造外骨骼硬件描述符和核心对象
    *----------------------------------------------------------------------*/
   static ExoHardware exo_hw = {
-    .motor_can1 = hfdcan1, /* 左侧电机 CAN */
+    .motor_can1 = hfdcan2, /* 左侧电机 CAN */
     .motor_can2 = hfdcan1, /* 右侧电机 CAN */
     .sensor_can = hfdcan3, /* IMU CAN */
     .sensor_spi = hspi3, /* 传感器 SPI */
@@ -114,18 +106,11 @@ void AltMainTask(void *argument)
   static Exo exo(exo_data, exo_hw);
   exo.Initialize();
 
-  /*----------------------------------------------------------------------
-   * 给 24V 电机电源上电
-   * 同时使能两路 24V 电源 (POWER_24V_1 和 POWER_24V_2)
-   * 延时 1 秒等待电机驱动器内部电容充电和初始化完成
-   *----------------------------------------------------------------------*/
+  /* 使能两路 24 V电机电源 (POWER_24V_1 和 POWER_24V_2), 并延时 1 秒等待稳定 */
   HAL_GPIO_WritePin(POWER_24V_1_GPIO_Port, POWER_24V_1_Pin | POWER_24V_2_Pin, GPIO_PIN_SET);
   HAL_Delay(1000);
 
-  /*----------------------------------------------------------------------
-   * 启动 TIM2 1kHz 定时器中断
-   * 之后每 1ms 触发一次中断，在 ISR 中置 g_timer2_flag = 1
-   *----------------------------------------------------------------------*/
+  /* 启动 TIM2 定时器中断, 周期1ms */
   HAL_TIM_Base_Start_IT(&htim2);
 
   while (1)
@@ -135,12 +120,13 @@ void AltMainTask(void *argument)
       g_timer2_flag = 0;
 
       uint32_t start_tick = DWT_CYCCNT;
-      exo.Run(); /* 外骨骼核心控制逻辑 (~1ms 内完成) */
+      exo.Run(); /* 外骨骼核心控制逻辑 (必须 1ms 内完成) */
       g_exo_run_us = DWTGetDeltaUs(start_tick);
     }
 
+    /* 以下代码仅用于离线调试 */
     // if (cdc_rx_flag)
-    if (false)
+    if (false) 
     {
       __disable_irq();
       rx_len = cdc_rx_len;

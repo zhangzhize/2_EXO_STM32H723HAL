@@ -12,8 +12,8 @@ static BspCanRxCallback s_can_rx_cb = NULL;
  */
 void BspCanRegisterRxCallback(void *ctx, BspCanRxCallback cb)
 {
-    s_can_ctx = ctx;
-    s_can_rx_cb = cb;
+  s_can_ctx = ctx;
+  s_can_rx_cb = cb;
 }
 
 /**
@@ -29,33 +29,33 @@ void BspCanRegisterRxCallback(void *ctx, BspCanRxCallback cb)
  */
 void BspCanInit(FDCAN_HandleTypeDef *hfdcan)
 {
-    FDCAN_FilterTypeDef fdcan_filter;
+  FDCAN_FilterTypeDef fdcan_filter;
 
-    /* 配置标准 ID 过滤器：全接收 */
-    fdcan_filter.IdType = FDCAN_STANDARD_ID;
-    fdcan_filter.FilterIndex = 0;
-    fdcan_filter.FilterType = FDCAN_FILTER_MASK;
-    fdcan_filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
-    fdcan_filter.FilterID1 = 0x0000;
-    fdcan_filter.FilterID2 = 0x0000;
-    HAL_FDCAN_ConfigFilter(hfdcan, &fdcan_filter);
+  /* 配置标准 ID 过滤器：全接收 */
+  fdcan_filter.IdType = FDCAN_STANDARD_ID;
+  fdcan_filter.FilterIndex = 0;
+  fdcan_filter.FilterType = FDCAN_FILTER_MASK;
+  fdcan_filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+  fdcan_filter.FilterID1 = 0x0000;
+  fdcan_filter.FilterID2 = 0x0000;
+  HAL_FDCAN_ConfigFilter(hfdcan, &fdcan_filter);
 
-    /* 配置扩展 ID 过滤器：全接收 */
-    fdcan_filter.IdType = FDCAN_EXTENDED_ID;
-    fdcan_filter.FilterIndex = 1; /* 不能和标准 ID 共用 FilterIndex 0 */
-    fdcan_filter.FilterType = FDCAN_FILTER_MASK;
-    fdcan_filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
-    fdcan_filter.FilterID1 = 0x00000000;
-    fdcan_filter.FilterID2 = 0x00000000;
-    HAL_FDCAN_ConfigFilter(hfdcan, &fdcan_filter);
+  /* 配置扩展 ID 过滤器：全接收 */
+  fdcan_filter.IdType = FDCAN_EXTENDED_ID;
+  fdcan_filter.FilterIndex = 1; /* 不能和标准 ID 共用 FilterIndex 0 */
+  fdcan_filter.FilterType = FDCAN_FILTER_MASK;
+  fdcan_filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+  fdcan_filter.FilterID1 = 0x00000000;
+  fdcan_filter.FilterID2 = 0x00000000;
+  HAL_FDCAN_ConfigFilter(hfdcan, &fdcan_filter);
 
-    /* 全局过滤：拒绝所有未命中元素列表的标准帧、扩展帧和远程帧 */
-    HAL_FDCAN_ConfigGlobalFilter(hfdcan, FDCAN_REJECT, FDCAN_REJECT, FDCAN_REJECT_REMOTE, FDCAN_REJECT_REMOTE);
-    /* 水印设为 1：每收到 1 帧即触发 RX FIFO0 中断，实现逐帧处理 */
-    HAL_FDCAN_ConfigFifoWatermark(hfdcan, FDCAN_CFG_RX_FIFO0, 1);
+  /* 全局过滤：拒绝所有未命中元素列表的标准帧、扩展帧和远程帧 */
+  HAL_FDCAN_ConfigGlobalFilter(hfdcan, FDCAN_REJECT, FDCAN_REJECT, FDCAN_REJECT_REMOTE, FDCAN_REJECT_REMOTE);
+  /* 水印设为 1：每收到 1 帧即触发 RX FIFO0 中断，逐帧处理 */
+  HAL_FDCAN_ConfigFifoWatermark(hfdcan, FDCAN_CFG_RX_FIFO0, 1);
 
-    HAL_FDCAN_Start(hfdcan);
-    HAL_FDCAN_ActivateNotification(hfdcan, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
+  HAL_FDCAN_Start(hfdcan);
+  HAL_FDCAN_ActivateNotification(hfdcan, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
 }
 
 /**
@@ -73,34 +73,41 @@ void BspCanInit(FDCAN_HandleTypeDef *hfdcan)
  */
 void FDCanSendData(FDCAN_HandleTypeDef *hfdcan, uint32_t id, uint32_t id_type, uint8_t *data, uint32_t len)
 {
-    FDCAN_TxHeaderTypeDef pTxHeader;
+  FDCAN_TxHeaderTypeDef pTxHeader;
 
-    pTxHeader.Identifier = id;
-    pTxHeader.IdType = id_type;
-    pTxHeader.TxFrameType = FDCAN_DATA_FRAME;
-    pTxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-    pTxHeader.BitRateSwitch = FDCAN_BRS_OFF;
-    pTxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
-    pTxHeader.MessageMarker = 0;
-    if (len > 8)
-    {
-        /* CAN FD 帧：根据数据长度选择最小的 DLC 等级 */
-        pTxHeader.FDFormat = FDCAN_FD_CAN;
-        if(len <= 12)      pTxHeader.DataLength = FDCAN_DLC_BYTES_12;
-        else if(len <= 16) pTxHeader.DataLength = FDCAN_DLC_BYTES_16;
-        else if(len <= 20) pTxHeader.DataLength = FDCAN_DLC_BYTES_20;
-        else if(len <= 24) pTxHeader.DataLength = FDCAN_DLC_BYTES_24;
-        else if(len <= 32) pTxHeader.DataLength = FDCAN_DLC_BYTES_32;
-        else if(len <= 48) pTxHeader.DataLength = FDCAN_DLC_BYTES_48;
-        else               pTxHeader.DataLength = FDCAN_DLC_BYTES_64;
-    }
+  pTxHeader.Identifier = id;
+  pTxHeader.IdType = id_type;
+  pTxHeader.TxFrameType = FDCAN_DATA_FRAME;
+  pTxHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+  pTxHeader.BitRateSwitch = FDCAN_BRS_OFF;
+  pTxHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+  pTxHeader.MessageMarker = 0;
+  if (len > 8)
+  {
+    /* CAN FD 帧：根据数据长度选择最小的 DLC 等级 */
+    pTxHeader.FDFormat = FDCAN_FD_CAN;
+    if (len <= 12)
+      pTxHeader.DataLength = FDCAN_DLC_BYTES_12;
+    else if (len <= 16)
+      pTxHeader.DataLength = FDCAN_DLC_BYTES_16;
+    else if (len <= 20)
+      pTxHeader.DataLength = FDCAN_DLC_BYTES_20;
+    else if (len <= 24)
+      pTxHeader.DataLength = FDCAN_DLC_BYTES_24;
+    else if (len <= 32)
+      pTxHeader.DataLength = FDCAN_DLC_BYTES_32;
+    else if (len <= 48)
+      pTxHeader.DataLength = FDCAN_DLC_BYTES_48;
     else
-    {
-        /* 经典 CAN 帧：DLC 直接等于数据长度 */
-        pTxHeader.FDFormat = FDCAN_CLASSIC_CAN;
-        pTxHeader.DataLength = len;
-    }
-    HAL_FDCAN_AddMessageToTxFifoQ(hfdcan, &pTxHeader, data);
+      pTxHeader.DataLength = FDCAN_DLC_BYTES_64;
+  }
+  else
+  {
+    /* 经典 CAN 帧：DLC 直接等于数据长度 */
+    pTxHeader.FDFormat = FDCAN_CLASSIC_CAN;
+    pTxHeader.DataLength = len;
+  }
+  HAL_FDCAN_AddMessageToTxFifoQ(hfdcan, &pTxHeader, data);
 }
 
 /**
@@ -113,17 +120,17 @@ void FDCanSendData(FDCAN_HandleTypeDef *hfdcan, uint32_t id, uint32_t id_type, u
  */
 static void FDCanReceive(FDCAN_HandleTypeDef *hfdcan, uint32_t *rec_id, uint8_t *buf, uint32_t *buf_size)
 {
-    FDCAN_RxHeaderTypeDef pRxHeader;
+  FDCAN_RxHeaderTypeDef pRxHeader;
 
-    if(HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &pRxHeader, buf)==HAL_OK)
-    {
-        *rec_id = pRxHeader.Identifier;
-        *buf_size = pRxHeader.DataLength;
-    }
-    else
-    {
-      *buf_size = 0;
-    }
+  if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &pRxHeader, buf) == HAL_OK)
+  {
+    *rec_id = pRxHeader.Identifier;
+    *buf_size = pRxHeader.DataLength;
+  }
+  else
+  {
+    *buf_size = 0;
+  }
 }
 
 /**
@@ -139,14 +146,14 @@ static void FDCanReceive(FDCAN_HandleTypeDef *hfdcan, uint32_t *rec_id, uint8_t 
  */
 void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 {
-    uint32_t can_id = 0;
-    uint8_t rx_data[64] = {0};
-    uint32_t rx_len = 0;
+  uint32_t can_id = 0;
+  uint8_t rx_data[64] = {0};
+  uint32_t rx_len = 0;
 
-    FDCanReceive(hfdcan, &can_id, rx_data, &rx_len);
+  FDCanReceive(hfdcan, &can_id, rx_data, &rx_len);
 
-    if (s_can_rx_cb != NULL)
-    {
-        s_can_rx_cb(s_can_ctx, hfdcan, can_id, rx_data, rx_len);
-    }
+  if (s_can_rx_cb != NULL)
+  {
+    s_can_rx_cb(s_can_ctx, hfdcan, can_id, rx_data, rx_len);
+  }
 }

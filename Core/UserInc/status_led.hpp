@@ -11,7 +11,7 @@
  * @class StateLed
  * @brief 状态指示灯驱动（WS2812B 单灯）
  *
- * 使用预定义的 9 色查找表，根据系统状态索引更新 LED 颜色。
+ * 使用预定义的 8 色查找表，根据系统状态索引更新 LED 颜色。
  */
 class StateLed
 {
@@ -21,11 +21,8 @@ public:
 
     void UpdateColor(uint8_t status_idx);
     void UpdateColorBDMA(uint8_t status_idx);
-    void UpdateEmergencyStopColor();
-    void UpdateEmergencyStopColorBDMA();
 private:
-    static constexpr uint8_t kColorCount = 9;
-    static constexpr uint8_t kEmergencyStopColorIdx = kColorCount - 1;
+    static constexpr uint8_t kColorCount = 8;
 
     uint8_t status_idx_ = 255;                /*!< 上一次更新的状态索引，用于变化检测 */
 
@@ -38,7 +35,6 @@ private:
         {0xFF, 0x00, 0xFF}, /* 品红色     #FF00FF */
         {0x00, 0xFF, 0xFF}, /* 青色       #00FFFF */
         {0xFF, 0x8C, 0x00}, /* 橙色       #FF8C00 */
-        {0x80, 0x00, 0x80}, /* 保留紫色   #800080 */
         {0xFF, 0x00, 0x00}, /* 急停红色   #FF0000 */
     };
 };

@@ -15,7 +15,6 @@ extern "C"
 #include "usbd_cdc_if.h"
 
 extern uint32_t g_adc_data[3]; /* definition in alt_main.cpp */
-static uint32_t exo_run_time_us = 0; /* 用于统计 Exo::Run() 的运行时间, 单位微秒 */
 
 void VofaCdcSendJustFloat(DmaUnionBuffer &buf, uint16_t float_count)
 {
@@ -317,6 +316,8 @@ void KneeJoint::DivekarReset()
   divekar_state_.theta_k_dot_prev_radps = divekar_state_.theta_k_dot_radps;
   divekar_state_.tau_prev_Nm = 0.0f;
   divekar_state_.torque_history_valid = true;
+  divekar_state_.mc_tau_prev_Nm = 0.0f;
+  divekar_state_.mc_torque_history_valid = true;
 }
 
 void KneeJoint::ResetDivekarBiLegContext()
@@ -490,7 +491,8 @@ void KneeJoint::DivekarUpdate()
   /* gravity compensation in swing */
   divekar_output_.tau_grav_sw_Nm =
     divekar_params_.g_sw *
-    sinf(divekar_state_.theta_sh_rad) *
+    // sinf(divekar_state_.theta_sh_rad) *
+    _min(sinf(divekar_state_.theta_sh_rad), 0.0f) *  /* HACK: Limit to negative values */
     divekar_state_.gate_theta_k_dot_sw;
 
   /* inertial forces in swing */
@@ -509,6 +511,23 @@ void KneeJoint::DivekarUpdate()
     (-divekar_params_.k_sw * expf(exp_arg) +
      divekar_params_.c_sw * divekar_state_.theta_k_dot_radps * Step(-divekar_state_.theta_k_dot_radps)) *
     Step(divekar_params_.theta_k_eq - divekar_state_.theta_k_rad);
+
+#if 0
+  /* Candidate: continuous terminal-extension spring-damper. */
+  static constexpr float kSwingSdGateSlope = -30.0f;
+  const float gate_sd_sw =
+    Sigmoid(divekar_state_.theta_k_rad,
+            kSwingSdGateSlope,
+            divekar_params_.theta_k_eq);
+  const float knee_extension_error_rad =
+    _max(divekar_params_.theta_k_eq - divekar_state_.theta_k_rad, 0.0f);
+  const float knee_extension_vel_radps =
+    _max(-divekar_state_.theta_k_dot_radps, 0.0f);
+  divekar_output_.tau_sd_sw_Nm =
+    -(divekar_params_.k_sw * knee_extension_error_rad +
+      divekar_params_.c_sw * knee_extension_vel_radps) *
+    gate_sd_sw;
+#endif
 
   /* final assistive swing torque */
   divekar_output_.tau_sw_Nm = divekar_output_.tau_grav_sw_Nm + divekar_output_.tau_inertial_sw_Nm + divekar_output_.tau_sd_sw_Nm;
@@ -549,11 +568,11 @@ void KneeJoint::DivekarUpdate()
     (1.0f - divekar_state_.gate_sts_ctx) * tau_gait_Nm +
     divekar_output_.tau_sts_mod_Nm;
   divekar_output_.tau_divekar_lpf_Nm = GetTorqueLpf(divekar_output_.tau_divekar_Nm);
-  if (!divekar_params_.use_motion_control_impedance_output)
-  {
-    divekar_output_.tau_divekar_lpf_limited_Nm =
-      ApplySafetyLimits(divekar_output_.tau_divekar_lpf_Nm, dt_s);
-  }
+  divekar_output_.tau_divekar_lpf_limited_Nm =
+    ApplySafetyLimits(divekar_output_.tau_divekar_lpf_Nm,
+                      dt_s,
+                      divekar_state_.tau_prev_Nm,
+                      divekar_state_.torque_history_valid);
 
   UpdateDivekarMotionControlOutput();
 }
@@ -696,26 +715,29 @@ float KneeJoint::GetTorqueLpf(float tau_unfiltered_Nm)
   return divekar_state_.tau_divekar_lpf_prev_Nm;
 }
 
-float KneeJoint::ApplySafetyLimits(float tau_divekar_Nm, float dt_s)
+float KneeJoint::ApplySafetyLimits(float tau_divekar_Nm,
+                                   float dt_s,
+                                   float &tau_prev_Nm,
+                                   bool &history_valid)
 {
   float tau = tau_divekar_Nm;
 
-  if (!divekar_state_.torque_history_valid)
+  if (!history_valid)
   {
-    divekar_state_.tau_prev_Nm = _constrain(tau, divekar_params_.torque_min_Nm, divekar_params_.torque_max_Nm);
-    divekar_state_.torque_history_valid = true;
-    return divekar_state_.tau_prev_Nm;
+    tau_prev_Nm = _constrain(tau, divekar_params_.torque_min_Nm, divekar_params_.torque_max_Nm);
+    history_valid = true;
+    return tau_prev_Nm;
   }
 
   /* Paper: limit the torque increase rate in the extension direction. */
   const float max_extension_increase = divekar_params_.extension_slew_rate_Nmps * dt_s;
-  if (tau > divekar_state_.tau_prev_Nm + max_extension_increase)
+  if (tau > tau_prev_Nm + max_extension_increase)
   {
-    tau = divekar_state_.tau_prev_Nm + max_extension_increase;
+    tau = tau_prev_Nm + max_extension_increase;
   }
 
   tau = _constrain(tau, divekar_params_.torque_min_Nm, divekar_params_.torque_max_Nm);
-  divekar_state_.tau_prev_Nm = tau;
+  tau_prev_Nm = tau;
   return tau;
 }
 
@@ -772,7 +794,8 @@ void KneeJoint::Standby()
   motor_.speed_ref_ = 0.0f;
   motor_.motion_mode_kp_ = 0.0f;
   motor_.motion_mode_kd_ = 0.0f;
-  motor_.DisableMotor(0);
+  motor_.MotionControl();
+  // motor_.EnableMotor();
 }
 
 void KneeJoint::Read()
@@ -912,8 +935,10 @@ void KneeJoint::ApplyDivekarControl()
      joint coordinate is flexion-positive. Only extension-torque rise is
      rate-limited; torque removal remains immediate. */
   const float divekar_torque_limited_Nm =
-    ApplySafetyLimits(-joint_torque_target_Nm, dt_s);
-  divekar_output_.tau_divekar_lpf_limited_Nm = divekar_torque_limited_Nm;
+    ApplySafetyLimits(-joint_torque_target_Nm,
+                      dt_s,
+                      divekar_state_.mc_tau_prev_Nm,
+                      divekar_state_.mc_torque_history_valid);
   const float joint_torque_limited_Nm = -divekar_torque_limited_Nm;
   const float joint_torque_feedforward_applied_Nm =
     _constrain(joint_torque_limited_Nm - joint_impedance_torque_Nm,
@@ -2376,14 +2401,6 @@ ExoShell::ExoShell(UART_HandleTypeDef &huart, Exo &exo) :
         shell.SendString("-> Clear Faults Requested\r\n"); },
                   this);
 
-  RegisterCommand("testsw", [](void *ctx, int, char **)
-                  {
-        auto& shell = *static_cast<ExoShell *>(ctx);
-        shell.exo_.pe_.do_test = ! shell.exo_.pe_.do_test;
-        if (shell.exo_.pe_.do_test) shell.SendString("Test: ON\r\n");
-        else shell.SendString("Test: OFF\r\n"); },
-                  this);
-
   /* 注册需要实时调节的参数 */
   RegisterRwParam("assiston", &exo_.left_side_.ankle_joint_.assistance_start_phase_percent_);
   RegisterRwParam("assistoff", &exo_.left_side_.ankle_joint_.assistance_end_phase_percent_);
@@ -3342,39 +3359,18 @@ void Exo::Initialize()
  */
 void Exo::Run()
 {
-#if 0 /* 调试意图识别功能 */
-    pe_.intention_data_.current_mode_ = LocoMode::kStairDescent;
-    left_side_.stair_phase_estimator_.Update();
-    right_side_.stair_phase_estimator_.Update();
-    VofaSendTelemetry();
-    return;
-
-#elif 0 /* 调试坡度估计功能 */
-  UpdateHumanJointKinematics();
-  intention_recognizer_.Update();
-  VofaSendTelemetry();
-  return;
-
-#else
-  uint32_t start_ticks = DWT_CYCCNT;
-
   /* 1. 读取/转换传感器数据 */
   Read();
 
   /* 2. 根据系统当前状态过滤无效事件 */
   pe_.pending_events_ &= AllowedEventsForState(pe_.state_);
 
-  /* 3. 处理用户发起的estop急停命令 */
+  /* 3. 急停事件具有最高优先级, 一旦触发即进入不可恢复的急停状态 */
   const bool is_estop_triggered = ((pe_.pending_events_ & ExoData::SysEvent::kEmergencyStop) != ExoData::SysEvent::kNone);
   if (is_estop_triggered)
   {
-    ClearNonCriticalEvents(pe_);
-    Shutdown();
-    dji_esc_hub_.SendAllCanTxData();
+    pe_.pending_events_ = ExoData::SysEvent::kNone;
     pe_.state_ = ExoData::State::kEstopped;
-    state_led_.UpdateEmergencyStopColorBDMA();
-    /* 没有命令可以撤销 E-stop, 需要断电重启。 */
-    return;
   }
 
   /* 4. 检查是否出现欠压或其他故障
@@ -3390,7 +3386,7 @@ void Exo::Run()
 
   const bool battery_low = ((pe_.error_code_ & ExoData::Error::kBatteryLow) != ExoData::Error::kNone);
   const bool has_any_fault = (pe_.error_code_ != ExoData::Error::kNone);
-  if (battery_low)
+  if (s != ExoData::State::kEstopped && battery_low)
   {
     if (pe_.state_ != ExoData::State::kFaultLowBattery)
     {
@@ -3500,6 +3496,11 @@ void Exo::Run()
     }
     break;
 
+  case ExoData::State::kEstopped:
+    Shutdown();
+    /* E-stop 是终态, 没有命令可以撤销, 仅允许断电重启恢复。 */
+    break;
+
   default:
     break;
   }
@@ -3518,10 +3519,8 @@ void Exo::Run()
     VofaSendTelemetry();
   }
 
-  /* 指示系统状态机当前状态 */
+  /* 状态枚举值直接映射颜色索引, kEstopped 对应最后一项红色。 */
   state_led_.UpdateColorBDMA(static_cast<uint8_t>(pe_.state_));
-  exo_run_time_us = DWTGetDeltaUs(start_ticks);
-#endif
 }
 
 /**
@@ -3983,7 +3982,8 @@ void Exo::VofaSendTelemetry()
   buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.tau_divekar_Nm; // I92
   buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.tau_divekar_lpf_Nm; // I93
   buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.tau_divekar_lpf_limited_Nm; // I94
-  buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.mc_stiffness_Nm_per_rad; // I95
+  // buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.mc_stiffness_Nm_per_rad; // I95
+  buf.f_data[idx++] = 3.14f;
   buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.mc_damping_Nm_s_per_rad; // I96
   buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.mc_position_ref_rad; // I97
   buf.f_data[idx++] = left_side_.knee_joint_.divekar_output_.mc_velocity_ref_radps; // I98
@@ -4029,7 +4029,7 @@ void Exo::VofaSendTelemetry()
   buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.mc_velocity_ref_radps; // I136
   buf.f_data[idx++] = right_side_.knee_joint_.divekar_output_.mc_torque_feedforward_Nm; // I137
 
-  /* I138-I148: adaptive vGRF contact diagnostics. */
+  /* I138-I147: adaptive vGRF contact diagnostics. */
   buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.vgrf_BW_; // I138
   buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.vgrf_contact_.contact_norm; // I139
   buf.f_data[idx++] = pe_.left_side_.fsr_gait_data_.vgrf_contact_.contact_baseline; // I140
@@ -4040,6 +4040,15 @@ void Exo::VofaSendTelemetry()
   buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.vgrf_contact_.contact_baseline; // I145
   buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.vgrf_contact_.contact_peak_ref; // I146
   buf.f_data[idx++] = pe_.right_side_.fsr_gait_data_.vgrf_contact_state_ ? 1.0f : 0.0f; // I147
+
+  /* I148-I154: controller path and safety-limiter diagnostics. */
+  buf.f_data[idx++] = static_cast<float>(pe_.state_); // I148
+  buf.f_data[idx++] = KneeJoint::divekar_params_.use_motion_control_impedance_output ? 1.0f : 0.0f; // I149
+  buf.f_data[idx++] = KneeJoint::divekar_params_.assistance_scale; // I150
+  buf.f_data[idx++] = KneeJoint::bi_leg_ctx_.dt_s; // I151
+  buf.f_data[idx++] = KneeJoint::divekar_params_.extension_slew_rate_Nmps; // I152
+  buf.f_data[idx++] = left_side_.knee_joint_.divekar_state_.tau_prev_Nm; // I153
+  buf.f_data[idx++] = right_side_.knee_joint_.divekar_state_.tau_prev_Nm; // I154
   VofaCdcSendJustFloat(buf, idx);
   return;
 
@@ -4330,7 +4339,7 @@ ExoData::SysEvent Exo::AllowedEventsForState(ExoData::State state)
     break;
 
   case ExoData::State::kEstopped:
-    /* E-Stop 是终态, 不接受任何事件(包括再次 E-Stop) */
+    allowed_events = ExoData::SysEvent::kNone;
     break;
 
   default:
@@ -4373,6 +4382,7 @@ void Exo::CanRxCallback(FDCAN_HandleTypeDef *hfdcan, uint32_t can_id, const uint
       hipnuc_imu_hub_.CanRxCallback(can_id, data, dlc);
   }
 }
+
 void Exo::SensorUartReceiveDma(void)
 {
   /* DMA 接收双足无线传感数据, 波特率 1000000 Bits/s */

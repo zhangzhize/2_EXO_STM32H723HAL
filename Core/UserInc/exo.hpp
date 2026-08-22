@@ -867,7 +867,7 @@ class ExoData
 public:
   /**
    * @brief 系统顶层状态机状态枚举
-   * @note  除kEstopped外状态值直接映射到 WS2812 LED 颜色索引
+   * @note  状态值直接映射到 WS2812 LED 颜色索引, kEstopped 必须保持为最后一项
    */
   enum class State : uint8_t
   {
@@ -980,7 +980,6 @@ public:
   } user_info_;
 
   float battery_voltage_ = 24.0f; /*!< 电池电压 (V), 由 ADC 读取 */
-  bool do_test = false; /*!< 测试模式开关 (testsw 命令切换) */
 };
 
 DEFINE_ENUM_CLASS_BITWISE_OPS(ExoData::Error)
@@ -1130,7 +1129,7 @@ public:
     float x2 = -1.5f;
 
     /* Stance: gravity compensation */
-    float g_st = 34.0f; /*!< Nm */
+    float g_st = 10.0f; /*!< Nm */
 
     /* Task sensitization */
     float m_heel = 75.0f; /*!< heel-loaded sigmoid slope for TLL and Tna */
@@ -1139,7 +1138,7 @@ public:
     float d_grf_unloaded = 0.35; /*!< total-GRF unloaded sigmoid offset, BW */
     float m_ajc_dist = 5.0f; /*!< AJCdist sigmoid slope */
     float d_ajc_dist = 14.0f; /*!< AJCdist sigmoid offset, cm */
-    float m_ajc_y_a = 5.0f; /*!< AJCy sigmoid slope for ascent spring */
+    float m_ajc_y_a = 5.0f; /*!< AJCy sigmoid slope for ascent spring; HACK: should be lower to smooth */
     float d_ajc_y_a = 4.0f; /*!< AJCy sigmoid offset for ascent spring, cm */
     float m_ajc_y_na = -10.0f; /*!< AJCy sigmoid slope for non-ascent spring */
     float d_ajc_y_na = 3.0f; /*!< AJCy sigmoid offset for non-ascent spring, cm */
@@ -1162,13 +1161,21 @@ public:
     float d_sts_deep_flex_decay = 1.50f; /*!< rad */
 
     /* Swing: gravity / inertia / spring-damper */
-    float g_sw = 8.0f; /*!< Nm */
-    float a_sw = 2.0f; /*!< Nm */
+    // float g_sw = 8.0f; /*!< Nm */
+    // float a_sw = 2.0f; /*!< Nm */
+    // float x3 = 0.2f;
+    // float k_sw = 0.6f; /*!< Nm/rad */
+    // float x4 = 3.0f;
+    // float theta_k_eq = 0.17f; /*!< rad */
+    // float c_sw = 0.2f; /*!< Nm*s/rad */
+
+    float g_sw = 0.0f; /*!< Nm */
+    float a_sw = 0.0f; /*!< Nm */
     float x3 = 0.2f;
-    float k_sw = 0.6f; /*!< Nm/rad */
+    float k_sw = 0.0f; /*!< Nm/rad */
     float x4 = 3.0f;
     float theta_k_eq = 0.17f; /*!< rad */
-    float c_sw = 0.2f; /*!< Nm*s/rad */
+    float c_sw = 0.0f; /*!< Nm*s/rad */
 
     /**
      * @note The supplementary table gives g_sw but does not list m_grav_sw and d_grav_sw.
@@ -1182,8 +1189,8 @@ public:
     float d_grf_u = 0.4f; /*!< normalized body weight */
 
     /* Safety limits */
-    float torque_min_Nm = -20.0f;
-    float torque_max_Nm = 20.0f;
+    float torque_min_Nm = -17.0f;
+    float torque_max_Nm = 17.0f;
     float extension_slew_rate_Nmps = 100.0f;
 
     /* Optional internal acceleration estimator */
@@ -1286,8 +1293,10 @@ public:
     float theta_k_dot_sample_elapsed_s = 0.0f;
     float tau_prev_Nm = 0.0f;
     float tau_divekar_lpf_prev_Nm = 0.0f;
+    float mc_tau_prev_Nm = 0.0f;
     bool theta_k_dot_history_valid = false;
     bool torque_history_valid = false;
+    bool mc_torque_history_valid = false;
   } divekar_state_;
 
   struct DivekarOutput
@@ -1358,7 +1367,10 @@ private:
   void UpdateDivekarMotionControlOutput();
   float GetThetaKddotLpf(float theta_k_dot_radps, float dt_s, bool has_new_sample, float alpha);
   float GetTorqueLpf(float tau_unfiltered_Nm);
-  float ApplySafetyLimits(float tau_unfiltered_Nm, float dt_s);
+  float ApplySafetyLimits(float tau_unfiltered_Nm,
+                          float dt_s,
+                          float &tau_prev_Nm,
+                          bool &history_valid);
 };
 
 /* ============================================================================
