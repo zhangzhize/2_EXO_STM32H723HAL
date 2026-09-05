@@ -929,6 +929,12 @@ public:
   }
   ~ExoData() = default;
 
+  bool HasPendingEvent(SysEvent event) const;
+  void SetPendingEvent(SysEvent event);
+  void ClearPendingEvent(SysEvent event);
+  void ClearAllPendingEvents();
+  void KeepOnlyPendingEvents(SysEvent events);
+
   bool HasFullStandPostureRef() const
   {
     const bool body_ok = body_imu_.IsUsable() && body_imu_.is_stand_posture_valid_;
@@ -984,6 +990,31 @@ public:
 
 DEFINE_ENUM_CLASS_BITWISE_OPS(ExoData::Error)
 DEFINE_ENUM_CLASS_BITWISE_OPS(ExoData::SysEvent)
+
+inline bool ExoData::HasPendingEvent(SysEvent event) const
+{
+  return (pending_events_ & event) != SysEvent::kNone;
+}
+
+inline void ExoData::SetPendingEvent(SysEvent event)
+{
+  pending_events_ |= event;
+}
+
+inline void ExoData::ClearPendingEvent(SysEvent event)
+{
+  pending_events_ &= ~event;
+}
+
+inline void ExoData::ClearAllPendingEvents()
+{
+  pending_events_ = SysEvent::kNone;
+}
+
+inline void ExoData::KeepOnlyPendingEvents(SysEvent events)
+{
+  pending_events_ &= events;
+}
 
 /* ============================================================================
  * 6. Hardware Mapping
@@ -1089,7 +1120,7 @@ public:
   void Shutdown();
   void Standby();
   void Assist();
-  void ApplyDivekarControl();
+  void ApplyTaskAgnosticControllerControl();
 
   ExoData &pe_;
   SideData &ps_;
@@ -1101,13 +1132,11 @@ public:
   void ClosedLoopTorqueControl();
   void OpenLoopTorqueControl();
 
-  struct DivekarParams
+  struct TaskAgnosticControllerParams
   {
     /* false: thigh IMU + shank IMU; true: thigh IMU + knee link feedback */
     bool use_thigh_imu_and_link_feedback = true;
-    /* false: final torque feedforward; true: motor-side impedance parameters */
-    bool use_motion_control_impedance_output = false;
-    float assistance_scale = 0.3f; /*!< Final Divekar output scale, range [0, 1]. */
+    float assistance_scale = 0.3f; /*!< Final TaskAgnosticController output scale, range [0, 1]. */
 
     /* Stance: ascent spring */
     float k_a = 50.0f; /*!<ascent spring stiffness, Nm/rad */
@@ -1248,10 +1277,10 @@ public:
     uint64_t update_prev_us = 0u;
   };
 
-  static DivekarParams divekar_params_;
+  static TaskAgnosticControllerParams task_agnostic_controller_params_;
   static BiLegContex bi_leg_ctx_;
 
-  struct DivekarState
+  struct TaskAgnosticControllerState
   {
     /* Segment and leg angles */
     float theta_trunk_rad = 0.0f; /*!< ZZZ: body global sagittal angle, for sts */
@@ -1292,14 +1321,12 @@ public:
     uint32_t theta_k_dot_sample_id = 0u;
     float theta_k_dot_sample_elapsed_s = 0.0f;
     float tau_prev_Nm = 0.0f;
-    float tau_divekar_lpf_prev_Nm = 0.0f;
-    float mc_tau_prev_Nm = 0.0f;
+    float tau_task_agnostic_controller_lpf_prev_Nm = 0.0f;
     bool theta_k_dot_history_valid = false;
     bool torque_history_valid = false;
-    bool mc_torque_history_valid = false;
-  } divekar_state_;
+  } task_agnostic_controller_state_;
 
-  struct DivekarOutput
+  struct TaskAgnosticControllerOutput
   {
     float tau_sit2stand_Nm = 0.0f;
     float tau_stand2sit_Nm = 0.0f;
@@ -1326,24 +1353,17 @@ public:
     float tau_sw_Nm = 0.0f;
 
     /* ——— output torques ——— */
-    float tau_divekar_Nm = 0.0f; /*!< blended torque, before filtering */
-    float tau_divekar_lpf_Nm = 0.0f; /*!< 5Hz LPF filtered */
-    float tau_divekar_lpf_limited_Nm = 0.0f; /*!< after safety limits */
-
-    /* ——— equivalent MotionControl output in joint coordinates ——— */
-    float mc_stiffness_Nm_per_rad = 0.0f;
-    float mc_damping_Nm_s_per_rad = 0.0f;
-    float mc_position_ref_rad = 0.0f;
-    float mc_velocity_ref_radps = 0.0f;
-    float mc_torque_feedforward_Nm = 0.0f;
-  } divekar_output_;
+    float tau_task_agnostic_controller_Nm = 0.0f; /*!< blended torque, before filtering */
+    float tau_task_agnostic_controller_lpf_Nm = 0.0f; /*!< 5Hz LPF filtered */
+    float tau_task_agnostic_controller_lpf_limited_Nm = 0.0f; /*!< after safety limits */
+  } task_agnostic_controller_output_;
 
   void ComputeAnkleGeometry();
-  void DivekarReset();
-  void DivekarUpdate();
-  static void ResetDivekarBiLegContext();
-  static void UpdateDivekarBiLegContext(KneeJoint &left_knee, KneeJoint &right_knee, const ExoData &pe);
-  static void LatchDivekarLeadingLeg(KneeJoint &left_knee, KneeJoint &right_knee, bool left_fs, bool right_fs);
+  void TaskAgnosticControllerReset();
+  void TaskAgnosticControllerUpdate();
+  static void ResetTaskAgnosticControllerBiLegContext();
+  static void UpdateTaskAgnosticControllerBiLegContext(KneeJoint &left_knee, KneeJoint &right_knee, const ExoData &pe);
+  static void LatchTaskAgnosticControllerLeadingLeg(KneeJoint &left_knee, KneeJoint &right_knee, bool left_fs, bool right_fs);
 
 private:
   CtrlMode ctrl_mode_ = CtrlMode::kOpenLoopTorque;
@@ -1363,8 +1383,7 @@ private:
     return 1.0f / (1.0f + expf(z));
   }
 
-  void UpdateDivekarFeedbackKinematics();
-  void UpdateDivekarMotionControlOutput();
+  void UpdateTaskAgnosticControllerFeedbackKinematics();
   float GetThetaKddotLpf(float theta_k_dot_radps, float dt_s, bool has_new_sample, float alpha);
   float GetTorqueLpf(float tau_unfiltered_Nm);
   float ApplySafetyLimits(float tau_unfiltered_Nm,
@@ -1990,7 +2009,7 @@ public:
   void Assist();
   void Shutdown();
 
-  void CheckSystemHealth();
+  void CheckErrorCode();
   void VofaSendTelemetry();
   bool IsMotorConnect();
   bool IsCalibrateDone();
@@ -2036,11 +2055,11 @@ private:
   static ExoData::SysEvent AllowedEventsForState(ExoData::State s);
   static inline void ClearNonCriticalEvents(ExoData &pe)
   {
-    pe.pending_events_ &= ~ExoData::SysEvent::kWakeup;
-    pe.pending_events_ &= ~ExoData::SysEvent::kStartCalibrate;
-    pe.pending_events_ &= ~ExoData::SysEvent::kStartAssist;
-    pe.pending_events_ &= ~ExoData::SysEvent::kStopAssist;
-    pe.pending_events_ &= ~ExoData::SysEvent::kEnterSleep;
+    pe.ClearPendingEvent(ExoData::SysEvent::kWakeup);
+    pe.ClearPendingEvent(ExoData::SysEvent::kStartCalibrate);
+    pe.ClearPendingEvent(ExoData::SysEvent::kStartAssist);
+    pe.ClearPendingEvent(ExoData::SysEvent::kStopAssist);
+    pe.ClearPendingEvent(ExoData::SysEvent::kEnterSleep);
   }
 };
 

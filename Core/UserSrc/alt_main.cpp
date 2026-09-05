@@ -1,7 +1,6 @@
 #include <math.h>
 #include <queue>
 #include <numeric>
-#include <string.h>
 
 #include "main.h"
 #include "adc.h"
@@ -26,17 +25,6 @@
 
 #include "semg.hpp"
 
-/* USB 虚拟串口 (CDC) 接收缓冲区及数据就绪标志 */
-#include "usbd_cdc_if.h"
-uint8_t cdc_rx_buffer[512] = {0}; /*!< CDC 接收缓冲区 */
-float cdc_rx_floats[128] = {0.0f}; /*!< CDC 接收的浮点数数据 (512字节 / 4字节每float = 128) */
-volatile uint16_t cdc_rx_len = 0; /*!< CDC 最近一次接收长度 */
-volatile uint8_t cdc_rx_flag = 0; /*!< CDC 数据就绪标志 */
-
-/* 本地复制缓冲区：放到文件作用域以避免在任务栈上分配大数组 */
-static uint8_t rx_copy[512] = {0};
-static uint16_t rx_len = 0;
-
 /* sEMG 表面肌电信号变量 */
 float semg_pa0_raw = 0.0f; /*!< PA0 通道原始肌电值 */
 float semg_pa2_raw = 0.0f; /*!< PA2 通道原始肌电值 */
@@ -49,9 +37,6 @@ uint32_t g_exo_run_us = 0;
 
 /* ADC DMA 三通道数据缓冲区：PC4 (电源电压) + PA2 + PA0，位于 DTCM .dma_buf 段 */
 __attribute__((section(".dma_buf"), aligned(32))) uint32_t g_adc_data[3] = {0};
-
-static void SendCdcReplayAck(void);
-static bool DecodeCdcFloatFrame(const uint8_t *rx, uint16_t rx_len, uint32_t *seq, float *values, uint8_t *float_count, uint8_t max_values);
 
 /**
  * @brief 外骨骼主任务入口
@@ -123,60 +108,5 @@ void AltMainTask(void *argument)
       exo.Run(); /* 外骨骼核心控制逻辑 (必须 1ms 内完成) */
       g_exo_run_us = DWTGetDeltaUs(start_tick);
     }
-
-    /* 以下代码仅用于离线调试 */
-    // if (cdc_rx_flag)
-    if (false) 
-    {
-      __disable_irq();
-      rx_len = cdc_rx_len;
-      if (rx_len > sizeof(rx_copy)) rx_len = sizeof(rx_copy);
-      memcpy(rx_copy, cdc_rx_buffer, rx_len);
-      cdc_rx_len = 0;
-      cdc_rx_flag = 0;
-      __enable_irq();
-
-      uint32_t seq = 0;
-      uint8_t float_count = 0;
-      bool decoded = DecodeCdcFloatFrame(rx_copy, rx_len, &seq, cdc_rx_floats, &float_count, (uint8_t)DMA_UNION_BUF_SIZE_FLOATS);
-      bool replay_loaded = false;
-
-      if (decoded)
-      {
-        // replay_loaded = DebugInjectSlopeTelemetryFrame(exo_data, seq, cdc_rx_floats, float_count); /* (已删除, 需重新写) 将接收到的 CDC 浮点数据注入到系统中, 用于调试 */
-        if (replay_loaded)
-        {
-          exo.Run();
-        }
-      }
-      SendCdcReplayAck();
-    }
   }
-}
-
-static void SendCdcReplayAck(void)
-{
-  uint8_t ack = (uint8_t)'R';
-  for (uint8_t retry = 0; retry < 10u; retry++)
-  {
-    if (CDC_Transmit_HS(&ack, 1) == 0u)
-    {
-      return;
-    }
-    DWTDelayUs(100);
-  }
-}
-
-static bool DecodeCdcFloatFrame(const uint8_t *rx, uint16_t rx_len, uint32_t *seq, float *values, uint8_t *float_count, uint8_t max_values)
-{
-  if (rx == nullptr || seq == nullptr || float_count == nullptr || values == nullptr) return false;
-  if (rx_len < 5u) return false;
-
-  memcpy(seq, &rx[0], sizeof(*seq));
-  *float_count = rx[4];
-  uint16_t expected_len = 5u + 4u * (uint16_t)(*float_count);
-  if (*float_count == 0u || *float_count > max_values || rx_len < expected_len) return false;
-
-  memcpy(values, &rx[5], (uint16_t)(*float_count) * sizeof(float));
-  return true;
 }
